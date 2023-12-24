@@ -143,7 +143,7 @@ pub struct Game {
     scores: Vec<i32>,
     voids: Vec<HashSet<Suit>>,
     current_player: i32,
-    winner: Option<i32>,
+    pub winner: Option<i32>,
     dealer: i32,
     state: State,
     undo_plyaers: HashSet<i32>,
@@ -152,9 +152,21 @@ pub struct Game {
 }
 
 impl Game {
+    /// Factory to create a default game
     pub fn new() -> Game {
         let game = Game::default();
         let mut game = game.deal();
+        game.changes.push(show_playable(&game));
+        game
+    }
+
+    /// Factory for making a game with players that can undo
+    /// their discards (the human player when played in
+    /// Trickster's Table)
+    pub fn new_with_undo_players(undo_players: HashSet<i32>) -> Game {
+        let game = Game::default();
+        let mut game = game.deal();
+        game.undo_players = undo_players;
         game.changes.push(show_playable(&game));
         game
     }
@@ -251,23 +263,19 @@ impl Game {
             let mut all_cards = current_hand.clone();
             all_cards.append(&mut new_game.draw_decks[new_game.current_player as usize].clone());
             let card_id = action - DISCARD_OFFSET;
-            let card_index: usize =
-                all_cards
-                    .iter()
-                    .position(|c| c.id == card_id)
-                    .expect(&format!(
-                        "discarding card id {} which is not but should be in draw deck or hand",
-                        card_id
-                    ));
-            let card = all_cards[card_index];
+            let card = all_cards
+                .iter()
+                .filter(|c| c.id == card_id)
+                .next()
+                .expect("player played a card that should exist");
             if new_game.draw_decks[new_game.current_player as usize].contains(&card) {
+                new_game.draw_decks[new_game.current_player as usize].retain(|c| c != card);
+                current_hand.push(*card);
+            }
+            if new_game.hands[new_game.current_player as usize].contains(&card) {
                 // Allows undo
-                new_game.draw_decks[new_game.current_player as usize].remove(card_index);
-                current_hand.push(card);
-            } else {
-                current_hand.remove(card_index);
-
-                new_game.draw_decks[new_game.current_player as usize].push(card);
+                new_game.hands[new_game.current_player as usize].retain(|c| c != card);
+                new_game.draw_decks[new_game.current_player as usize].retain(|c| c != card);
             }
             let mut offset: i32 = 0;
             if new_game.current_player == 0 {
@@ -455,7 +463,7 @@ impl Game {
         return new_game;
     }
 
-    fn get_moves(self: &Game) -> Vec<i32> {
+    pub fn get_moves(self: &Game) -> Vec<i32> {
         if self.state == State::OptionalDraw {
             if !self.draw_decks[self.current_player as usize].is_empty() {
                 return vec![DRAW, PASS];
