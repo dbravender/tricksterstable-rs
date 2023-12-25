@@ -40,7 +40,7 @@ pub enum Suit {
     Green,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct Card {
     id: i32,
     value: i32,
@@ -140,7 +140,7 @@ pub struct Game {
     current_trick: Vec<Option<Card>>,
     lead_suit: Option<Suit>,
     round: i32,
-    scores: Vec<i32>,
+    pub scores: Vec<i32>,
     voids: Vec<HashSet<Suit>>,
     current_player: i32,
     pub winner: Option<i32>,
@@ -156,6 +156,7 @@ impl Game {
     pub fn new() -> Game {
         let game = Game::default();
         let mut game = game.deal();
+        game.scores = vec![0, 0, 0];
         game.changes.push(show_playable(&game));
         game
     }
@@ -164,10 +165,8 @@ impl Game {
     /// their discards (the human player when played in
     /// Trickster's Table)
     pub fn new_with_undo_players(undo_players: HashSet<i32>) -> Game {
-        let game = Game::default();
-        let mut game = game.deal();
+        let mut game = Game::new();
         game.undo_players = undo_players;
-        game.changes.push(show_playable(&game));
         game
     }
 
@@ -213,7 +212,6 @@ impl Game {
     pub fn clone_and_apply_move(self: Game, action: i32) -> Self {
         let mut new_game: Game = self.clone();
         new_game.changes = vec![vec![]]; // card from player to table or discard to draw deck
-        let mut current_hand = new_game.hands[new_game.current_player as usize].to_owned();
         if new_game.state == State::OptionalDraw {
             if action == DRAW {
                 // Once a player draws a card we don't know what their voids are
@@ -223,8 +221,13 @@ impl Game {
                     .expect("there has to be a card to draw");
                 new_game.hands[new_game.current_player as usize].push(new_card);
                 new_game.hands[new_game.current_player as usize].sort_by(card_sorter);
-                new_game.changes[0]
-                    .append(reorder_hand(new_game.current_player, &current_hand.to_vec()).as_mut());
+                new_game.changes[0].append(
+                    reorder_hand(
+                        new_game.current_player,
+                        &new_game.hands[new_game.current_player as usize].to_vec(),
+                    )
+                    .as_mut(),
+                );
                 for card in &new_game.draw_decks[new_game.current_player as usize] {
                     new_game.changes[0].push(Change {
                         change_type: ChangeType::Discard,
@@ -238,12 +241,9 @@ impl Game {
                     });
                 }
             }
-            let player_index = new_game
+            new_game
                 .draw_players_remaining
-                .iter()
-                .position(|x| x == &new_game.current_player)
-                .expect("Player who just discarded must be in draw_players_remaining");
-            new_game.draw_players_remaining.remove(player_index);
+                .retain(|x| *x != new_game.current_player);
             if new_game.draw_players_remaining.is_empty() {
                 if let Some(finished_game) = check_hand_end(&new_game) {
                     return finished_game;
@@ -260,7 +260,7 @@ impl Game {
             return new_game;
         }
         if new_game.state == State::Discard {
-            let mut all_cards = current_hand.clone();
+            let mut all_cards = new_game.hands[new_game.current_player as usize].clone();
             all_cards.append(&mut new_game.draw_decks[new_game.current_player as usize].clone());
             let card_id = action - DISCARD_OFFSET;
             let card = all_cards
@@ -269,13 +269,13 @@ impl Game {
                 .next()
                 .expect("player played a card that should exist");
             if new_game.draw_decks[new_game.current_player as usize].contains(&card) {
+                // Allows undo
                 new_game.draw_decks[new_game.current_player as usize].retain(|c| c != card);
-                current_hand.push(*card);
+                new_game.hands[new_game.current_player as usize].push(*card);
             }
             if new_game.hands[new_game.current_player as usize].contains(&card) {
-                // Allows undo
                 new_game.hands[new_game.current_player as usize].retain(|c| c != card);
-                new_game.draw_decks[new_game.current_player as usize].retain(|c| c != card);
+                new_game.draw_decks[new_game.current_player as usize].push(*card);
             }
             let mut offset: i32 = 0;
             if new_game.current_player == 0 {
@@ -340,15 +340,13 @@ impl Game {
             return new_game;
         }
         let card_id = action - PLAY_OFFSET;
-        let card_index: usize = current_hand
+        let card = &new_game.hands[new_game.current_player as usize]
             .iter()
-            .position(|c| c.id == card_id)
-            .expect(&format!(
-                "playing card id {} which is not but should be in hand",
-                card_id
-            ));
-        let card = current_hand[card_index];
-        current_hand.remove(card_index);
+            .filter(|c| c.id == card_id)
+            .next()
+            .expect("this card has to be in the player's hand")
+            .clone();
+        new_game.hands[new_game.current_player as usize].retain(|c| c.id != card_id);
         new_game.changes[0].push(Change {
             change_type: ChangeType::Play,
             object_id: card_id,
@@ -366,7 +364,7 @@ impl Game {
             .as_mut(),
         );
         hide_playable(&new_game);
-        new_game.current_trick[new_game.current_player as usize] = Some(card);
+        new_game.current_trick[new_game.current_player as usize] = Some(*card);
         if let Some(suit) = new_game.lead_suit {
             // Player has revealed a void
             new_game.voids[new_game.current_player as usize].insert(suit);
@@ -719,4 +717,169 @@ fn hide_playable(new_game: &Game) -> Vec<Change> {
         ..Default::default()
     });
     return changes;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deck() {
+        let d = deck();
+        assert_eq!(d.len(), 48);
+    }
+
+    #[test]
+    fn test_game_initialization() {
+        let mut game = Game::new();
+        for hand in game.hands.iter() {
+            assert_eq!(hand.len(), 16);
+        }
+        for draw_deck in game.draw_decks.iter() {
+            assert_eq!(draw_deck.len(), 0);
+        }
+        // Move the game through the discard phase
+        for _ in 0..15 {
+            assert_eq!(game.state, State::Discard);
+            let action = game.get_moves().first().unwrap().clone();
+            game = game.clone_and_apply_move(action);
+        }
+        assert_eq!(game.state, State::OptionalDraw);
+        assert_eq!(game.draw_decks.iter().all(|dd| dd.len() == 5), true);
+        assert_eq!(game.hands.iter().all(|h| h.len() == 11), true);
+        for _ in 0..3 {
+            assert_eq!(game.state, State::OptionalDraw);
+            game = game.clone_and_apply_move(DRAW);
+        }
+        // each player drew a card so we should have 4 left in
+        // each draw deck
+        assert_eq!(game.draw_decks.iter().all(|dd| dd.len() == 4), true);
+        assert_eq!(game.hands.iter().all(|h| h.len() == 12), true);
+        assert_eq!(game.state, State::Play);
+        for _ in 0..3 {
+            let action = game.get_moves().first().unwrap().clone();
+            game = game.clone_and_apply_move(action);
+        }
+        assert_eq!(game.tricks_taken.iter().sum::<i32>(), 1);
+
+        assert_eq!(game.hands.iter().all(|dd| dd.len() == 11), true);
+    }
+
+    #[test]
+    fn test_get_winner() {
+        assert_eq!(
+            get_winner(
+                Some(Suit::Blue),
+                &vec![
+                    Some(Card {
+                        id: 0,
+                        value: 7,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 8,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 9,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 1,
+                        suit: Suit::Yellow
+                    }),
+                ]
+            ),
+            2
+        );
+        assert_eq!(
+            get_winner(
+                Some(Suit::Blue),
+                &vec![
+                    Some(Card {
+                        id: 0,
+                        value: 9,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 8,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 1,
+                        suit: Suit::Red
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 7,
+                        suit: Suit::Blue
+                    }),
+                ]
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn test_random_playthrough() {
+        let mut game = Game::new();
+        while game.winner == None {
+            let action = game.get_moves().first().unwrap().clone();
+            game = game.clone_and_apply_move(action);
+        }
+    }
+
+    struct ScoreCase {
+        tricks_taken: Vec<i32>,
+        shorts: Vec<i32>,
+        expected_scores: Vec<i32>,
+    }
+
+    #[test]
+    fn test_score_game() {
+        let cases = vec![
+            // 0: Brother Barenstain won 1 trick and has 1 short: 1 point for 1 won
+            //    trick and 5 points for the 1 equal pair: 6 total points.
+            // 1: Sister Barenstain won 3 tricks and has 3 shorts: 3 points for 3
+            //    won tricks and 15 points for the 3 equal pairs: 18 total.
+            // 2: Ditka won 3 tricks and has 2 shorts: 3 points for 3 won tricks
+            //    and 6 points for the 2 unequal pairs: 9 total.
+            ScoreCase {
+                tricks_taken: vec![1, 3, 3],
+                shorts: vec![1, 3, 2],
+                expected_scores: vec![6, 18, 9],
+            },
+            // 0: Smokey won 1 trick and shorted 6 times: 1 point for 1 won trick
+            //    and 3 points for the 1 pair: 4 total
+            ScoreCase {
+                tricks_taken: vec![1, 0, 0],
+                shorts: vec![6, 0, 0],
+                expected_scores: vec![4, 0, 0],
+            },
+        ];
+        for test_case in cases.iter() {
+            let scores = score_game(
+                vec![0, 0, 0],
+                &test_case.tricks_taken,
+                test_case.shorts.clone(),
+            );
+            assert_eq!(scores, *test_case.expected_scores);
+        }
+        // scores should be added to existing scores
+        for test_case in cases {
+            let scores = score_game(
+                vec![1, 1, 1],
+                &test_case.tricks_taken,
+                test_case.shorts.clone(),
+            );
+            let expected_scores: Vec<i32> =
+                test_case.expected_scores.iter().map(|s| s + 1).collect();
+            assert_eq!(scores, expected_scores);
+        }
+    }
 }
