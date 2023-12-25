@@ -10,7 +10,7 @@ const PASS: i32 = 1;
 const DISCARD_OFFSET: i32 = 2; // 2-50 discards
 const PLAY_OFFSET: i32 = 51; // 51-99 plays
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
 enum State {
     #[default]
@@ -45,7 +45,7 @@ pub enum Suit {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Card {
-    id: i32,
+    pub id: i32,
     value: i32,
     suit: Suit,
 }
@@ -85,7 +85,7 @@ pub fn deck() -> Vec<Card> {
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-enum ChangeType {
+pub enum ChangeType {
     #[default]
     Deal,
     Discard,
@@ -117,11 +117,11 @@ enum Location {
     StageDrawDeck,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     #[serde(rename(serialize = "type", deserialize = "type"))]
-    change_type: ChangeType,
+    pub change_type: ChangeType,
     player: i32,
     object_id: i32,
     source_offset: i32,
@@ -135,24 +135,24 @@ pub struct Change {
     cards_remaining: i32,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Game {
     undo_players: HashSet<i32>,
     action_size: i32,
     hands: Vec<Vec<Card>>,
-    draw_decks: Vec<Vec<Card>>,
+    pub draw_decks: Vec<Vec<Card>>,
     shorts_piles: Vec<Vec<Card>>,
-    changes: Vec<Vec<Change>>,
+    pub changes: Vec<Vec<Change>>,
     tricks_taken: Vec<i32>,
     current_trick: Vec<Option<Card>>,
     lead_suit: Option<Suit>,
     round: i32,
     pub scores: Vec<i32>,
-    voids: Vec<HashSet<Suit>>,
+    pub voids: Vec<HashSet<Suit>>,
     current_player: i32,
     pub winner: Option<i32>,
-    dealer: i32,
+    pub dealer: i32,
     state: State,
     draw_players_remaining: Vec<i32>,
     lead_player: i32,
@@ -180,7 +180,7 @@ impl Game {
     fn deal(self: Game) -> Self {
         let mut new_game = self.clone();
         new_game.state = State::Discard;
-        new_game.current_trick = vec![None, None, None, None];
+        new_game.current_trick = vec![None, None, None];
         new_game.draw_players_remaining = (0..3).collect();
         new_game.tricks_taken = vec![0, 0, 0];
         new_game.hands = vec![vec![], vec![], vec![]];
@@ -223,9 +223,8 @@ impl Game {
             if action == DRAW {
                 // Once a player draws a card we don't know what their voids are
                 new_game.voids[new_game.current_player as usize] = HashSet::new();
-                let new_card: Card = new_game.draw_decks[new_game.current_player as usize]
-                    .pop()
-                    .expect("there has to be a card to draw");
+                let new_card: Card =
+                    new_game.draw_decks[new_game.current_player as usize].remove(0);
                 new_game.hands[new_game.current_player as usize].push(new_card);
                 new_game.hands[new_game.current_player as usize].sort_by(card_sorter);
                 new_game.changes[0].append(
@@ -263,7 +262,9 @@ impl Game {
                     .first()
                     .expect("draw_players_remaining cannot be empty here");
             }
-            show_playable(&new_game);
+            let change_offset = &new_game.changes.len() - 1;
+            let mut new_changes = show_playable(&new_game);
+            new_game.changes[change_offset].append(&mut new_changes);
             return new_game;
         }
         if new_game.state == State::Discard {
@@ -342,7 +343,9 @@ impl Game {
                 }
                 new_game.state = State::OptionalDraw;
             }
-            show_playable(&new_game);
+            let change_offset = &new_game.changes.len() - 1;
+            let mut new_changes = show_playable(&new_game);
+            new_game.changes[change_offset].append(&mut new_changes);
             return new_game;
         }
         let card_id = action - PLAY_OFFSET;
@@ -368,7 +371,9 @@ impl Game {
             )
             .as_mut(),
         );
-        hide_playable(&new_game);
+        let last_change = new_game.changes.len() - 1;
+        let mut changes = hide_playable(&new_game);
+        new_game.changes[last_change].append(&mut changes);
         new_game.current_trick[new_game.current_player as usize] = Some(*card);
         if let Some(suit) = new_game.lead_suit {
             // Player has revealed a void
@@ -458,10 +463,12 @@ impl Game {
                 new_game.current_player = new_game.lead_player;
                 new_game.state = State::Play;
             }
-            new_game.current_trick = vec![None, None, None, None];
+            new_game.current_trick = vec![None, None, None];
             new_game.lead_suit = None;
         }
-        new_game.changes.push(show_playable(&new_game));
+        let change_offset = &new_game.changes.len() - 1;
+        let mut new_changes = show_playable(&new_game);
+        new_game.changes[change_offset].append(&mut new_changes);
         new_game
     }
 
@@ -547,8 +554,9 @@ fn check_hand_end(new_game: &Game) -> Option<Game> {
     let mut new_game = new_game.clone();
 
     let original_scores: Vec<i32> = new_game.scores.clone();
-
-    hide_playable(&new_game);
+    let last_change = new_game.changes.len() - 1;
+    let mut changes = hide_playable(&new_game);
+    new_game.changes[last_change].append(&mut changes);
     new_game.scores = score_game(
         new_game.scores,
         &new_game.tricks_taken,
@@ -692,7 +700,9 @@ fn show_playable(new_game: &Game) -> Vec<Change> {
         }
         changes
     } else {
-        hide_playable(new_game)
+        let mut hide_changes = hide_playable(&new_game);
+        changes.append(&mut hide_changes);
+        changes
     }
 }
 
