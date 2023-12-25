@@ -11,6 +11,7 @@ const DISCARD_OFFSET: i32 = 2; // 2-50 discards
 const PLAY_OFFSET: i32 = 51; // 51-99 plays
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 enum State {
     #[default]
     Play,
@@ -32,6 +33,7 @@ enum State {
     PartialEq,
     Eq,
 )]
+#[serde(rename_all = "camelCase")]
 pub enum Suit {
     #[default]
     Red,
@@ -41,6 +43,7 @@ pub enum Suit {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Card {
     id: i32,
     value: i32,
@@ -81,6 +84,7 @@ pub fn deck() -> Vec<Card> {
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 enum ChangeType {
     #[default]
     Deal,
@@ -99,6 +103,7 @@ enum ChangeType {
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 enum Location {
     #[default]
     Deck,
@@ -113,7 +118,9 @@ enum Location {
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Change {
+    #[serde(rename(serialize = "type", deserialize = "type"))]
     change_type: ChangeType,
     player: i32,
     object_id: i32,
@@ -129,6 +136,7 @@ pub struct Change {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Game {
     undo_players: HashSet<i32>,
     action_size: i32,
@@ -146,7 +154,6 @@ pub struct Game {
     pub winner: Option<i32>,
     dealer: i32,
     state: State,
-    undo_plyaers: HashSet<i32>,
     draw_players_remaining: Vec<i32>,
     lead_player: i32,
 }
