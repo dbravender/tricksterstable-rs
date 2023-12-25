@@ -69,15 +69,15 @@ pub fn deck() -> Vec<Card> {
     for suit in all::<Suit>() {
         for value in 0..12 {
             deck.push(Card {
-                id: id,
+                id,
                 value: value + 1,
-                suit: suit,
+                suit,
             });
             id += 1;
         }
     }
     deck.shuffle(&mut thread_rng());
-    return deck;
+    deck
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -265,15 +265,14 @@ impl Game {
             let card_id = action - DISCARD_OFFSET;
             let card = all_cards
                 .iter()
-                .filter(|c| c.id == card_id)
-                .next()
+                .find(|c| c.id == card_id)
                 .expect("player played a card that should exist");
-            if new_game.draw_decks[new_game.current_player as usize].contains(&card) {
+            if new_game.draw_decks[new_game.current_player as usize].contains(card) {
                 // Allows undo
                 new_game.draw_decks[new_game.current_player as usize].retain(|c| c != card);
                 new_game.hands[new_game.current_player as usize].push(*card);
             }
-            if new_game.hands[new_game.current_player as usize].contains(&card) {
+            if new_game.hands[new_game.current_player as usize].contains(card) {
                 new_game.hands[new_game.current_player as usize].retain(|c| c != card);
                 new_game.draw_decks[new_game.current_player as usize].push(*card);
             }
@@ -342,8 +341,7 @@ impl Game {
         let card_id = action - PLAY_OFFSET;
         let card = &new_game.hands[new_game.current_player as usize]
             .iter()
-            .filter(|c| c.id == card_id)
-            .next()
+            .find(|c| c.id == card_id)
             .expect("this card has to be in the player's hand")
             .clone();
         new_game.hands[new_game.current_player as usize].retain(|c| c.id != card_id);
@@ -369,7 +367,7 @@ impl Game {
             // Player has revealed a void
             new_game.voids[new_game.current_player as usize].insert(suit);
         }
-        if None == new_game.lead_suit {
+        if new_game.lead_suit.is_none() {
             new_game.lead_suit = Some(card.suit);
         }
         new_game.current_player = (new_game.current_player + 1) % 3;
@@ -378,8 +376,7 @@ impl Game {
             let trick_winner = get_winner(new_game.lead_suit, &new_game.current_trick);
             let winning_card = new_game.current_trick[trick_winner as usize]
                 .expect("there has to be a trick_winner card");
-            new_game.tricks_taken[trick_winner as usize] =
-                new_game.tricks_taken[trick_winner as usize] + 1;
+            new_game.tricks_taken[trick_winner as usize] += 1;
             // winner of the trick leads
             new_game.current_player = trick_winner;
             new_game.lead_player = trick_winner;
@@ -416,7 +413,7 @@ impl Game {
                         source_offset: player as i32,
                         dest: Location::TricksTaken,
                         player: trick_winner,
-                        tricks_taken: new_game.tricks_taken[trick_winner as usize] as i32,
+                        tricks_taken: new_game.tricks_taken[trick_winner as usize],
                         ..Default::default()
                     });
                 } else {
@@ -458,7 +455,7 @@ impl Game {
             new_game.lead_suit = None;
         }
         new_game.changes.push(show_playable(&new_game));
-        return new_game;
+        new_game
     }
 
     pub fn get_moves(self: &Game) -> Vec<i32> {
@@ -485,7 +482,7 @@ impl Game {
             }
             return actions;
         }
-        if self.lead_suit != None {
+        if self.lead_suit.is_some() {
             actions = self.hands[self.current_player as usize]
                 .iter()
                 .filter(|c| Some(c.suit) == self.lead_suit)
@@ -510,17 +507,18 @@ fn card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-pub fn get_winner(lead_suit: Option<Suit>, trick: &Vec<Option<Card>>) -> i32 {
+pub fn get_winner(lead_suit: Option<Suit>, trick: &[Option<Card>]) -> i32 {
     let mut card_id_to_player: HashMap<i32, i32> = HashMap::new();
-    for player in 0..3 {
-        let card = trick[player].expect("each player must have played to the trick");
-        card_id_to_player.insert(card.id, player as i32);
+    for (player, card) in trick.iter().enumerate() {
+        if let Some(card) = card {
+            card_id_to_player.insert(card.id, player as i32);
+        }
     }
     let mut cards: Vec<Card> = trick
         .iter() // Convert the Vec into an Iterator
         .filter_map(|&x| x) // filter_map will only pass through the Some values
         .collect();
-    cards.sort_by(|a, b| value_for_card(lead_suit, b).cmp(&value_for_card(lead_suit, a)));
+    cards.sort_by_key(|c| std::cmp::Reverse(value_for_card(lead_suit, c)));
     return *card_id_to_player
         .get(&cards.first().expect("there should be a winning card").id)
         .expect("cards_to_player missing card");
@@ -531,7 +529,7 @@ pub fn value_for_card(lead_suit: Option<Suit>, card: &Card) -> i32 {
     if Some(card.suit) == lead_suit {
         lead_bonus += 100;
     }
-    return card.value + lead_bonus;
+    card.value + lead_bonus
 }
 
 fn check_hand_end(new_game: &Game) -> Option<Game> {
@@ -604,25 +602,25 @@ fn check_hand_end(new_game: &Game) -> Option<Game> {
         }]);
         new_game = new_game.deal();
     }
-    return Some(new_game);
+    Some(new_game)
 }
 
 pub fn score_game(
     original_scores: Vec<i32>,
-    tricks_taken: &Vec<i32>,
+    tricks_taken: &[i32],
     shorts_pile_lengths: Vec<i32>,
 ) -> Vec<i32> {
     let mut scores = original_scores.clone();
     for player in 0..3 {
-        scores[player] = scores[player] + tricks_taken[player];
+        scores[player] += tricks_taken[player];
         let mut score_per_match = 3;
         if shorts_pile_lengths[player] == tricks_taken[player] {
             score_per_match = 5;
         }
         let match_count = min(shorts_pile_lengths[player], tricks_taken[player]);
-        scores[player] = scores[player] + (match_count * score_per_match);
+        scores[player] += match_count * score_per_match;
     }
-    return scores;
+    scores
 }
 
 pub fn reorder_hand(player: i32, hand: &Vec<Card>) -> Vec<Change> {
@@ -638,7 +636,7 @@ pub fn reorder_hand(player: i32, hand: &Vec<Card>) -> Vec<Change> {
             ..Default::default()
         });
     }
-    return changes;
+    changes
 }
 
 fn show_playable(new_game: &Game) -> Vec<Change> {
@@ -685,9 +683,9 @@ fn show_playable(new_game: &Game) -> Vec<Change> {
                 });
             }
         }
-        return changes;
+        changes
     } else {
-        return hide_playable(&new_game);
+        hide_playable(new_game)
     }
 }
 
@@ -716,7 +714,7 @@ fn hide_playable(new_game: &Game) -> Vec<Change> {
         dest_offset: new_game.current_player,
         ..Default::default()
     });
-    return changes;
+    changes
 }
 
 #[cfg(test)]
@@ -741,28 +739,28 @@ mod tests {
         // Move the game through the discard phase
         for _ in 0..15 {
             assert_eq!(game.state, State::Discard);
-            let action = game.get_moves().first().unwrap().clone();
+            let action = *game.get_moves().first().unwrap();
             game = game.clone_and_apply_move(action);
         }
         assert_eq!(game.state, State::OptionalDraw);
-        assert_eq!(game.draw_decks.iter().all(|dd| dd.len() == 5), true);
-        assert_eq!(game.hands.iter().all(|h| h.len() == 11), true);
+        assert!(game.draw_decks.iter().all(|dd| dd.len() == 5));
+        assert!(game.hands.iter().all(|h| h.len() == 11));
         for _ in 0..3 {
             assert_eq!(game.state, State::OptionalDraw);
             game = game.clone_and_apply_move(DRAW);
         }
         // each player drew a card so we should have 4 left in
         // each draw deck
-        assert_eq!(game.draw_decks.iter().all(|dd| dd.len() == 4), true);
-        assert_eq!(game.hands.iter().all(|h| h.len() == 12), true);
+        assert!(game.draw_decks.iter().all(|dd| dd.len() == 4));
+        assert!(game.hands.iter().all(|h| h.len() == 12));
         assert_eq!(game.state, State::Play);
         for _ in 0..3 {
-            let action = game.get_moves().first().unwrap().clone();
+            let action = *game.get_moves().first().unwrap();
             game = game.clone_and_apply_move(action);
         }
         assert_eq!(game.tricks_taken.iter().sum::<i32>(), 1);
 
-        assert_eq!(game.hands.iter().all(|dd| dd.len() == 11), true);
+        assert!(game.hands.iter().all(|dd| dd.len() == 11));
     }
 
     #[test]
@@ -828,8 +826,8 @@ mod tests {
     #[test]
     fn test_random_playthrough() {
         let mut game = Game::new();
-        while game.winner == None {
-            let action = game.get_moves().first().unwrap().clone();
+        while game.winner.is_none() {
+            let action = *game.get_moves().first().unwrap();
             game = game.clone_and_apply_move(action);
         }
     }

@@ -8,7 +8,7 @@ fn main() {
     let mut scores = vec![0, 0, 0];
     for _ in 0..1000 {
         let mut game = games::szs::Game::new();
-        while game.winner == None {
+        while game.winner.is_none() {
             let mut actions = game.get_moves();
             actions.shuffle(&mut thread_rng());
             game = game.clone_and_apply_move(*actions.first().expect("should have a move to make"));
