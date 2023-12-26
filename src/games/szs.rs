@@ -521,7 +521,7 @@ fn card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-pub fn get_winner(lead_suit: Option<Suit>, trick: &[Option<Card>]) -> i32 {
+pub fn get_winner(lead_suit: Option<Suit>, trick: &Vec<Option<Card>>) -> i32 {
     let mut card_id_to_player: HashMap<i32, i32> = HashMap::new();
     for (player, card) in trick.iter().enumerate() {
         if let Some(card) = card {
@@ -622,7 +622,7 @@ fn check_hand_end(new_game: &Game) -> Option<Game> {
 
 pub fn score_game(
     original_scores: Vec<i32>,
-    tricks_taken: &[i32],
+    tricks_taken: &Vec<i32>,
     shorts_pile_lengths: Vec<i32>,
 ) -> Vec<i32> {
     let mut scores = original_scores.clone();
