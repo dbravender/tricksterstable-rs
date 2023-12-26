@@ -247,9 +247,9 @@ impl Game {
                     });
                 }
             }
-            new_game
-                .draw_players_remaining
-                .retain(|x| *x != new_game.current_player);
+            let mut new_players_remaining = new_game.draw_players_remaining.clone();
+            new_players_remaining.retain(|&x| x != new_game.current_player);
+            new_game.draw_players_remaining = new_players_remaining;
             if new_game.draw_players_remaining.is_empty() {
                 if let Some(finished_game) = check_hand_end(&new_game) {
                     return finished_game;
