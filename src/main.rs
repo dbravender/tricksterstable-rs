@@ -1,14 +1,17 @@
 use games::szs::{ChangeType, Game};
+use rand::random;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, prelude::*, BufReader};
+use std::time::Instant;
 
 pub mod games;
 
 fn main() {
-    let _ = verify_against_dart();
+    //let _ = verify_against_dart();
+    let _ = random_play();
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -66,17 +69,23 @@ fn verify_against_dart() -> io::Result<()> {
 }
 
 fn random_play() {
-    let mut scores = vec![0, 0, 0];
-    for _ in 0..1000 {
+    // let mut scores = vec![0, 0, 0];
+
+    let start = Instant::now();
+    for _ in 0..10000 {
         let mut game = games::szs::Game::new();
         while game.winner.is_none() {
             let mut actions = game.get_moves();
             actions.shuffle(&mut thread_rng());
             game = game.clone_and_apply_move(*actions.first().expect("should have a move to make"));
         }
-        print!(".");
-        io::stdout().flush().unwrap();
-        scores = (0..3).map(|x| scores[x] + game.scores[x]).collect();
+        // print!(".");
+        // io::stdout().flush().unwrap();
+        // scores = (0..3).map(|x| scores[x] + game.scores[x]).collect();
     }
-    println!("\n{:?}", scores);
+    // println!("\n{:?}", scores);
+
+    let duration = start.elapsed();
+
+    println!("Time elapsed for 10,000 games in Rust: {:?}", duration);
 }
