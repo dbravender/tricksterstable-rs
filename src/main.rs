@@ -8,6 +8,7 @@ use std::io::{self, prelude::*, BufReader};
 use std::time::Instant;
 
 pub mod games;
+pub mod utils;
 
 fn main() {
     //let _ = verify_against_dart();

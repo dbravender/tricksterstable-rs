@@ -47,7 +47,7 @@ pub enum Suit {
 pub struct Card {
     pub id: i32,
     value: i32,
-    suit: Suit,
+    pub suit: Suit,
 }
 
 fn move_offset(state: State, card: &Card) -> i32 {
@@ -147,7 +147,7 @@ pub struct Game {
     tricks_taken: Vec<i32>,
     current_trick: Vec<Option<Card>>,
     lead_suit: Option<Suit>,
-    round: i32,
+    pub round: i32,
     pub scores: Vec<i32>,
     pub voids: Vec<HashSet<Suit>>,
     current_player: i32,
@@ -843,6 +843,7 @@ mod tests {
     #[test]
     fn test_random_playthrough() {
         let mut game = Game::new();
+        game.round = 4;
         while game.winner.is_none() {
             let action = *game.get_moves().first().unwrap();
             game = game.clone_and_apply_move(action);
