@@ -8,15 +8,29 @@ use tricksterstable_rs::{
     utils::shuffle_and_divide_matching_cards,
 };
 
+fn szs_playthrough(no_changes: bool) {
+    let mut game = Game::new();
+    if no_changes {
+        game.with_no_changes();
+    }
+    game.round = 4;
+    while game.winner.is_none() {
+        let action = *game.get_moves().first().unwrap();
+        game = game.clone_and_apply_move(action);
+    }
+}
+
 #[bench]
 fn bench_random_playthrough(b: &mut Bencher) {
     b.iter(|| {
-        let mut game = Game::new();
-        game.round = 4;
-        while game.winner.is_none() {
-            let action = *game.get_moves().first().unwrap();
-            game = game.clone_and_apply_move(action);
-        }
+        szs_playthrough(false);
+    })
+}
+
+#[bench]
+fn bench_random_playthrough_no_changes(b: &mut Bencher) {
+    b.iter(|| {
+        szs_playthrough(true);
     })
 }
 
