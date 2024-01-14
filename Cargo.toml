@@ -12,6 +12,7 @@ rand = "0.8.5"
 serde = { version = "1.0.193", features = ["derive"] }
 shuffle = "0.1.7"
 serde_json = "1.0"
+ismcts = { git = "https://github.com/Deliquescence/ismcts" }
 
 [dev-dependencies]
 clippy = "0.0.302"

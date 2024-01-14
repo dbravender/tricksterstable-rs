@@ -2,8 +2,9 @@ use enum_iterator::{all, Sequence};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use std::cmp::{min, Ordering};
+use std::cmp::{max, min, Ordering};
 use std::collections::{HashMap, HashSet};
+use std::mem;
 
 const DRAW: i32 = 0;
 const PASS: i32 = 1;
@@ -751,6 +752,46 @@ fn hide_playable(new_game: &Game) -> Vec<Change> {
         ..Default::default()
     });
     changes
+}
+
+impl ismcts::Game for Game {
+    type Move = i32;
+    type PlayerTag = i32;
+    type MoveList = Vec<i32>;
+
+    fn randomize_determination(&mut self, observer: Self::PlayerTag) {
+        // TODO determine
+    }
+
+    fn current_player(&self) -> Self::PlayerTag {
+        self.current_player
+    }
+
+    fn next_player(&self) -> Self::PlayerTag {
+        (self.current_player + 1) % 3
+    }
+
+    fn available_moves(&self) -> Self::MoveList {
+        self.get_moves()
+    }
+
+    fn make_move(&mut self, mov: &Self::Move) {
+        // FIXME - updating in place would be much faster
+        let _ = mem::replace(self, self.clone().clone_and_apply_move(*mov));
+    }
+
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        if self.winner != None {
+            None
+        } else {
+            if self.winner == Some(player) {
+                Some(1.0)
+                //Some(1.0)
+            } else {
+                Some(-1.0)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use games::szs::{ChangeType, Game};
+use ismcts::{Game as MctsGame, IsmctsHandler};
 use rand::random;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,8 @@ pub mod utils;
 
 fn main() {
     //let _ = verify_against_dart();
-    let _ = random_play();
+    //let _ = random_play();
+    let _ = ismcts_play();
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -20,11 +22,11 @@ fn main() {
 struct TestCase {
     #[serde(rename(serialize = "move", deserialize = "move"))]
     action: Option<i32>,
-    game_state: Game,
+    game_state: games::szs::Game,
 }
 
 fn verify_against_dart() -> io::Result<()> {
-    let mut game: Game = Game::new();
+    let mut game: Game = games::szs::Game::new();
 
     let file = File::open("data/testrun.json.all")?;
     let reader = BufReader::new(file);
@@ -89,4 +91,29 @@ fn random_play() {
     let duration = start.elapsed();
 
     println!("Time elapsed for 10,000 games in Rust: {:?}", duration);
+}
+
+pub fn ismcts_move(game: &mut games::szs::Game) -> Option<i32> {
+    let mut new_game = game.clone();
+    new_game.round = 4;
+    let mut ismcts = IsmctsHandler::new(new_game);
+    ismcts.run_iterations(8, 1000 / 8);
+    // ismcts.debug_select();
+    ismcts.best_move()
+}
+
+pub fn ismcts_play() {
+    let mut game = games::szs::Game::new();
+    game.round = 4;
+    while game.winner.is_none() {
+        if game.current_player() == 0 {
+            let mov = ismcts_move(&mut game).unwrap();
+            game.make_move(&mov);
+        } else {
+            let mut actions = game.get_moves();
+            actions.shuffle(&mut thread_rng());
+            game = game.clone_and_apply_move(*actions.first().expect("should have a move to make"));
+        }
+    }
+    println!("Scores: {:?}", game.scores);
 }
