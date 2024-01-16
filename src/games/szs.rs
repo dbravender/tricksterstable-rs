@@ -6,6 +6,8 @@ use std::cmp::{max, min, Ordering};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 
+use crate::utils::shuffle_and_divide_matching_cards;
+
 const DRAW: i32 = 0;
 const PASS: i32 = 1;
 const DISCARD_OFFSET: i32 = 2; // 2-50 discards
@@ -760,7 +762,45 @@ impl ismcts::Game for Game {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, observer: Self::PlayerTag) {
-        // TODO determine
+        for p1 in 0..3 {
+            for p2 in 0..3 {
+                if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
+                    continue;
+                }
+
+                let mut combined_voids: HashSet<Suit> = HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
+                combined_voids.extend(self.voids[p2 as usize].iter());
+
+                let mut new_hands = vec![self.hands[p1 as usize].clone(), self.hands[p2 as usize].clone()];
+                //println!("original hands: {:?}", new_hands);
+
+                // allow swapping of any cards that are not in the combined void set
+                shuffle_and_divide_matching_cards(
+                    |c: &Card| !combined_voids.contains(&c.suit),
+                    &mut new_hands,
+                    &mut thread_rng(),
+                );
+
+                self.hands[p1 as usize] = new_hands[0].clone();
+                self.hands[p2 as usize] = new_hands[1].clone();
+                //println!("new hands: {:?} {:?}", self.hands[p1 as usize], self.hands[p2 as usize]);
+
+                // Draw deck shuffling
+
+                let mut new_draw_decks = vec![self.draw_decks[p1 as usize].clone(), self.draw_decks[p2 as usize].clone()];
+
+                // allow swapping of any cards
+                shuffle_and_divide_matching_cards(
+                    |_c: &Card| true,
+                    &mut new_draw_decks,
+                    &mut thread_rng(),
+                );
+
+                self.draw_decks[p1 as usize] = new_draw_decks[0].clone();
+                self.draw_decks[p2 as usize] = new_draw_decks[1].clone();
+
+            }
+        }
     }
 
     fn current_player(&self) -> Self::PlayerTag {

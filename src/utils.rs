@@ -5,7 +5,7 @@ use rand::{seq::SliceRandom, Rng};
 /// Used when determining possible cards a player could have in their
 /// hand given the current state of a game.
 pub fn shuffle_and_divide_matching_cards<T: Copy>(
-    matcher: fn(&T) -> bool,
+    matcher: impl Fn(&T) -> bool,
     hands: &mut Vec<Vec<T>>,
     rng: &mut impl Rng,
 ) {
