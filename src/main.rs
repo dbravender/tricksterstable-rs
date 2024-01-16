@@ -3,8 +3,9 @@ use ismcts::{Game as MctsGame, IsmctsHandler};
 use rand::random;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::hash::Hash;
 use std::io::{self, prelude::*, BufReader};
 use std::time::Instant;
 
@@ -93,27 +94,89 @@ fn random_play() {
     println!("Time elapsed for 10,000 games in Rust: {:?}", duration);
 }
 
-pub fn ismcts_move(game: &mut games::szs::Game) -> Option<i32> {
-    let mut new_game = game.clone();
-    new_game.round = 4;
-    let mut ismcts = IsmctsHandler::new(new_game);
-    ismcts.run_iterations(8, 1000 / 8);
-    // ismcts.debug_select();
-    ismcts.best_move()
+trait MoveMaker {
+    fn get_move(&self, game: &Game) -> i32;
+    fn get_name(&self) -> &str;
+}
+
+struct MCTSMove {}
+struct RandomMove {
+    id: String,
+}
+
+impl MoveMaker for MCTSMove {
+    fn get_move(&self, game: &Game) -> i32 {
+        let mut new_game = game.clone();
+        new_game.round = 4;
+        let mut ismcts = IsmctsHandler::new(new_game);
+        ismcts.run_iterations(8, 1000 / 8);
+        // ismcts.debug_select();
+        ismcts.best_move().expect("should have a move to make")
+    }
+
+    fn get_name(&self) -> &str {
+        "MCTS"
+    }
+}
+
+impl MoveMaker for RandomMove {
+    fn get_move(&self, game: &Game) -> i32 {
+        let mut actions = game.get_moves();
+        actions.shuffle(&mut thread_rng());
+        *actions.first().expect("should have a move to make")
+    }
+
+    fn get_name(&self) -> &str {
+        &self.id
+    }
 }
 
 pub fn ismcts_play() {
-    let mut game = games::szs::Game::new();
-    game.round = 4;
-    while game.winner.is_none() {
-        if game.current_player() == 0 {
-            let mov = ismcts_move(&mut game).unwrap();
-            game.make_move(&mov);
-        } else {
-            let mut actions = game.get_moves();
-            actions.shuffle(&mut thread_rng());
-            game = game.clone_and_apply_move(*actions.first().expect("should have a move to make"));
+    let mut players: Vec<Box<dyn MoveMaker>> = vec![
+        Box::new(MCTSMove {}),
+        Box::new(RandomMove {
+            id: String::from("random1"),
+        }),
+        Box::new(RandomMove {
+            id: String::from("random2"),
+        }),
+    ];
+    let mut wins: HashMap<String, usize> = HashMap::new();
+    for _i in 0..1 {
+        let mut start_game = games::szs::Game::new();
+        start_game.round = 4;
+        for cycle in 0..3 {
+            let mut total_move_time: HashMap<String, u128> = HashMap::new();
+            let mut game = start_game.clone();
+            let player = players.pop().unwrap();
+            players.insert(0, player);
+            let mut total_moves = 0;
+            while game.winner.is_none() {
+                total_moves += 1;
+                let start = Instant::now();
+                let mov = players[game.current_player() as usize].get_move(&game);
+                let duration = start.elapsed();
+                *total_move_time
+                    .entry(
+                        players[game.current_player() as usize]
+                            .get_name()
+                            .to_owned(),
+                    )
+                    .or_insert(0) += duration.as_millis();
+                game = game.clone_and_apply_move(mov);
+            }
+
+            let high_score = game.scores.iter().reduce(|x, y| if x > y { x } else { y });
+            for player in 0..3 {
+                if game.scores[player] == *high_score.unwrap() {
+                    *wins
+                        .entry(players[player].get_name().to_owned())
+                        .or_insert(0) += 1;
+                }
+            }
+            println!("total moves: {:?}", total_moves);
+            println!("wins: {:?}", wins);
+            println!("total_move_time: {:?}", total_move_time);
         }
     }
-    println!("Scores: {:?}", game.scores);
 }

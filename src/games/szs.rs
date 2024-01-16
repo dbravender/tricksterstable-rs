@@ -611,7 +611,7 @@ fn check_hand_end(new_game: &Game) -> Option<Game> {
             winners.push(player as i32);
         }
     }
-    if new_game.round >= 3 && winners.len() == 1 {
+    if new_game.round >= 3 {
         new_game.winner = Some(winners[0]);
         new_game.changes.push(vec![Change {
             change_type: ChangeType::GameOver,
@@ -781,14 +781,18 @@ impl ismcts::Game for Game {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        if self.winner != None {
+        if self.winner == None {
             None
         } else {
-            if self.winner == Some(player) {
-                Some(1.0)
-                //Some(1.0)
+            let mut sorted_scores = self.scores.clone();
+            sorted_scores.sort();
+            sorted_scores.reverse();
+            let high_score = sorted_scores[0];
+            let second_highest_score = sorted_scores[1];
+            if self.scores[player as usize] == high_score {
+                Some(f64::from(high_score))
             } else {
-                Some(-1.0)
+                Some(0.0)
             }
         }
     }
