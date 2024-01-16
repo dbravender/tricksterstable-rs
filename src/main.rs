@@ -109,7 +109,8 @@ impl MoveMaker for MCTSMove {
         let mut new_game = game.clone();
         new_game.round = 4;
         let mut ismcts = IsmctsHandler::new(new_game);
-        ismcts.run_iterations(8, 1000 / 8);
+        let parallel_threads: usize = 8;
+        ismcts.run_iterations(parallel_threads, 1000 / parallel_threads);
         // ismcts.debug_select();
         ismcts.best_move().expect("should have a move to make")
     }
@@ -142,7 +143,7 @@ pub fn ismcts_play() {
         }),
     ];
     let mut wins: HashMap<String, usize> = HashMap::new();
-    for _i in 0..1 {
+    for _i in 0..33 {
         let mut start_game = games::szs::Game::new();
         start_game.round = 4;
         for cycle in 0..3 {
