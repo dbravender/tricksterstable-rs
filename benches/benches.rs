@@ -2,7 +2,7 @@
 extern crate test;
 
 use rand::{rngs::StdRng, SeedableRng};
-use test::Bencher;
+use test::{black_box, Bencher};
 use tricksterstable_rs::{
     games::szs::{deck, Card, Game, Suit},
     utils::shuffle_and_divide_matching_cards,
@@ -23,14 +23,14 @@ fn szs_playthrough(no_changes: bool) {
 #[bench]
 fn bench_random_playthrough(b: &mut Bencher) {
     b.iter(|| {
-        szs_playthrough(false);
+        black_box(szs_playthrough(false));
     })
 }
 
 #[bench]
 fn bench_random_playthrough_no_changes(b: &mut Bencher) {
     b.iter(|| {
-        szs_playthrough(true);
+        black_box(szs_playthrough(true));
     })
 }
 
@@ -45,10 +45,10 @@ fn test_random_shuffles(b: &mut Bencher) {
         let hand2: Vec<Card> = deck_iter.take(5).cloned().collect();
         let mut hands = vec![hand1, hand2];
         let mut rng = StdRng::seed_from_u64(42);
-        shuffle_and_divide_matching_cards(
+        black_box(shuffle_and_divide_matching_cards(
             |c: &Card| c.suit != Suit::Red && c.suit != Suit::Blue,
             &mut hands,
             &mut rng,
-        );
+        ));
     })
 }

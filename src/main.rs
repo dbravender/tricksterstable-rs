@@ -145,6 +145,7 @@ pub fn ismcts_play() {
     let mut wins: HashMap<String, usize> = HashMap::new();
     for _i in 0..33 {
         let mut start_game = games::szs::Game::new();
+        start_game.with_no_changes();
         start_game.round = 4;
         for cycle in 0..3 {
             let mut total_move_time: HashMap<String, u128> = HashMap::new();
