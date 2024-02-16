@@ -13,9 +13,9 @@ pub mod games;
 pub mod utils;
 
 fn main() {
-    //let _ = verify_against_dart();
+    let _ = verify_against_dart();
     //let _ = random_play();
-    let _ = ismcts_play();
+    //let _ = ismcts_play();
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -56,6 +56,7 @@ fn verify_against_dart() -> io::Result<()> {
             game.dealer = test_case.game_state.dealer.clone();
             game.voids = vec![HashSet::new(), HashSet::new(), HashSet::new()];
             game.draw_decks = test_case.game_state.draw_decks.clone();
+            println!("rust: {}", serde_json::to_string(&game).unwrap());
             if game != test_case.game_state {
                 println!("test_count: {}", &test_count);
                 println!("move: {}", &test_case.action.unwrap());

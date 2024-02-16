@@ -159,7 +159,8 @@ pub struct Game {
     state: State,
     draw_players_remaining: Vec<i32>,
     lead_player: i32,
-    no_changes: bool,
+    #[serde(default)]
+    pub no_changes: bool,
 }
 
 impl Game {
@@ -768,10 +769,14 @@ impl ismcts::Game for Game {
                     continue;
                 }
 
-                let mut combined_voids: HashSet<Suit> = HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
+                let mut combined_voids: HashSet<Suit> =
+                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
                 combined_voids.extend(self.voids[p2 as usize].iter());
 
-                let mut new_hands = vec![self.hands[p1 as usize].clone(), self.hands[p2 as usize].clone()];
+                let mut new_hands = vec![
+                    self.hands[p1 as usize].clone(),
+                    self.hands[p2 as usize].clone(),
+                ];
                 //println!("original hands: {:?}", new_hands);
 
                 // allow swapping of any cards that are not in the combined void set
@@ -787,7 +792,10 @@ impl ismcts::Game for Game {
 
                 // Draw deck shuffling
 
-                let mut new_draw_decks = vec![self.draw_decks[p1 as usize].clone(), self.draw_decks[p2 as usize].clone()];
+                let mut new_draw_decks = vec![
+                    self.draw_decks[p1 as usize].clone(),
+                    self.draw_decks[p2 as usize].clone(),
+                ];
 
                 // allow swapping of any cards
                 shuffle_and_divide_matching_cards(
@@ -798,7 +806,6 @@ impl ismcts::Game for Game {
 
                 self.draw_decks[p1 as usize] = new_draw_decks[0].clone();
                 self.draw_decks[p2 as usize] = new_draw_decks[1].clone();
-
             }
         }
     }
@@ -828,11 +835,20 @@ impl ismcts::Game for Game {
             sorted_scores.sort();
             sorted_scores.reverse();
             let high_score = sorted_scores[0];
-            let second_highest_score = sorted_scores[1];
+            let mut high_score_count = 0;
+            for score in sorted_scores {
+                if score == high_score {
+                    high_score_count += 1;
+                }
+            }
             if self.scores[player as usize] == high_score {
-                Some(f64::from(high_score))
+                if high_score_count > 1 {
+                    Some(0.9)
+                } else {
+                    Some(1.0)
+                }
             } else {
-                Some(0.0)
+                Some(-1.0)
             }
         }
     }
