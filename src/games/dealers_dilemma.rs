@@ -8,7 +8,7 @@ use std::mem;
 
 use crate::utils::shuffle_and_divide_matching_cards;
 
-const PLAY_OFFSET: i32 = 0; // 0-36 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits
+const PLAY_OFFSET: i32 = 0; // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits
 const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card
 const BID_OFFSET: i32 = 38; // 38-? TODO bidding encoding
 
