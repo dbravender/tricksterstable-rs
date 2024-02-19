@@ -36,6 +36,61 @@ enum BidType {
     Zero { left: Card, right: Card },
 }
 
+fn difference(a: i32, b: i32) -> i32 {
+    if a > b {
+        a - b
+    } else {
+        b - a
+    }
+}
+
+impl BidType {
+    fn score_for_tricks(&self, tricks: i32) -> i32 {
+        match self {
+            BidType::Easy {
+                faceup: faceup_card,
+                facedown: facedown_card,
+            } => {
+                let lowest_bid = min(facedown_card.value, faceup_card.value);
+                let tricks_off = (lowest_bid - tricks).abs();
+                match tricks {
+                    // tricks won is equal to the hidden card: score 2 points
+                    _ if tricks == facedown_card.value => 2,
+                    // tricks won is equal to the revealed card: score 4 points
+                    _ if tricks == faceup_card.value => 4,
+                    // -1 point per trick missed from your lowest bid value
+                    _ => tricks_off * -1,
+                }
+            }
+            BidType::Top {
+                faceup: faceup_card,
+                facedown: _,
+            } => match tricks {
+                // tricks won is equal to your bid: score 8 points
+                _ if tricks == faceup_card.value => 8,
+                // -2 points per trick missed from your bid value.
+                _ => difference(tricks, faceup_card.value) * -2,
+            },
+            BidType::Difference {
+                faceup: faceup_card,
+                sideways: sideways_card,
+            } => {
+                let bid = difference(faceup_card.value, sideways_card.value);
+                match tricks {
+                    // tricks won is equal to your bid: score 8 points.
+                    _ if tricks == bid => 8,
+                    // -2 points per trick missed from your bid value
+                    _ => bid * -2,
+                }
+            }
+            BidType::Zero { left: _, right: _ } => match tricks {
+                _ if tricks == 0 => 6,
+                _ => tricks * -2,
+            },
+        }
+    }
+}
+
 #[derive(
     Debug,
     PartialOrd,
@@ -536,7 +591,7 @@ fn card_sorter(a: &Card, b: &Card) -> Ordering {
         Ordering::Equal => a.value.cmp(&b.value),
     }
 }
-
+*/
 pub fn get_winner(lead_suit: Option<Suit>, trick: &Vec<Option<Card>>) -> i32 {
     let mut card_id_to_player: HashMap<i32, i32> = HashMap::new();
     for (player, card) in trick.iter().enumerate() {
@@ -549,9 +604,9 @@ pub fn get_winner(lead_suit: Option<Suit>, trick: &Vec<Option<Card>>) -> i32 {
         .filter_map(|&x| x) // filter_map will only pass through the Some values
         .collect();
     cards.sort_by_key(|c| std::cmp::Reverse(value_for_card(lead_suit, c)));
-    return *card_id_to_player
+    *card_id_to_player
         .get(&cards.first().expect("there should be a winning card").id)
-        .expect("cards_to_player missing card");
+        .expect("cards_to_player missing card")
 }
 
 pub fn value_for_card(lead_suit: Option<Suit>, card: &Card) -> i32 {
@@ -562,6 +617,7 @@ pub fn value_for_card(lead_suit: Option<Suit>, card: &Card) -> i32 {
     card.value + lead_bonus
 }
 
+/*
 fn check_hand_end(new_game: &Game) -> Option<Game> {
     if !new_game.hands.iter().any(|x| x.is_empty()) {
         return None;
@@ -854,6 +910,7 @@ impl ismcts::Game for Game {
         }
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
@@ -862,43 +919,7 @@ mod tests {
     #[test]
     fn test_deck() {
         let d = deck();
-        assert_eq!(d.len(), 48);
-    }
-
-    #[test]
-    fn test_game_initialization() {
-        let mut game = Game::new();
-        for hand in game.hands.iter() {
-            assert_eq!(hand.len(), 16);
-        }
-        for draw_deck in game.draw_decks.iter() {
-            assert_eq!(draw_deck.len(), 0);
-        }
-        // Move the game through the discard phase
-        for _ in 0..15 {
-            assert_eq!(game.state, State::Discard);
-            let action = *game.get_moves().first().unwrap();
-            game = game.clone_and_apply_move(action);
-        }
-        assert_eq!(game.state, State::OptionalDraw);
-        assert!(game.draw_decks.iter().all(|dd| dd.len() == 5));
-        assert!(game.hands.iter().all(|h| h.len() == 11));
-        for _ in 0..3 {
-            assert_eq!(game.state, State::OptionalDraw);
-            game = game.clone_and_apply_move(DRAW);
-        }
-        // each player drew a card so we should have 4 left in
-        // each draw deck
-        assert!(game.draw_decks.iter().all(|dd| dd.len() == 4));
-        assert!(game.hands.iter().all(|h| h.len() == 12));
-        assert_eq!(game.state, State::Play);
-        for _ in 0..3 {
-            let action = *game.get_moves().first().unwrap();
-            game = game.clone_and_apply_move(action);
-        }
-        assert_eq!(game.tricks_taken.iter().sum::<i32>(), 1);
-
-        assert!(game.hands.iter().all(|dd| dd.len() == 11));
+        assert_eq!(d.len(), 36);
     }
 
     #[test]
@@ -961,15 +982,186 @@ mod tests {
         );
     }
 
+    struct BidTestCase {
+        bid_type: BidType,
+        tricks: i32,
+        expected_score: i32,
+    }
+
     #[test]
-    fn test_random_playthrough() {
-        let mut game = Game::new();
-        game.round = 4;
-        while game.winner.is_none() {
-            let action = *game.get_moves().first().unwrap();
-            game = game.clone_and_apply_move(action);
+    fn test_bid_calculation() {
+        let cases = vec![
+            // successful top bid
+            BidTestCase {
+                bid_type: BidType::Top {
+                    faceup: Card {
+                        suit: Suit::Red,
+                        value: 2,
+                        id: 0,
+                    },
+                    facedown: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 2,
+                expected_score: 8,
+            },
+            // failed top bid
+            BidTestCase {
+                bid_type: BidType::Top {
+                    faceup: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    facedown: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 2,
+                expected_score: -2,
+            },
+            // successful zero bid
+            BidTestCase {
+                bid_type: BidType::Zero {
+                    left: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    right: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 0,
+                expected_score: 6,
+            },
+            // failed zero bid
+            BidTestCase {
+                bid_type: BidType::Zero {
+                    left: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    right: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 2,
+                expected_score: -4,
+            },
+            // successful easy bid - faceup
+            BidTestCase {
+                bid_type: BidType::Easy {
+                    faceup: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    facedown: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 3,
+                expected_score: 4,
+            },
+            // successful easy bid - facedown
+            BidTestCase {
+                bid_type: BidType::Easy {
+                    faceup: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    facedown: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 4,
+                expected_score: 2,
+            },
+            // failed easy bid
+            BidTestCase {
+                bid_type: BidType::Easy {
+                    faceup: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    facedown: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 5,
+                expected_score: -2,
+            },
+            // successful difference bid
+            BidTestCase {
+                bid_type: BidType::Difference {
+                    faceup: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    sideways: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 1,
+                expected_score: 8,
+            },
+            // failed difference bid
+            BidTestCase {
+                bid_type: BidType::Difference {
+                    faceup: Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        id: 0,
+                    },
+                    sideways: Card {
+                        suit: Suit::Red,
+                        value: 4,
+                        id: 0,
+                    },
+                },
+                tricks: 2,
+                expected_score: -2,
+            },
+        ];
+        for test_case in cases.iter() {
+            assert_eq!(
+                test_case.bid_type.score_for_tricks(test_case.tricks),
+                test_case.expected_score
+            );
         }
     }
+
+    // #[test]
+    // fn test_random_playthrough() {
+    //     let mut game = Game::new();
+    //     game.round = 4;
+    //     while game.winner.is_none() {
+    //         let action = *game.get_moves().first().unwrap();
+    //         game = game.clone_and_apply_move(action);
+    //     }
+    // }
 
     struct ScoreCase {
         tricks_taken: Vec<i32>,
@@ -977,47 +1169,46 @@ mod tests {
         expected_scores: Vec<i32>,
     }
 
-    #[test]
-    fn test_score_game() {
-        let cases = vec![
-            // 0: Brother Barenstain won 1 trick and has 1 short: 1 point for 1 won
-            //    trick and 5 points for the 1 equal pair: 6 total points.
-            // 1: Sister Barenstain won 3 tricks and has 3 shorts: 3 points for 3
-            //    won tricks and 15 points for the 3 equal pairs: 18 total.
-            // 2: Ditka won 3 tricks and has 2 shorts: 3 points for 3 won tricks
-            //    and 6 points for the 2 unequal pairs: 9 total.
-            ScoreCase {
-                tricks_taken: vec![1, 3, 3],
-                shorts: vec![1, 3, 2],
-                expected_scores: vec![6, 18, 9],
-            },
-            // 0: Smokey won 1 trick and shorted 6 times: 1 point for 1 won trick
-            //    and 3 points for the 1 pair: 4 total
-            ScoreCase {
-                tricks_taken: vec![1, 0, 0],
-                shorts: vec![6, 0, 0],
-                expected_scores: vec![4, 0, 0],
-            },
-        ];
-        for test_case in cases.iter() {
-            let scores = score_game(
-                vec![0, 0, 0],
-                &test_case.tricks_taken,
-                test_case.shorts.clone(),
-            );
-            assert_eq!(scores, *test_case.expected_scores);
-        }
-        // scores should be added to existing scores
-        for test_case in cases {
-            let scores = score_game(
-                vec![1, 1, 1],
-                &test_case.tricks_taken,
-                test_case.shorts.clone(),
-            );
-            let expected_scores: Vec<i32> =
-                test_case.expected_scores.iter().map(|s| s + 1).collect();
-            assert_eq!(scores, expected_scores);
-        }
-    }
+    // #[test]
+    // fn test_score_game() {
+    //     let cases = vec![
+    //         // 0: Brother Barenstain won 1 trick and has 1 short: 1 point for 1 won
+    //         //    trick and 5 points for the 1 equal pair: 6 total points.
+    //         // 1: Sister Barenstain won 3 tricks and has 3 shorts: 3 points for 3
+    //         //    won tricks and 15 points for the 3 equal pairs: 18 total.
+    //         // 2: Ditka won 3 tricks and has 2 shorts: 3 points for 3 won tricks
+    //         //    and 6 points for the 2 unequal pairs: 9 total.
+    //         ScoreCase {
+    //             tricks_taken: vec![1, 3, 3],
+    //             shorts: vec![1, 3, 2],
+    //             expected_scores: vec![6, 18, 9],
+    //         },
+    //         // 0: Smokey won 1 trick and shorted 6 times: 1 point for 1 won trick
+    //         //    and 3 points for the 1 pair: 4 total
+    //         ScoreCase {
+    //             tricks_taken: vec![1, 0, 0],
+    //             shorts: vec![6, 0, 0],
+    //             expected_scores: vec![4, 0, 0],
+    //         },
+    //     ];
+    //     for test_case in cases.iter() {
+    //         let scores = score_game(
+    //             vec![0, 0, 0],
+    //             &test_case.tricks_taken,
+    //             test_case.shorts.clone(),
+    //         );
+    //         assert_eq!(scores, *test_case.expected_scores);
+    //     }
+    //     // scores should be added to existing scores
+    //     for test_case in cases {
+    //         let scores = score_game(
+    //             vec![1, 1, 1],
+    //             &test_case.tricks_taken,
+    //             test_case.shorts.clone(),
+    //         );
+    //         let expected_scores: Vec<i32> =
+    //             test_case.expected_scores.iter().map(|s| s + 1).collect();
+    //         assert_eq!(scores, expected_scores);
+    //     }
+    // }
 }
-*/
