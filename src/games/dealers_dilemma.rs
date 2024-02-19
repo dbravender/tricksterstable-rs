@@ -1,3 +1,9 @@
+/*
+Game: Dealer's Dilemma
+Designer: Shreesh Bhat
+BoardGameGeek: https://boardgamegeek.com/boardgame/378945/dealers-dilemma
+*/
+
 use enum_iterator::{all, Sequence};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -164,6 +170,7 @@ pub struct Game {
     pub no_changes: bool,
 }
 
+/*
 impl Game {
     /// Factory to create a default game
     pub fn new() -> Game {

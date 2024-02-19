@@ -1,8 +1,14 @@
+/*
+Game: Short Zoot Suit
+Designer: Taylor Reiner
+BoardGameGeek: https://boardgamegeek.com/boardgame/366458/short-zoot-suit
+*/
+
 use enum_iterator::{all, Sequence};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
-use std::cmp::{max, min, Ordering};
+use std::cmp::{min, Ordering};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 
@@ -762,7 +768,7 @@ impl ismcts::Game for Game {
     type PlayerTag = i32;
     type MoveList = Vec<i32>;
 
-    fn randomize_determination(&mut self, observer: Self::PlayerTag) {
+    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
         for p1 in 0..3 {
             for p2 in 0..3 {
                 if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
