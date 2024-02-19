@@ -31,7 +31,7 @@ enum State {
 #[serde(rename_all = "camelCase")]
 enum BidType {
     Easy { facedown: Card, faceup: Card },
-    Top { facedown: Card, faceup: Card },
+    Top { top: Card, bottom: Card },
     Difference { faceup: Card, sideways: Card },
     Zero { left: Card, right: Card },
 }
@@ -63,8 +63,8 @@ impl BidType {
                 }
             }
             BidType::Top {
-                faceup: faceup_card,
-                facedown: _,
+                top: faceup_card,
+                bottom: _,
             } => match tricks {
                 // tricks won is equal to your bid: score 8 points
                 _ if tricks == faceup_card.value => 8,
@@ -994,12 +994,12 @@ mod tests {
             // successful top bid
             BidTestCase {
                 bid_type: BidType::Top {
-                    faceup: Card {
+                    top: Card {
                         suit: Suit::Red,
                         value: 2,
                         id: 0,
                     },
-                    facedown: Card {
+                    bottom: Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
@@ -1011,12 +1011,12 @@ mod tests {
             // failed top bid
             BidTestCase {
                 bid_type: BidType::Top {
-                    faceup: Card {
+                    top: Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
                     },
-                    facedown: Card {
+                    bottom: Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
