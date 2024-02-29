@@ -14,26 +14,40 @@ use std::mem;
 
 use crate::utils::shuffle_and_divide_matching_cards;
 
-const PLAY_OFFSET: i32 = 0; // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits
+const PLAY_OFFSET: i32 = 0; // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for playing)
 const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card
-const BID_OFFSET: i32 = 38; // 38-? TODO bidding encoding
+const BID_CARD_OFFSET: i32 = 38; // 38-74 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
+const BID_TYPE_OFFSET: i32 = 74; // 74-78 Easy, Top, Difference, Zero
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
 enum State {
     #[default]
     Play, // trick taking, must follow
-    Bid, // each player bids by putting 2 cards from their hand onto the table in front of them
+    BidType,      // the type of bid the player is selecting
+    BidCard, // each player bids by putting 2 cards from their hand onto the table in front of them
     DealerSelect, // the Dealer picks one of the cards into their hand
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
 enum BidType {
-    Easy { facedown: Card, faceup: Card },
-    Top { top: Card, bottom: Card },
-    Difference { faceup: Card, sideways: Card },
-    Zero { left: Card, right: Card },
+    Easy {
+        facedown: Option<Card>,
+        faceup: Option<Card>,
+    },
+    Top {
+        top: Option<Card>,
+        bottom: Option<Card>,
+    },
+    Difference {
+        faceup: Option<Card>,
+        sideways: Option<Card>,
+    },
+    Zero {
+        left: Option<Card>,
+        right: Option<Card>,
+    },
 }
 
 fn difference(a: i32, b: i32) -> i32 {
@@ -51,13 +65,13 @@ impl BidType {
                 faceup: faceup_card,
                 facedown: facedown_card,
             } => {
-                let lowest_bid = min(facedown_card.value, faceup_card.value);
+                let lowest_bid = min(facedown_card.unwrap().value, faceup_card.unwrap().value);
                 let tricks_off = (lowest_bid - tricks).abs();
                 match tricks {
                     // tricks won is equal to the hidden card: score 2 points
-                    _ if tricks == facedown_card.value => 2,
+                    _ if tricks == facedown_card.unwrap().value => 2,
                     // tricks won is equal to the revealed card: score 4 points
-                    _ if tricks == faceup_card.value => 4,
+                    _ if tricks == faceup_card.unwrap().value => 4,
                     // -1 point per trick missed from your lowest bid value
                     _ => tricks_off * -1,
                 }
@@ -67,15 +81,15 @@ impl BidType {
                 bottom: _,
             } => match tricks {
                 // tricks won is equal to your bid: score 8 points
-                _ if tricks == faceup_card.value => 8,
+                _ if tricks == faceup_card.unwrap().value => 8,
                 // -2 points per trick missed from your bid value.
-                _ => difference(tricks, faceup_card.value) * -2,
+                _ => difference(tricks, faceup_card.unwrap().value) * -2,
             },
             BidType::Difference {
                 faceup: faceup_card,
                 sideways: sideways_card,
             } => {
-                let bid = difference(faceup_card.value, sideways_card.value);
+                let bid = difference(faceup_card.unwrap().value, sideways_card.unwrap().value);
                 match tricks {
                     // tricks won is equal to your bid: score 8 points.
                     _ if tricks == bid => 8,
@@ -125,16 +139,26 @@ pub struct Card {
 fn move_offset(state: State, card: &Card) -> i32 {
     match state {
         State::Play => 0,
-        State::Bid => card.id + BID_OFFSET,
+        State::BidCard => card.id + BID_CARD_OFFSET,
         State::DealerSelect => DEALER_SELECT_CARD,
+        State::BidType => unreachable!(),
     }
 }
-
 fn card_offset(state: State, offset: i32) -> i32 {
     match state {
         State::Play => offset,
-        State::Bid => offset - BID_OFFSET,
+        State::BidCard => offset - BID_CARD_OFFSET,
         State::DealerSelect => offset - DEALER_SELECT_CARD,
+        State::BidType => unreachable!(),
+    }
+}
+
+fn bid_type_offset(bid: BidType) -> i32 {
+    match bid {
+        BidType::Easy { faceup, facedown } => 0,
+        BidType::Top { top, bottom } => 1,
+        BidType::Zero { left, right } => 2,
+        BidType::Difference { faceup, sideways } => 3,
     }
 }
 
@@ -557,6 +581,15 @@ impl Game {
         }
     */
     pub fn get_moves(self: &Game) -> Vec<i32> {
+        if self.state == State::BidType {
+            return (0..4).map(|x| x + BID_TYPE_OFFSET).collect();
+        }
+        if self.state == State::BidCard {
+            return self.hands[self.current_player as usize]
+                .iter()
+                .map(|c| move_offset(self.state, c))
+                .collect();
+        }
         if self.state == State::DealerSelect {
             return vec![
                 move_offset(self.state, &self.dealer_select[0]),
@@ -897,16 +930,16 @@ mod tests {
             // successful top bid
             BidTestCase {
                 bid_type: BidType::Top {
-                    top: Card {
+                    top: Some(Card {
                         suit: Suit::Red,
                         value: 2,
                         id: 0,
-                    },
-                    bottom: Card {
+                    }),
+                    bottom: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 2,
                 expected_score: 8,
@@ -914,16 +947,16 @@ mod tests {
             // failed top bid
             BidTestCase {
                 bid_type: BidType::Top {
-                    top: Card {
+                    top: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    bottom: Card {
+                    }),
+                    bottom: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 2,
                 expected_score: -2,
@@ -931,16 +964,16 @@ mod tests {
             // successful zero bid
             BidTestCase {
                 bid_type: BidType::Zero {
-                    left: Card {
+                    left: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    right: Card {
+                    }),
+                    right: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 0,
                 expected_score: 6,
@@ -948,16 +981,16 @@ mod tests {
             // failed zero bid
             BidTestCase {
                 bid_type: BidType::Zero {
-                    left: Card {
+                    left: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    right: Card {
+                    }),
+                    right: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 2,
                 expected_score: -4,
@@ -965,16 +998,16 @@ mod tests {
             // successful easy bid - faceup
             BidTestCase {
                 bid_type: BidType::Easy {
-                    faceup: Card {
+                    faceup: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    facedown: Card {
+                    }),
+                    facedown: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 3,
                 expected_score: 4,
@@ -982,16 +1015,16 @@ mod tests {
             // successful easy bid - facedown
             BidTestCase {
                 bid_type: BidType::Easy {
-                    faceup: Card {
+                    faceup: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    facedown: Card {
+                    }),
+                    facedown: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 4,
                 expected_score: 2,
@@ -999,16 +1032,16 @@ mod tests {
             // failed easy bid
             BidTestCase {
                 bid_type: BidType::Easy {
-                    faceup: Card {
+                    faceup: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    facedown: Card {
+                    }),
+                    facedown: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 5,
                 expected_score: -2,
@@ -1016,16 +1049,16 @@ mod tests {
             // successful difference bid
             BidTestCase {
                 bid_type: BidType::Difference {
-                    faceup: Card {
+                    faceup: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    sideways: Card {
+                    }),
+                    sideways: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 1,
                 expected_score: 8,
@@ -1033,16 +1066,16 @@ mod tests {
             // failed difference bid
             BidTestCase {
                 bid_type: BidType::Difference {
-                    faceup: Card {
+                    faceup: Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
-                    },
-                    sideways: Card {
+                    }),
+                    sideways: Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
-                    },
+                    }),
                 },
                 tricks: 2,
                 expected_score: -2,
