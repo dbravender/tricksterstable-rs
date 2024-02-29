@@ -1,4 +1,3 @@
-
 use rand::{seq::SliceRandom, Rng};
 
 /// Shuffle and exchanges items matching criteria between two lists
@@ -15,7 +14,7 @@ pub fn shuffle_and_divide_matching_cards<T: Copy>(
     ];
     // Pre-allocate array so we don't spend time growing the array
     // (might waste a little space but should get more performance)
-    let mut matched_cards: Vec<T> = Vec::with_capacity(hands[0].len() +  hands[1].len());
+    let mut matched_cards: Vec<T> = Vec::with_capacity(hands[0].len() + hands[1].len());
 
     // Find all cards that match the criteria
     for hand_index in 0..2 {
@@ -46,7 +45,7 @@ pub fn shuffle_and_divide_matching_cards<T: Copy>(
 pub mod tests {
     use super::shuffle_and_divide_matching_cards;
     use enum_iterator::{all, Sequence};
-    use rand::{rngs::StdRng, SeedableRng, seq::SliceRandom, RngCore, thread_rng};
+    use rand::{rngs::StdRng, seq::SliceRandom, thread_rng, RngCore, SeedableRng};
 
     #[derive(Debug, Clone, Copy, PartialEq, Sequence, PartialOrd, Ord, Eq)]
     enum Suit {
@@ -166,5 +165,4 @@ pub mod tests {
             ]
         );
     }
-
 }
