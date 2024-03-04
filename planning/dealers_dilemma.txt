@@ -1,0 +1,38 @@
+Phase 1: Build the game engine.
+
+TODO:
+* Clone and apply move
+* Score game (most of this logic is already done with in the bidding functions)
+
+Phase 2: Train AI 
+
+Part 1: Train a model to output just a bid value - not cards to bid. Want to get this initial neural network to know, with a given encoded hand, how many tricks it can win with decent play.
+
+In Dealer's Dilemma there are several bidding options:
+
+Easy: one card is placed face-up and one card is placed face-down. If you take the same number of tricks as the face-up card you win 4 points. If you take the same number of tricks as the face-down card you win 2 points.
+
+Top: two cards are face-up - one on top of the other. The value of the top-most card is your bid. Hitting your bid gives you 8 points.
+
+Zero: two cards are face-up next to each other. 
+
+"points" will be calculated similar to bridge bidding
+
+10 -> 4
+9 -> 3
+8 -> 2
+7 -> 1
+
+Inputs:
+Size Value            Description
+1    (points / 10)    Trump suit points
+1    (points / 10)    Highest non-trump suit points
+1    (points / 10)    Second highest non-trump suit points
+1    (points / 10)    Third highest non-trump suit points
+1    (boolean)        1-hot encoding set to 1 when player has no trump cards
+3    (1-hot encoding) 1-hot encoding of values (0-3) number of non-trump suits with voids
+
+Output:
+Category distribution?
+
+66 possible bids per hand (12 choose 2) dealer has 55 because they can't use the lead card (11 choose 2). 
