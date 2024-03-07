@@ -50,6 +50,15 @@ enum BidType {
     },
 }
 
+impl Default for BidType {
+    fn default() -> Self {
+        BidType::Easy {
+            facedown: None,
+            faceup: None,
+        }
+    }
+}
+
 fn difference(a: i32, b: i32) -> i32 {
     if a > b {
         a - b
@@ -232,15 +241,16 @@ pub struct Change {
 #[serde(rename_all = "camelCase")]
 pub struct Game {
     action_size: i32,
-    hands: Vec<Vec<Card>>,
+    hands: [Vec<Card>; 3],
     pub changes: Vec<Vec<Change>>,
-    tricks_taken: Vec<i32>,
-    current_trick: Vec<Option<Card>>,
+    tricks_taken: [i32; 3],
+    bids: [Option<BidType>; 3],
+    current_trick: [Option<Card>; 3],
     pub dealer_select: Vec<Card>,
     lead_suit: Option<Suit>,
     pub round: i32,
-    pub scores: Vec<i32>,
-    pub voids: Vec<HashSet<Suit>>,
+    pub scores: [i32; 3],
+    pub voids: [HashSet<Suit>; 3],
     current_player: i32,
     pub winner: Option<i32>,
     pub dealer: i32,
@@ -255,7 +265,7 @@ impl Game {
     pub fn new() -> Game {
         let game = Game::default();
         let mut game = game.deal();
-        game.scores = vec![0, 0, 0];
+        game.scores = [0, 0, 0];
         game.changes.push(show_playable(&game));
         game
     }
@@ -268,18 +278,19 @@ impl Game {
     fn deal(self: Game) -> Self {
         let mut new_game = self.clone();
         new_game.state = State::DealerSelect;
-        new_game.current_trick = vec![None, None, None];
-        new_game.tricks_taken = vec![0, 0, 0];
-        new_game.hands = vec![vec![], vec![], vec![]];
+        new_game.bids = [None, None, None];
+        new_game.current_trick = [None, None, None];
+        new_game.tricks_taken = [0, 0, 0];
+        new_game.hands = [vec![], vec![], vec![]];
         new_game.dealer = (new_game.dealer + 1) % 3;
         new_game.current_player = new_game.dealer;
-        new_game.voids = vec![HashSet::new(), HashSet::new(), HashSet::new()];
+        new_game.voids = [HashSet::new(), HashSet::new(), HashSet::new()];
         let mut cards = deck();
         let deal_index: usize = new_game.changes.len();
         let reorder_index = deal_index + 1;
         new_game.changes.push(vec![]); // deal_index
         new_game.changes.push(vec![]); // reorder_index
-        new_game.hands = vec![vec![], vec![], vec![]];
+        new_game.hands = [vec![], vec![], vec![]];
         new_game.dealer_select = vec![];
 
         for y in 0..12 {
@@ -423,14 +434,15 @@ impl Game {
                 }
             }
 
-            if let Some(finished_game) = check_hand_end(&new_game) {
-                return finished_game;
+            if new_game.hands.iter().all(|h| h.is_empty()) {
+                // TODO: score and determine winner(s)
+                return new_game;
             }
 
             new_game.current_player = new_game.lead_player;
             new_game.state = State::Play;
 
-            new_game.current_trick = vec![None, None, None];
+            new_game.current_trick = [None, None, None];
             new_game.lead_suit = None;
         }
         let change_offset = &new_game.changes.len() - 1;
@@ -480,7 +492,7 @@ fn card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-pub fn get_winner(lead_suit: Option<Suit>, trick: &Vec<Option<Card>>) -> i32 {
+pub fn get_winner(lead_suit: Option<Suit>, trick: &[Option<Card>; 3]) -> i32 {
     let mut card_id_to_player: HashMap<i32, i32> = HashMap::new();
     for (player, card) in trick.iter().enumerate() {
         if let Some(card) = card {
@@ -722,7 +734,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
-                &vec![
+                &[
                     Some(Card {
                         id: 0,
                         value: 7,
@@ -738,11 +750,6 @@ mod tests {
                         value: 9,
                         suit: Suit::Blue
                     }),
-                    Some(Card {
-                        id: 3,
-                        value: 1,
-                        suit: Suit::Yellow
-                    }),
                 ]
             ),
             2
@@ -750,7 +757,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
-                &vec![
+                &[
                     Some(Card {
                         id: 0,
                         value: 9,
@@ -765,11 +772,6 @@ mod tests {
                         id: 2,
                         value: 1,
                         suit: Suit::Red
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 7,
-                        suit: Suit::Blue
                     }),
                 ]
             ),
