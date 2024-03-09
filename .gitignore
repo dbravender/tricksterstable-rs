@@ -1,2 +1,4 @@
 /data/testrun.json.all
 /target
+/.ignore
+/.pijul
