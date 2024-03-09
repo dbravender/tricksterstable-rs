@@ -163,10 +163,16 @@ fn card_offset(state: State, offset: i32) -> i32 {
 
 fn bid_type_offset(bid: BidType) -> i32 {
     match bid {
-        BidType::Easy { faceup, facedown } => 0,
-        BidType::Top { top, bottom } => 1,
-        BidType::Zero { left, right } => 2,
-        BidType::Difference { faceup, sideways } => 3,
+        BidType::Easy {
+            faceup: _,
+            facedown: _,
+        } => 0,
+        BidType::Top { top: _, bottom: _ } => 1,
+        BidType::Zero { left: _, right: _ } => 2,
+        BidType::Difference {
+            faceup: _,
+            sideways: _,
+        } => 3,
     }
 }
 
@@ -248,6 +254,7 @@ pub struct Game {
     current_trick: [Option<Card>; 3],
     pub dealer_select: Vec<Card>,
     lead_suit: Option<Suit>,
+    trump_suit: Option<Suit>,
     pub round: i32,
     pub scores: [i32; 3],
     pub voids: [HashSet<Suit>; 3],
@@ -386,7 +393,13 @@ impl Game {
         new_game.current_player = (new_game.current_player + 1) % 3;
         // end trick
         if new_game.current_trick.iter().flatten().count() == 3 {
-            let trick_winner = get_winner(new_game.lead_suit, &new_game.current_trick);
+            let trick_winner = get_winner(
+                new_game.lead_suit,
+                new_game
+                    .trump_suit
+                    .expect("trump has to be defined at this point"),
+                &new_game.current_trick,
+            );
             let winning_card = new_game.current_trick[trick_winner as usize]
                 .expect("there has to be a trick_winner card");
             new_game.tricks_taken[trick_winner as usize] += 1;
@@ -444,6 +457,7 @@ impl Game {
 
             new_game.current_trick = [None, None, None];
             new_game.lead_suit = None;
+            new_game.trump_suit = None;
         }
         let change_offset = &new_game.changes.len() - 1;
         let mut new_changes = show_playable(&new_game);
@@ -492,7 +506,7 @@ fn card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-pub fn get_winner(lead_suit: Option<Suit>, trick: &[Option<Card>; 3]) -> i32 {
+pub fn get_winner(lead_suit: Option<Suit>, trump_suit: Suit, trick: &[Option<Card>; 3]) -> i32 {
     let mut card_id_to_player: HashMap<i32, i32> = HashMap::new();
     for (player, card) in trick.iter().enumerate() {
         if let Some(card) = card {
@@ -503,18 +517,21 @@ pub fn get_winner(lead_suit: Option<Suit>, trick: &[Option<Card>; 3]) -> i32 {
         .iter() // Convert the Vec into an Iterator
         .filter_map(|&x| x) // filter_map will only pass through the Some values
         .collect();
-    cards.sort_by_key(|c| std::cmp::Reverse(value_for_card(lead_suit, c)));
+    cards.sort_by_key(|c| std::cmp::Reverse(value_for_card(lead_suit, trump_suit, c)));
     *card_id_to_player
         .get(&cards.first().expect("there should be a winning card").id)
         .expect("cards_to_player missing card")
 }
 
-pub fn value_for_card(lead_suit: Option<Suit>, card: &Card) -> i32 {
-    let mut lead_bonus: i32 = 0;
+pub fn value_for_card(lead_suit: Option<Suit>, trump_suit: Suit, card: &Card) -> i32 {
+    let mut bonus: i32 = 0;
     if Some(card.suit) == lead_suit {
-        lead_bonus += 100;
+        bonus += 100;
     }
-    card.value + lead_bonus
+    if card.suit == trump_suit {
+        bonus += 200;
+    }
+    card.value + bonus
 }
 
 /*
@@ -734,6 +751,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
+                Suit::Blue,
                 &[
                     Some(Card {
                         id: 0,
@@ -757,6 +775,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
+                Suit::Blue,
                 &[
                     Some(Card {
                         id: 0,
@@ -776,6 +795,30 @@ mod tests {
                 ]
             ),
             0
+        );
+        assert_eq!(
+            get_winner(
+                Some(Suit::Blue),
+                Suit::Red,
+                &[
+                    Some(Card {
+                        id: 0,
+                        value: 9,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 8,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 1,
+                        suit: Suit::Red
+                    }),
+                ]
+            ),
+            2
         );
     }
 
