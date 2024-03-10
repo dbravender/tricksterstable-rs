@@ -44,14 +44,6 @@ enum BidType {
     Zero,
 }
 
-fn difference(a: i32, b: i32) -> i32 {
-    if a > b {
-        a - b
-    } else {
-        b - a
-    }
-}
-
 impl BidType {
     fn score_for_tricks(&self, bid_cards: [Option<Card>; 2], tricks: i32) -> i32 {
         match self {
@@ -65,7 +57,7 @@ impl BidType {
                     // tricks won is equal to the revealed card: score 4 points
                     _ if tricks == faceup_card.unwrap().value => 4,
                     // -1 point per trick missed from your lowest bid value
-                    _ => difference(lowest_bid, tricks) * -1,
+                    _ => (lowest_bid - tricks).abs() * -1,
                 }
             }
             BidType::Top => {
@@ -74,18 +66,18 @@ impl BidType {
                     // tricks won is equal to your bid: score 8 points
                     _ if tricks == faceup_card.unwrap().value => 8,
                     // -2 points per trick missed from your bid value.
-                    _ => difference(tricks, faceup_card.unwrap().value) * -2,
+                    _ => (tricks - faceup_card.unwrap().value).abs() * -2,
                 }
             }
             BidType::Difference => {
                 let faceup_card = bid_cards[0];
                 let sideways_card = bid_cards[1];
-                let bid = difference(faceup_card.unwrap().value, sideways_card.unwrap().value);
+                let bid = (faceup_card.unwrap().value - sideways_card.unwrap().value).abs();
                 match tricks {
                     // tricks won is equal to your bid: score 8 points.
                     _ if tricks == bid => 8,
                     // -2 points per trick missed from your bid value
-                    _ => difference(tricks, bid) * -2,
+                    _ => (tricks - bid).abs() * -2,
                 }
             }
             BidType::Zero => match tricks {
