@@ -15,9 +15,13 @@ use std::mem;
 use crate::utils::shuffle_and_divide_matching_cards;
 
 const PLAY_OFFSET: i32 = 0; // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for playing)
-const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card
+const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card (trump selection)
 const BID_CARD_OFFSET: i32 = 38; // 38-74 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
 const BID_TYPE_OFFSET: i32 = 74; // 74-78 Easy, Top, Difference, Zero
+const BID_TYPE_EASY: i32 = 74;
+const BID_TYPE_TOP: i32 = 75;
+const BID_TYPE_DIFFERENCE: i32 = 76;
+const BID_TYPE_ZERO: i32 = 77;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -29,34 +33,14 @@ enum State {
     DealerSelect, // the Dealer picks one of the cards into their hand
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
 enum BidType {
-    Easy {
-        facedown: Option<Card>,
-        faceup: Option<Card>,
-    },
-    Top {
-        top: Option<Card>,
-        bottom: Option<Card>,
-    },
-    Difference {
-        faceup: Option<Card>,
-        sideways: Option<Card>,
-    },
-    Zero {
-        left: Option<Card>,
-        right: Option<Card>,
-    },
-}
-
-impl Default for BidType {
-    fn default() -> Self {
-        BidType::Easy {
-            facedown: None,
-            faceup: None,
-        }
-    }
+    #[default]
+    Easy,
+    Top,
+    Difference,
+    Zero,
 }
 
 fn difference(a: i32, b: i32) -> i32 {
@@ -68,12 +52,11 @@ fn difference(a: i32, b: i32) -> i32 {
 }
 
 impl BidType {
-    fn score_for_tricks(&self, tricks: i32) -> i32 {
+    fn score_for_tricks(&self, bid_cards: [Option<Card>; 2], tricks: i32) -> i32 {
         match self {
-            BidType::Easy {
-                faceup: faceup_card,
-                facedown: facedown_card,
-            } => {
+            BidType::Easy => {
+                let faceup_card = bid_cards[0];
+                let facedown_card = bid_cards[1];
                 let lowest_bid = min(facedown_card.unwrap().value, faceup_card.unwrap().value);
                 match tricks {
                     // tricks won is equal to the hidden card: score 2 points
@@ -84,19 +67,18 @@ impl BidType {
                     _ => difference(lowest_bid, tricks) * -1,
                 }
             }
-            BidType::Top {
-                top: faceup_card,
-                bottom: _,
-            } => match tricks {
-                // tricks won is equal to your bid: score 8 points
-                _ if tricks == faceup_card.unwrap().value => 8,
-                // -2 points per trick missed from your bid value.
-                _ => difference(tricks, faceup_card.unwrap().value) * -2,
-            },
-            BidType::Difference {
-                faceup: faceup_card,
-                sideways: sideways_card,
-            } => {
+            BidType::Top => {
+                let faceup_card = bid_cards[0];
+                match tricks {
+                    // tricks won is equal to your bid: score 8 points
+                    _ if tricks == faceup_card.unwrap().value => 8,
+                    // -2 points per trick missed from your bid value.
+                    _ => difference(tricks, faceup_card.unwrap().value) * -2,
+                }
+            }
+            BidType::Difference => {
+                let faceup_card = bid_cards[0];
+                let sideways_card = bid_cards[1];
                 let bid = difference(faceup_card.unwrap().value, sideways_card.unwrap().value);
                 match tricks {
                     // tricks won is equal to your bid: score 8 points.
@@ -105,7 +87,7 @@ impl BidType {
                     _ => difference(tricks, bid) * -2,
                 }
             }
-            BidType::Zero { left: _, right: _ } => match tricks {
+            BidType::Zero => match tricks {
                 _ if tricks == 0 => 6,
                 _ => tricks * -2,
             },
@@ -163,16 +145,10 @@ fn card_offset(state: State, offset: i32) -> i32 {
 
 fn bid_type_offset(bid: BidType) -> i32 {
     match bid {
-        BidType::Easy {
-            faceup: _,
-            facedown: _,
-        } => 0,
-        BidType::Top { top: _, bottom: _ } => 1,
-        BidType::Zero { left: _, right: _ } => 2,
-        BidType::Difference {
-            faceup: _,
-            sideways: _,
-        } => 3,
+        BidType::Easy => 0,
+        BidType::Top => 1,
+        BidType::Zero => 2,
+        BidType::Difference => 3,
     }
 }
 
@@ -251,6 +227,7 @@ pub struct Game {
     pub changes: Vec<Vec<Change>>,
     tricks_taken: [i32; 3],
     bids: [Option<BidType>; 3],
+    bid_cards: [[Option<Card>; 2]; 3],
     current_trick: [Option<Card>; 3],
     pub dealer_select: Vec<Card>,
     lead_suit: Option<Suit>,
@@ -286,6 +263,7 @@ impl Game {
         let mut new_game = self.clone();
         new_game.state = State::DealerSelect;
         new_game.bids = [None, None, None];
+        new_game.bid_cards = [[None, None], [None, None], [None, None]];
         new_game.current_trick = [None, None, None];
         new_game.tricks_taken = [0, 0, 0];
         new_game.hands = [vec![], vec![], vec![]];
@@ -339,129 +317,170 @@ impl Game {
         new_game.changes = vec![vec![]]; // card from player to table or discard to draw deck
         match new_game.state {
             State::BidType => {
-                // TODO - bid type selected
-                return new_game;
-            }
-            State::BidCard => {
-                // TODO - bid card selected
+                match action {
+                    BID_TYPE_EASY => {
+                        new_game.bids[new_game.current_player as usize] = Some(BidType::Easy);
+                    }
+                    BID_TYPE_TOP => {
+                        new_game.bids[new_game.current_player as usize] = Some(BidType::Top);
+                    }
+                    BID_TYPE_ZERO => {
+                        new_game.bids[new_game.current_player as usize] = Some(BidType::Zero);
+                    }
+                    BID_TYPE_DIFFERENCE => {
+                        new_game.bids[new_game.current_player as usize] = Some(BidType::Difference);
+                    }
+                    _ => {
+                        panic!("incorrect bid type: {action}")
+                    }
+                }
+                // Player names their bid cards next
+                new_game.state = State::BidCard;
                 return new_game;
             }
             State::DealerSelect => {
                 // TODO - dealer lead and trump or no trump selected
                 // FIXME - need no trump declaration option
             }
-            State::Play => {
-                // TODO - standard must follow
-            }
-        }
-        let card_id = action - PLAY_OFFSET;
-        let card = &new_game.hands[new_game.current_player as usize]
-            .iter()
-            .find(|c| c.id == card_id)
-            .expect("this card has to be in the player's hand")
-            .clone();
-        new_game.hands[new_game.current_player as usize].retain(|c| c.id != card_id);
-        if !self.no_changes {
-            new_game.changes[0].push(Change {
-                change_type: ChangeType::Play,
-                object_id: card_id,
-                source_offset: new_game.current_player,
-                dest: Location::Play,
-                dest_offset: new_game.current_player,
-                player: new_game.current_player,
-                ..Default::default()
-            });
-            new_game.changes[0].append(
-                reorder_hand(
-                    new_game.current_player,
-                    &new_game.hands[new_game.current_player as usize],
-                )
-                .as_mut(),
-            );
-        }
-        let last_change = new_game.changes.len() - 1;
-        let mut changes = hide_playable(&new_game);
-        new_game.changes[last_change].append(&mut changes);
-        new_game.current_trick[new_game.current_player as usize] = Some(*card);
-        if let Some(suit) = new_game.lead_suit {
-            // Player has revealed a void
-            new_game.voids[new_game.current_player as usize].insert(suit);
-        }
-        if new_game.lead_suit.is_none() {
-            new_game.lead_suit = Some(card.suit);
-        }
-        new_game.current_player = (new_game.current_player + 1) % 3;
-        // end trick
-        if new_game.current_trick.iter().flatten().count() == 3 {
-            let trick_winner = get_winner(
-                new_game.lead_suit,
-                new_game
-                    .trump_suit
-                    .expect("trump has to be defined at this point"),
-                &new_game.current_trick,
-            );
-            let winning_card = new_game.current_trick[trick_winner as usize]
-                .expect("there has to be a trick_winner card");
-            new_game.tricks_taken[trick_winner as usize] += 1;
-            // winner of the trick leads
-            new_game.current_player = trick_winner;
-            new_game.lead_player = trick_winner;
-            if !self.no_changes {
-                new_game.changes.push(vec![
-                    Change {
-                        change_type: ChangeType::ShowWinningCard,
-                        object_id: winning_card.id,
-                        dest: Location::Play,
-                        ..Default::default()
-                    },
-                    Change {
-                        change_type: ChangeType::OptionalPause,
-                        object_id: 0,
-                        dest: Location::Play,
-                        ..Default::default()
-                    },
-                    Change {
-                        object_id: winning_card.id,
-                        change_type: ChangeType::HidePlayable,
-                        dest: Location::Hand,
-                        dest_offset: new_game.current_player,
-                        ..Default::default()
-                    },
-                ]);
-            }
-            new_game.changes.push(vec![]); // trick back to player
-            let offset: usize = new_game.changes.len() - 1;
-            for player in 0..3 {
-                let card =
-                    new_game.current_trick[player].expect("each player should have played a card");
-                if Some(card.suit) == new_game.lead_suit {
-                    new_game.changes[offset].push(Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.id,
-                        source_offset: player as i32,
-                        dest: Location::TricksTaken,
-                        player: trick_winner,
-                        tricks_taken: new_game.tricks_taken[trick_winner as usize],
-                        ..Default::default()
-                    });
+            State::BidCard => {
+                // TODO - bid card selected
+                let card_id = card_offset(new_game.state, action);
+                let card = &new_game.hands[new_game.current_player as usize]
+                    .iter()
+                    .find(|c| c.id == card_id)
+                    .expect("this card has to be in the player's hand")
+                    .clone();
+                new_game.hands[new_game.current_player as usize].retain(|c| c.id != card_id);
+                if new_game.bid_cards[new_game.current_player as usize][0] == None {
+                    new_game.bid_cards[new_game.current_player as usize][0] = Some(*card);
+                } else if new_game.bid_cards[new_game.current_player as usize][1] == None {
+                    new_game.bid_cards[new_game.current_player as usize][1] = Some(*card);
+                    new_game.current_player = (new_game.current_player + 1) % 3;
+                    if new_game.bid_cards[new_game.current_player as usize][1] != None {
+                        // next player to bid has already bid
+                        new_game.state = State::Play;
+                    }
+                } else {
+                    panic!("player has already bid two cards!")
                 }
-            }
 
-            if new_game.hands.iter().all(|h| h.is_empty()) {
-                // TODO: score and determine winner(s)
+                // TODO: send bid card to table animation
                 return new_game;
             }
+            State::Play => {
+                let card_id = card_offset(new_game.state, action);
+                let card = &new_game.hands[new_game.current_player as usize]
+                    .iter()
+                    .find(|c| c.id == card_id)
+                    .expect("this card has to be in the player's hand")
+                    .clone();
+                new_game.hands[new_game.current_player as usize].retain(|c| c.id != card_id);
+                if !self.no_changes {
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Play,
+                        object_id: card_id,
+                        source_offset: new_game.current_player,
+                        dest: Location::Play,
+                        dest_offset: new_game.current_player,
+                        player: new_game.current_player,
+                        ..Default::default()
+                    });
+                    new_game.changes[0].append(
+                        reorder_hand(
+                            new_game.current_player,
+                            &new_game.hands[new_game.current_player as usize],
+                        )
+                        .as_mut(),
+                    );
+                }
+                let last_change = new_game.changes.len() - 1;
+                let mut changes = hide_playable(&new_game);
+                new_game.changes[last_change].append(&mut changes);
+                new_game.current_trick[new_game.current_player as usize] = Some(*card);
+                if let Some(suit) = new_game.lead_suit {
+                    // Player has revealed a void
+                    new_game.voids[new_game.current_player as usize].insert(suit);
+                }
+                if new_game.lead_suit.is_none() {
+                    new_game.lead_suit = Some(card.suit);
+                }
+                new_game.current_player = (new_game.current_player + 1) % 3;
+                // end trick
+                if new_game.current_trick.iter().flatten().count() == 3 {
+                    let trick_winner = get_winner(
+                        new_game.lead_suit,
+                        new_game
+                            .trump_suit
+                            .expect("trump has to be defined at this point"),
+                        &new_game.current_trick,
+                    );
+                    let winning_card = new_game.current_trick[trick_winner as usize]
+                        .expect("there has to be a trick_winner card");
+                    new_game.tricks_taken[trick_winner as usize] += 1;
+                    // winner of the trick leads
+                    new_game.current_player = trick_winner;
+                    new_game.lead_player = trick_winner;
+                    if !self.no_changes {
+                        new_game.changes.push(vec![
+                            Change {
+                                change_type: ChangeType::ShowWinningCard,
+                                object_id: winning_card.id,
+                                dest: Location::Play,
+                                ..Default::default()
+                            },
+                            Change {
+                                change_type: ChangeType::OptionalPause,
+                                object_id: 0,
+                                dest: Location::Play,
+                                ..Default::default()
+                            },
+                            Change {
+                                object_id: winning_card.id,
+                                change_type: ChangeType::HidePlayable,
+                                dest: Location::Hand,
+                                dest_offset: new_game.current_player,
+                                ..Default::default()
+                            },
+                        ]);
+                    }
+                    new_game.changes.push(vec![]); // trick back to player
+                    let offset: usize = new_game.changes.len() - 1;
+                    for player in 0..3 {
+                        let card = new_game.current_trick[player]
+                            .expect("each player should have played a card");
+                        if Some(card.suit) == new_game.lead_suit {
+                            new_game.changes[offset].push(Change {
+                                change_type: ChangeType::TricksToWinner,
+                                object_id: card.id,
+                                source_offset: player as i32,
+                                dest: Location::TricksTaken,
+                                player: trick_winner,
+                                tricks_taken: new_game.tricks_taken[trick_winner as usize],
+                                ..Default::default()
+                            });
+                        }
+                    }
 
-            new_game.current_player = new_game.lead_player;
-            new_game.state = State::Play;
+                    if new_game.hands.iter().all(|h| h.is_empty()) {
+                        // TODO: score and determine winner(s)
+                        // check for end of game
+                        return new_game;
+                    }
 
-            new_game.current_trick = [None, None, None];
-            new_game.lead_suit = None;
-            new_game.trump_suit = None;
+                    new_game.current_player = new_game.lead_player;
+                    new_game.state = State::Play;
+
+                    new_game.current_trick = [None, None, None];
+                    new_game.lead_suit = None;
+                    new_game.trump_suit = None;
+                }
+                let change_offset = &new_game.changes.len() - 1;
+                let mut new_changes = show_playable(&new_game);
+                new_game.changes[change_offset].append(&mut new_changes);
+                return new_game;
+            }
         }
-        let change_offset = &new_game.changes.len() - 1;
-        let mut new_changes = show_playable(&new_game);
-        new_game.changes[change_offset].append(&mut new_changes);
+
         new_game
     }
 
@@ -824,6 +843,7 @@ mod tests {
 
     struct BidTestCase {
         bid_type: BidType,
+        bid_cards: [Option<Card>; 2],
         tricks: i32,
         expected_score: i32,
     }
@@ -833,161 +853,150 @@ mod tests {
         let cases = vec![
             // successful top bid
             BidTestCase {
-                bid_type: BidType::Top {
-                    top: Some(Card {
+                bid_type: BidType::Top,
+                bid_cards: [
+                    Some(Card {
                         suit: Suit::Red,
                         value: 2,
                         id: 0,
                     }),
-                    bottom: Some(Card {
+                    Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
                     }),
-                },
+                ],
                 tricks: 2,
                 expected_score: 8,
             },
             // failed top bid
             BidTestCase {
-                bid_type: BidType::Top {
-                    top: Some(Card {
+                bid_type: BidType::Top,
+                bid_cards: [
+                    Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
                     }),
-                    bottom: Some(Card {
+                    Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
                     }),
-                },
+                ],
                 tricks: 2,
                 expected_score: -2,
             },
             // successful zero bid
             BidTestCase {
-                bid_type: BidType::Zero {
-                    left: Some(Card {
-                        suit: Suit::Red,
-                        value: 3,
-                        id: 0,
-                    }),
-                    right: Some(Card {
-                        suit: Suit::Red,
-                        value: 4,
-                        id: 0,
-                    }),
-                },
+                bid_type: BidType::Zero,
+                bid_cards: [None, None],
                 tricks: 0,
                 expected_score: 6,
             },
             // failed zero bid
             BidTestCase {
-                bid_type: BidType::Zero {
-                    left: Some(Card {
-                        suit: Suit::Red,
-                        value: 3,
-                        id: 0,
-                    }),
-                    right: Some(Card {
-                        suit: Suit::Red,
-                        value: 4,
-                        id: 0,
-                    }),
-                },
+                bid_type: BidType::Zero,
+                bid_cards: [None, None],
                 tricks: 2,
                 expected_score: -4,
             },
             // successful easy bid - faceup
             BidTestCase {
-                bid_type: BidType::Easy {
-                    faceup: Some(Card {
+                bid_type: BidType::Easy,
+                bid_cards: [
+                    Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
                     }),
-                    facedown: Some(Card {
+                    Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
                     }),
-                },
+                ],
                 tricks: 3,
                 expected_score: 4,
             },
             // successful easy bid - facedown
             BidTestCase {
-                bid_type: BidType::Easy {
-                    faceup: Some(Card {
+                bid_type: BidType::Easy,
+                bid_cards: [
+                    Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
                     }),
-                    facedown: Some(Card {
+                    Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
                     }),
-                },
+                ],
                 tricks: 4,
                 expected_score: 2,
             },
             // failed easy bid
             BidTestCase {
-                bid_type: BidType::Easy {
-                    faceup: Some(Card {
+                bid_type: BidType::Easy,
+                bid_cards: [
+                    Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
                     }),
-                    facedown: Some(Card {
+                    Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
                     }),
-                },
+                ],
                 tricks: 5,
                 expected_score: -2,
             },
             // successful difference bid
             BidTestCase {
-                bid_type: BidType::Difference {
-                    faceup: Some(Card {
+                bid_type: BidType::Difference,
+                bid_cards: [
+                    Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
                     }),
-                    sideways: Some(Card {
+                    Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
                     }),
-                },
+                ],
                 tricks: 1,
                 expected_score: 8,
             },
             // failed difference bid
             BidTestCase {
-                bid_type: BidType::Difference {
-                    faceup: Some(Card {
+                bid_type: BidType::Difference,
+                bid_cards: [
+                    Some(Card {
                         suit: Suit::Red,
                         value: 3,
                         id: 0,
                     }),
-                    sideways: Some(Card {
+                    Some(Card {
                         suit: Suit::Red,
                         value: 4,
                         id: 0,
                     }),
-                },
+                ],
                 tricks: 2,
                 expected_score: -2,
             },
         ];
         for test_case in cases.iter() {
             assert_eq!(
-                test_case.bid_type.score_for_tricks(test_case.tricks),
+                test_case
+                    .bid_type
+                    .score_for_tricks(test_case.bid_cards, test_case.tricks),
                 test_case.expected_score
             );
         }
