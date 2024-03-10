@@ -16,12 +16,13 @@ use crate::utils::shuffle_and_divide_matching_cards;
 
 const PLAY_OFFSET: i32 = 0; // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for playing)
 const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card (trump selection)
-const BID_CARD_OFFSET: i32 = 38; // 38-74 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
-const BID_TYPE_OFFSET: i32 = 74; // 74-78 Easy, Top, Difference, Zero
-const BID_TYPE_EASY: i32 = 74;
-const BID_TYPE_TOP: i32 = 75;
-const BID_TYPE_DIFFERENCE: i32 = 76;
-const BID_TYPE_ZERO: i32 = 77;
+const DEALER_SELECT_CARD_NO_TRUMP: i32 = 38; // 38 - left card (no trump), 39 - right card (no trump)
+const BID_CARD_OFFSET: i32 = 40; // 40-76 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
+const BID_TYPE_OFFSET: i32 = 77; // 77-80 Easy, Top, Difference, Zero
+const BID_TYPE_EASY: i32 = 81;
+const BID_TYPE_TOP: i32 = 82;
+const BID_TYPE_DIFFERENCE: i32 = 83;
+const BID_TYPE_ZERO: i32 = 84;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -264,6 +265,7 @@ impl Game {
         new_game.state = State::DealerSelect;
         new_game.bids = [None, None, None];
         new_game.bid_cards = [[None, None], [None, None], [None, None]];
+        new_game.trump_suit = None;
         new_game.current_trick = [None, None, None];
         new_game.tricks_taken = [0, 0, 0];
         new_game.hands = [vec![], vec![], vec![]];
@@ -282,6 +284,7 @@ impl Game {
             for player in 0..3 {
                 let card = cards.pop().expect("cards should be available here");
                 if player == self.dealer && y == 10 || y == 11 {
+                    new_game.dealer_select.push(card);
                     new_game.changes[deal_index].push(Change {
                         change_type: ChangeType::RemainingCards,
                         object_id: card.id,
@@ -307,6 +310,7 @@ impl Game {
                 }
             }
         }
+
         new_game.hands[0].sort_by(card_sorter);
         new_game.changes[reorder_index].append(&mut reorder_hand(0, &new_game.hands[0]));
         new_game
@@ -336,11 +340,30 @@ impl Game {
                 }
                 // Player names their bid cards next
                 new_game.state = State::BidCard;
-                return new_game;
+                new_game
             }
             State::DealerSelect => {
-                // TODO - dealer lead and trump or no trump selected
-                // FIXME - need no trump declaration option
+                let card_to_hand: Card;
+                let card_to_play: Card;
+                if action == DEALER_SELECT_CARD || action == DEALER_SELECT_CARD_NO_TRUMP {
+                    card_to_hand = new_game.dealer_select[0];
+                    card_to_play = new_game.dealer_select[1];
+                } else {
+                    card_to_hand = new_game.dealer_select[1];
+                    card_to_play = new_game.dealer_select[0];
+                }
+
+                if action == DEALER_SELECT_CARD || action == DEALER_SELECT_CARD + 1 {
+                    new_game.trump_suit = Some(card_to_hand.suit);
+                }
+
+                // TODO: animate cards
+
+                new_game.hands[new_game.current_player as usize].push(card_to_hand);
+                new_game.current_trick[new_game.current_player as usize] = Some(card_to_play);
+                new_game.state = State::BidType;
+
+                new_game
             }
             State::BidCard => {
                 // TODO - bid card selected
@@ -365,7 +388,7 @@ impl Game {
                 }
 
                 // TODO: send bid card to table animation
-                return new_game;
+                new_game
             }
             State::Play => {
                 let card_id = card_offset(new_game.state, action);
@@ -409,9 +432,7 @@ impl Game {
                 if new_game.current_trick.iter().flatten().count() == 3 {
                     let trick_winner = get_winner(
                         new_game.lead_suit,
-                        new_game
-                            .trump_suit
-                            .expect("trump has to be defined at this point"),
+                        new_game.trump_suit,
                         &new_game.current_trick,
                     );
                     let winning_card = new_game.current_trick[trick_winner as usize]
@@ -477,11 +498,9 @@ impl Game {
                 let change_offset = &new_game.changes.len() - 1;
                 let mut new_changes = show_playable(&new_game);
                 new_game.changes[change_offset].append(&mut new_changes);
-                return new_game;
+                new_game
             }
         }
-
-        new_game
     }
 
     pub fn get_moves(self: &Game) -> Vec<i32> {
@@ -495,10 +514,15 @@ impl Game {
                 .collect();
         }
         if self.state == State::DealerSelect {
-            return vec![
-                move_offset(self.state, &self.dealer_select[0]),
-                move_offset(self.state, &self.dealer_select[1]),
-            ];
+            if self.dealer_select[0].suit == self.dealer_select[1].suit {
+                return vec![
+                    DEALER_SELECT_CARD,
+                    DEALER_SELECT_CARD + 1,
+                    DEALER_SELECT_CARD_NO_TRUMP,
+                    DEALER_SELECT_CARD_NO_TRUMP + 1,
+                ];
+            }
+            return vec![DEALER_SELECT_CARD, DEALER_SELECT_CARD + 1];
         }
         let actions: Vec<i32>;
         if self.lead_suit.is_some() {
@@ -525,7 +549,11 @@ fn card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-pub fn get_winner(lead_suit: Option<Suit>, trump_suit: Suit, trick: &[Option<Card>; 3]) -> i32 {
+pub fn get_winner(
+    lead_suit: Option<Suit>,
+    trump_suit: Option<Suit>,
+    trick: &[Option<Card>; 3],
+) -> i32 {
     let mut card_id_to_player: HashMap<i32, i32> = HashMap::new();
     for (player, card) in trick.iter().enumerate() {
         if let Some(card) = card {
@@ -542,12 +570,12 @@ pub fn get_winner(lead_suit: Option<Suit>, trump_suit: Suit, trick: &[Option<Car
         .expect("cards_to_player missing card")
 }
 
-pub fn value_for_card(lead_suit: Option<Suit>, trump_suit: Suit, card: &Card) -> i32 {
+pub fn value_for_card(lead_suit: Option<Suit>, trump_suit: Option<Suit>, card: &Card) -> i32 {
     let mut bonus: i32 = 0;
     if Some(card.suit) == lead_suit {
         bonus += 100;
     }
-    if card.suit == trump_suit {
+    if trump_suit == Some(card.suit) {
         bonus += 200;
     }
     card.value + bonus
@@ -770,7 +798,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
-                Suit::Blue,
+                Some(Suit::Blue),
                 &[
                     Some(Card {
                         id: 0,
@@ -794,7 +822,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
-                Suit::Blue,
+                Some(Suit::Blue),
                 &[
                     Some(Card {
                         id: 0,
@@ -818,7 +846,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
-                Suit::Red,
+                Some(Suit::Red),
                 &[
                     Some(Card {
                         id: 0,
@@ -838,6 +866,30 @@ mod tests {
                 ]
             ),
             2
+        );
+        assert_eq!(
+            get_winner(
+                Some(Suit::Blue),
+                None,
+                &[
+                    Some(Card {
+                        id: 0,
+                        value: 9,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 8,
+                        suit: Suit::Blue
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 1,
+                        suit: Suit::Red
+                    }),
+                ]
+            ),
+            0
         );
     }
 
@@ -1000,6 +1052,57 @@ mod tests {
                 test_case.expected_score
             );
         }
+    }
+
+    #[test]
+    fn test_clone_and_apply_move() {
+        let mut game = Game::new();
+        assert_eq!(game.state, State::DealerSelect);
+        game.dealer_select = vec![
+            Card {
+                id: 5,
+                value: 8,
+                suit: Suit::Red,
+            },
+            Card {
+                id: 11,
+                value: 5,
+                suit: Suit::Blue,
+            },
+        ];
+
+        let new_game = game.clone().clone_and_apply_move(DEALER_SELECT_CARD);
+        assert_eq!(new_game.trump_suit, Some(Suit::Red));
+        assert_eq!(new_game.state, State::BidType);
+
+        let new_game = game.clone().clone_and_apply_move(DEALER_SELECT_CARD + 1);
+        assert_eq!(new_game.trump_suit, Some(Suit::Blue));
+        assert_eq!(new_game.state, State::BidType);
+
+        game.dealer_select = vec![
+            Card {
+                id: 5,
+                value: 8,
+                suit: Suit::Red,
+            },
+            Card {
+                id: 11,
+                value: 5,
+                suit: Suit::Red,
+            },
+        ];
+
+        let new_game = game
+            .clone()
+            .clone_and_apply_move(DEALER_SELECT_CARD_NO_TRUMP);
+        assert_eq!(new_game.trump_suit, None);
+        assert_eq!(new_game.state, State::BidType);
+
+        let new_game = game
+            .clone()
+            .clone_and_apply_move(DEALER_SELECT_CARD_NO_TRUMP + 1);
+        assert_eq!(new_game.trump_suit, None);
+        assert_eq!(new_game.state, State::BidType);
     }
 
     // #[test]
