@@ -738,6 +738,7 @@ impl ismcts::Game for Game {
             let mut sorted_scores = self.scores.clone();
             sorted_scores.sort();
             sorted_scores.reverse();
+            let scorer_count = sorted_scores.iter().filter(|&x| *x > 0).count();
             let high_score = sorted_scores[0];
             let mut score = self.scores[player as usize];
             if score <= 0 {
@@ -747,7 +748,10 @@ impl ismcts::Game for Game {
                 // Normalizing the score to 0 - .2
                 Some(0.2 * (1.0 - normalized_score))
             } else {
-                Some(score as f64 / high_score as f64)
+                // divide by number of > 0 scoring players to incentivize
+                // minimizing the number of other winners
+                let score = (score as f64 / high_score as f64) / scorer_count as f64;
+                Some(0.2 + (0.8 * score))
             }
         }
     }
