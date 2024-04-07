@@ -25,7 +25,7 @@ fn display_game(game: &Game) {
             game.bid_cards[player]
                 .iter()
                 .flatten()
-                .map(|c| print_card(*c, true))
+                .map(|c| print_card(*c, false))
                 .collect::<Vec<_>>()
                 .join(" "),
             game.scores[player]

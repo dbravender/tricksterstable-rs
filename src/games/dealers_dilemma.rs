@@ -385,12 +385,7 @@ impl Game {
                         panic!("incorrect bid type: {action}")
                     }
                 }
-                new_game.current_player = (new_game.current_player + 1) % 3;
-                if new_game.bids[new_game.current_player as usize] != None {
-                    // Next player has already bid, move to bid cards phase
-                    new_game.state = State::BidCard;
-                }
-
+                new_game.state = State::BidCard;
                 new_game
             }
             State::DealerSelect => {
@@ -432,6 +427,7 @@ impl Game {
                 } else if new_game.bid_cards[new_game.current_player as usize][1] == None {
                     new_game.bid_cards[new_game.current_player as usize][1] = Some(*card);
                     new_game.current_player = (new_game.current_player + 1) % 3;
+                    new_game.state = State::BidType;
                     if new_game.bid_cards[new_game.current_player as usize][1] != None {
                         // next player to bid has already bid
                         // first player to bid is always dealer and
