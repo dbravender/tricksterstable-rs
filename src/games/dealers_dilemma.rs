@@ -19,10 +19,10 @@ const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card (trump se
 const DEALER_SELECT_CARD_NO_TRUMP: i32 = 38; // 38 - left card (no trump), 39 - right card (no trump)
 const BID_CARD_OFFSET: i32 = 40; // 40-76 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
 const BID_TYPE_OFFSET: i32 = 77; // 77-80 Easy, Top, Difference, Zero
-const BID_TYPE_EASY: i32 = 81;
-const BID_TYPE_TOP: i32 = 82;
-const BID_TYPE_DIFFERENCE: i32 = 83;
-const BID_TYPE_ZERO: i32 = 84;
+const BID_TYPE_EASY: i32 = 77;
+const BID_TYPE_TOP: i32 = 78;
+const BID_TYPE_DIFFERENCE: i32 = 79;
+const BID_TYPE_ZERO: i32 = 80;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -121,7 +121,7 @@ pub struct Card {
 
 fn move_offset(state: State, card: &Card) -> i32 {
     match state {
-        State::Play => 0,
+        State::Play => card.id,
         State::BidCard => card.id + BID_CARD_OFFSET,
         State::DealerSelect => DEALER_SELECT_CARD,
         State::BidType => unreachable!(),
@@ -218,6 +218,7 @@ pub struct Game {
     action_size: i32,
     hands: [Vec<Card>; 3],
     pub changes: Vec<Vec<Change>>,
+    pub human_player: [bool; 3],
     tricks_taken: [i32; 3],
     bids: [Option<BidType>; 3],
     bid_cards: [[Option<Card>; 2]; 3],
@@ -255,6 +256,7 @@ impl Game {
     fn deal(self: Game) -> Self {
         let mut new_game = self.clone();
         new_game.state = State::DealerSelect;
+        new_game.round = self.round + 1;
         new_game.bids = [None, None, None];
         new_game.bid_cards = [[None, None], [None, None], [None, None]];
         new_game.trump_suit = None;
@@ -275,7 +277,7 @@ impl Game {
         for y in 0..12 {
             for player in 0..3 {
                 let card = cards.pop().expect("cards should be available here");
-                if player == self.dealer && y == 10 || y == 11 {
+                if player == new_game.dealer && y == 10 || y == 11 {
                     new_game.dealer_select.push(card);
                     new_game.changes[deal_index].push(Change {
                         change_type: ChangeType::RemainingCards,
@@ -330,8 +332,12 @@ impl Game {
                         panic!("incorrect bid type: {action}")
                     }
                 }
-                // Player names their bid cards next
-                new_game.state = State::BidCard;
+                new_game.current_player = (new_game.current_player + 1) % 3;
+                if new_game.bids[new_game.current_player as usize] != None {
+                    // Next player has already bid, move to bid cards phase
+                    new_game.state = State::BidCard;
+                }
+
                 new_game
             }
             State::DealerSelect => {
@@ -346,11 +352,13 @@ impl Game {
                 }
 
                 if action == DEALER_SELECT_CARD || action == DEALER_SELECT_CARD + 1 {
+                    // add a dynamic element showing which trump was selected (1/4 size card in top left?)
                     new_game.trump_suit = Some(card_to_hand.suit);
                 }
 
-                // TODO: animate cards
+                // TODO: move card selected to play area as lead card
 
+                // TODO: animation to move card selected as trump to dealer's hand
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
                 new_game.current_trick[new_game.current_player as usize] = Some(card_to_play);
                 new_game.state = State::BidType;
@@ -358,7 +366,6 @@ impl Game {
                 new_game
             }
             State::BidCard => {
-                // TODO - bid card selected
                 let card_id = card_offset(new_game.state, action);
                 let card = &new_game.hands[new_game.current_player as usize]
                     .iter()
@@ -475,9 +482,33 @@ impl Game {
                     }
 
                     if new_game.hands.iter().all(|h| h.is_empty()) {
-                        // TODO: score and determine winner(s)
-                        // check for end of game
-                        return new_game;
+                        // hand end
+                        for player in 0..3 {
+                            let score = new_game.bids[player]
+                                .expect("Must have bid here")
+                                .score_for_tricks(
+                                    new_game.bid_cards[player],
+                                    new_game.tricks_taken[player],
+                                );
+                            //TODO animate score
+                            new_game.scores[player] += score;
+                        }
+                        if new_game.round >= 6 {
+                            // game end
+                            // find winners - if human player is a winner set them as the exclusive winner
+                            let max_score: i32 = *new_game.scores.iter().max().unwrap();
+                            for player in 0..3 {
+                                if new_game.scores[player] == max_score {
+                                    new_game.winner = Some(player as i32);
+                                    if new_game.human_player[player] {
+                                        // if the human player is among the winners - set them as the winner
+                                        break;
+                                    }
+                                }
+                            }
+                            return new_game;
+                        }
+                        return new_game.deal();
                     }
 
                     new_game.current_player = new_game.lead_player;
@@ -485,7 +516,6 @@ impl Game {
 
                     new_game.current_trick = [None, None, None];
                     new_game.lead_suit = None;
-                    new_game.trump_suit = None;
                 }
                 let change_offset = &new_game.changes.len() - 1;
                 let mut new_changes = show_playable(&new_game);
@@ -573,27 +603,6 @@ pub fn value_for_card(lead_suit: Option<Suit>, trump_suit: Option<Suit>, card: &
     card.value + bonus
 }
 
-/*
-
-pub fn score_game(
-    original_scores: Vec<i32>,
-    tricks_taken: &Vec<i32>,
-    shorts_pile_lengths: Vec<i32>,
-) -> Vec<i32> {
-    let mut scores = original_scores.clone();
-    for player in 0..3 {
-        scores[player] += tricks_taken[player];
-        let mut score_per_match = 3;
-        if shorts_pile_lengths[player] == tricks_taken[player] {
-            score_per_match = 5;
-        }
-        let match_count = min(shorts_pile_lengths[player], tricks_taken[player]);
-        scores[player] += match_count * score_per_match;
-    }
-    scores
-}
-*/
-
 pub fn reorder_hand(player: i32, hand: &Vec<Card>) -> Vec<Change> {
     let mut changes: Vec<Change> = vec![];
     for (offset_in_hand, card) in hand.iter().enumerate() {
@@ -660,23 +669,9 @@ fn hide_playable(new_game: &Game) -> Vec<Change> {
             ..Default::default()
         });
     }
-    changes.push(Change {
-        object_id: -1,
-        change_type: ChangeType::HidePlayable,
-        dest: Location::Hand,
-        dest_offset: new_game.current_player,
-        ..Default::default()
-    });
-    changes.push(Change {
-        object_id: -2,
-        change_type: ChangeType::HidePlayable,
-        dest: Location::Hand,
-        dest_offset: new_game.current_player,
-        ..Default::default()
-    });
     changes
 }
-/*
+
 impl ismcts::Game for Game {
     type Move = i32;
     type PlayerTag = i32;
@@ -697,7 +692,6 @@ impl ismcts::Game for Game {
                     self.hands[p1 as usize].clone(),
                     self.hands[p2 as usize].clone(),
                 ];
-                //println!("original hands: {:?}", new_hands);
 
                 // allow swapping of any cards that are not in the combined void set
                 shuffle_and_divide_matching_cards(
@@ -708,24 +702,6 @@ impl ismcts::Game for Game {
 
                 self.hands[p1 as usize] = new_hands[0].clone();
                 self.hands[p2 as usize] = new_hands[1].clone();
-                //println!("new hands: {:?} {:?}", self.hands[p1 as usize], self.hands[p2 as usize]);
-
-                // Draw deck shuffling
-
-                let mut new_draw_decks = vec![
-                    self.draw_decks[p1 as usize].clone(),
-                    self.draw_decks[p2 as usize].clone(),
-                ];
-
-                // allow swapping of any cards
-                shuffle_and_divide_matching_cards(
-                    |_c: &Card| true,
-                    &mut new_draw_decks,
-                    &mut thread_rng(),
-                );
-
-                self.draw_decks[p1 as usize] = new_draw_decks[0].clone();
-                self.draw_decks[p2 as usize] = new_draw_decks[1].clone();
             }
         }
     }
@@ -773,7 +749,6 @@ impl ismcts::Game for Game {
         }
     }
 }
-*/
 
 #[cfg(test)]
 mod tests {
@@ -1097,15 +1072,17 @@ mod tests {
         assert_eq!(new_game.state, State::BidType);
     }
 
-    // #[test]
-    // fn test_random_playthrough() {
-    //     let mut game = Game::new();
-    //     game.round = 4;
-    //     while game.winner.is_none() {
-    //         let action = *game.get_moves().first().unwrap();
-    //         game = game.clone_and_apply_move(action);
-    //     }
-    // }
+    #[test]
+    fn test_random_playthrough() {
+        let mut game = Game::new();
+        game.round = 6;
+        while game.winner.is_none() {
+            let mut moves = game.get_moves();
+            moves.shuffle(&mut thread_rng());
+            let action = *moves.first().unwrap();
+            game = game.clone_and_apply_move(action);
+        }
+    }
 
     struct ScoreCase {
         tricks_taken: Vec<i32>,
