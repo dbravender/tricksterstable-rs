@@ -31,8 +31,8 @@ fn display_game(game: &Game) {
             game.scores[player]
         );
     }
-    println!("lead_suit: {:?}", print_suit(game.lead_suit));
-    println!("trump: {:?}", print_suit(game.trump_suit));
+    println!("lead_suit: {}", print_suit(game.lead_suit));
+    println!("trump: {}", print_suit(game.trump_suit));
     println!(
         "current_hand:\n{}",
         game.hands[0]

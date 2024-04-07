@@ -4,6 +4,7 @@ Designer: Shreesh Bhat
 BoardGameGeek: https://boardgamegeek.com/boardgame/378945/dealers-dilemma
 */
 
+use colored::Colorize;
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
 use rand::seq::SliceRandom;
@@ -25,8 +26,22 @@ pub const BID_TYPE_TOP: i32 = 78;
 pub const BID_TYPE_DIFFERENCE: i32 = 79;
 pub const BID_TYPE_ZERO: i32 = 80;
 
+fn color_suit(suit: Option<Suit>, string: String) -> String {
+    if !cfg!(windows) {
+        return match suit {
+            Some(Suit::Red) => string.red().to_string(),
+            Some(Suit::Blue) => string.blue().to_string(),
+            Some(Suit::Yellow) => string.yellow().to_string(),
+            Some(Suit::Green) => string.green().to_string(),
+            _ => string,
+        };
+    } else {
+        return string;
+    }
+}
+
 pub fn print_suit(suit: Option<Suit>) -> String {
-    if let Some(suit) = suit {
+    let string = if let Some(suit) = suit {
         match suit {
             Suit::Red => "♥".to_string(),
             Suit::Blue => "♣".to_string(),
@@ -35,11 +50,16 @@ pub fn print_suit(suit: Option<Suit>) -> String {
         }
     } else {
         "?".to_string()
-    }
+    };
+    color_suit(suit, string)
 }
 
 pub fn print_card(card: Card, prefix_id: bool) -> String {
-    let string = format!("{}{}", card.value, print_suit(Some(card.suit)));
+    let string = format!(
+        "{}{}",
+        color_suit(Some(card.suit), card.value.to_string()),
+        print_suit(Some(card.suit))
+    );
     if !prefix_id {
         return string;
     }
