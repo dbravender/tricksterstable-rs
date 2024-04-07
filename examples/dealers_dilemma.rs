@@ -18,7 +18,7 @@ pub fn get_input(prompt: &str) -> String {
 fn display_game(game: &Game) {
     for player in 0..3 {
         println!(
-            "player {}\ntricks taken: {}\nbid: {}\nbid_cards: {}\nscore: {}\n",
+            "player {} tricks taken: {} bid: {} bid_cards: {} score: {}",
             player,
             game.tricks_taken[player],
             serde_json::to_string(&game.bids[player]).unwrap(),
