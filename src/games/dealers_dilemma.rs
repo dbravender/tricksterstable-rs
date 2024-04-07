@@ -818,13 +818,16 @@ impl ismcts::Game for Game {
     }
 }
 
-pub fn get_mcts_move(game: &Game) -> i32 {
+pub fn get_mcts_move(game: &Game, iterations: i32) -> i32 {
     let mut new_game = game.clone();
     new_game.round = 6;
     new_game.no_changes = true;
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
-    ismcts.run_iterations(parallel_threads, 1000 / parallel_threads);
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
     ismcts.best_move().expect("should have a move to make")
 }
 
@@ -1164,10 +1167,11 @@ mod tests {
 
     #[test]
     fn test_mcts_playthrough() {
+        let iterations = [10, 100, 1000];
         let mut game = Game::new();
         //game.round = 6;
         while game.winner.is_none() {
-            let action = get_mcts_move(&game);
+            let action = get_mcts_move(&game, iterations[game.current_player as usize]);
             game = game.clone_and_apply_move(action);
             println!("{:?}", game.scores);
         }
