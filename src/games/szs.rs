@@ -860,31 +860,8 @@ impl ismcts::Game for Game {
                 let score = (score as f64 / high_score as f64) / winners as f64;
                 Some(0.2 + (0.8 * score))
             }
-            // let mut max_score: f64 = 25.0;
-            // if high_score as f64 > max_score {
-            //     max_score = high_score;
-            // }
-            // let score = score / max_score;
-            // let mut bonus = 0.0;
-            // if score == high_score {
-            //     bonus = 1.0;
-            // }
-            // return Some((0.1 * score) + (0.9 * bonus));
-            // let mut penalty_for_ties = 0.0;
-            // if score == high_score && winners > 0 {
-            //     penalty_for_ties = -0.5 * winners as f64;
-            // }
-            // if score as f64 >= (0.7 * high_score as f64) {
-            //     Some(0.5 + (0.5 * (score as f64 / max_score)) - penalty_for_ties)
-            // } else {
-            //     Some(0.5 * (score as f64 / max_score))
-            // }
         }
     }
-}
-
-pub fn sigmoid(z: &f32) -> f32 {
-    1.0 / (1.0 + E.powf(-z))
 }
 
 #[cfg(test)]

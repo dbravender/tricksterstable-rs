@@ -1291,7 +1291,8 @@ mod tests {
         let mut iterations = vec![10, 250, 1000];
         let mut wins: HashMap<i32, i32> = HashMap::from_iter(iterations.iter().map(|i| (*i, 0)));
         let mut scores: HashMap<i32, i32> = HashMap::from_iter(iterations.iter().map(|i| (*i, 0)));
-        for i in 0..100 {
+        // 0..100 for comparisons
+        for i in 0..1 {
             iterations.shuffle(&mut thread_rng());
             let mut game = Game::new();
             game.dealer = i % 3;
@@ -1311,7 +1312,7 @@ mod tests {
                 let scores = scores.get_mut(&iterations[player]).unwrap();
                 *scores += game.scores[player];
             }
-            println!("wins: {:?} scores: {:?}", wins, scores);
         }
+        println!("wins: {:?} scores: {:?}", wins, scores);
     }
 }
