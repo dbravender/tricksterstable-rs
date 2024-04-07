@@ -394,12 +394,13 @@ impl Game {
         let mut changes = hide_playable(&new_game);
         new_game.changes[last_change].append(&mut changes);
         new_game.current_trick[new_game.current_player as usize] = Some(*card);
-        if let Some(suit) = new_game.lead_suit {
-            // Player has revealed a void
-            new_game.voids[new_game.current_player as usize].insert(suit);
-        }
         if new_game.lead_suit.is_none() {
             new_game.lead_suit = Some(card.suit);
+        } else {
+            if Some(card.suit) != new_game.lead_suit {
+                // Player has revealed a void
+                new_game.voids[new_game.current_player as usize].insert(card.suit);
+            }
         }
         new_game.current_player = (new_game.current_player + 1) % 3;
         // end trick

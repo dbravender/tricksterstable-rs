@@ -472,12 +472,14 @@ impl Game {
                 let mut changes = hide_playable(&new_game);
                 new_game.changes[last_change].append(&mut changes);
                 new_game.current_trick[new_game.current_player as usize] = Some(*card);
-                if let Some(suit) = new_game.lead_suit {
-                    // Player has revealed a void
-                    new_game.voids[new_game.current_player as usize].insert(suit);
-                }
+
                 if new_game.lead_suit.is_none() {
                     new_game.lead_suit = Some(card.suit);
+                } else {
+                    if Some(card.suit) != new_game.lead_suit {
+                        // Player has revealed a void
+                        new_game.voids[new_game.current_player as usize].insert(card.suit);
+                    }
                 }
                 new_game.current_player = (new_game.current_player + 1) % 3;
                 // end trick
@@ -776,6 +778,34 @@ impl ismcts::Game for Game {
                     &mut new_hands,
                     rng,
                 );
+
+                /*println!("shared voids: {:?}", combined_voids);
+                println!(
+                    "original hands: {}\n{}\n",
+                    self.hands[p1 as usize]
+                        .iter()
+                        .map(|c| print_card(*c, false))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    self.hands[p2 as usize]
+                        .iter()
+                        .map(|c| print_card(*c, false))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+                println!(
+                    "new hands: {}\n{}\n",
+                    new_hands[0]
+                        .iter()
+                        .map(|c| print_card(*c, false))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    new_hands[1]
+                        .iter()
+                        .map(|c| print_card(*c, false))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                        );*/
 
                 self.hands[p1 as usize] = new_hands[0].clone();
                 self.hands[p2 as usize] = new_hands[1].clone();
@@ -1201,14 +1231,30 @@ mod tests {
 
     #[test]
     fn test_mcts_playthrough() {
-        let iterations = [10, 100, 1000];
-        let mut game = Game::new();
-        //game.round = 6;
-        while game.winner.is_none() {
-            let action = get_mcts_move(&game, iterations[game.current_player as usize]);
-            game = game.clone_and_apply_move(action);
-            println!("{:?}", game.scores);
+        let mut iterations = vec![10, 250, 1000];
+        let mut wins: HashMap<i32, i32> = HashMap::from_iter(iterations.iter().map(|i| (*i, 0)));
+        let mut scores: HashMap<i32, i32> = HashMap::from_iter(iterations.iter().map(|i| (*i, 0)));
+        for i in 0..100 {
+            iterations.shuffle(&mut thread_rng());
+            let mut game = Game::new();
+            game.dealer = i % 3;
+            game.current_player = i % 3;
+            game = game.deal();
+            game.round = 6;
+            while game.winner.is_none() {
+                let action = get_mcts_move(&game, iterations[game.current_player as usize]);
+                game = game.clone_and_apply_move(action);
+            }
+            let max_score: i32 = *game.scores.iter().max().unwrap();
+            for player in 0..3 {
+                if game.scores[player] == max_score {
+                    let wins = wins.get_mut(&iterations[player]).unwrap();
+                    *wins += 1;
+                }
+                let scores = scores.get_mut(&iterations[player]).unwrap();
+                *scores += game.scores[player];
+            }
+            println!("wins: {:?} scores: {:?}", wins, scores);
         }
-        println!("{:?}", game.scores);
     }
 }

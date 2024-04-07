@@ -124,7 +124,7 @@ fn main() {
                 };
             }
         } else {
-            action = get_mcts_move(&game, 1000);
+            action = get_mcts_move(&game, 250);
         }
         game = game.clone_and_apply_move(action);
     }
