@@ -162,6 +162,15 @@ pub struct Card {
     pub suit: Suit,
 }
 
+fn suit_to_id(suit: Suit) -> i32 {
+    match suit {
+        Suit::Blue => -1,
+        Suit::Green => -2,
+        Suit::Yellow => -3,
+        Suit::Red => -4,
+    }
+}
+
 pub fn move_offset(state: State, card: &Card) -> i32 {
     match state {
         State::Play => card.id,
@@ -220,8 +229,9 @@ pub enum ChangeType {
     OptionalPause,
     ShowWinningCard,
     GameOver,
-    RemainingCards,
-    Reorder,
+    DealerSelect, // location for cards to be selected by dealer
+    Reorder,      // reordering human player's hand
+    Trump,        // trump selection
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -230,12 +240,12 @@ enum Location {
     #[default]
     Deck,
     Hand,
-    Play,
+    Play,         // each players play location
     Bid, // each player bids by putting 2 cards from their hand onto the table in front of them
-    RemainingCards, // the Dealer takes the remaining 2 cards and places them face up for everyone to see.
-    TricksTaken,
-    Score,
-    ReorderHand,
+    DealerSelect, // the Dealer takes the remaining 2 cards and places them face up for everyone to see.
+    TricksTaken,  // trick counter
+    Score,        // score counter
+    Trump,        // trump selection
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -292,7 +302,9 @@ impl Game {
         let mut game = game.deal();
         game.scores = [0, 0, 0];
         game.scores_this_hand = [0, 0, 0];
-        game.changes.push(show_playable(&game));
+        if !game.no_changes {
+            game.changes.push(show_playable(&game));
+        }
         game
     }
     // Skip adding changes which are used to manipulate the UI
@@ -318,8 +330,10 @@ impl Game {
         let mut cards = deck();
         let deal_index: usize = new_game.changes.len();
         let reorder_index = deal_index + 1;
-        new_game.changes.push(vec![]); // deal_index
-        new_game.changes.push(vec![]); // reorder_index
+        if !new_game.no_changes {
+            new_game.changes.push(vec![]); // deal_index
+            new_game.changes.push(vec![]); // reorder_index
+        }
         new_game.hands = [vec![], vec![], vec![]];
         new_game.dealer_select = vec![];
 
@@ -328,34 +342,40 @@ impl Game {
                 let card = cards.pop().expect("cards should be available here");
                 if player == new_game.dealer && (y == 10 || y == 11) {
                     new_game.dealer_select.push(card);
-                    new_game.changes[deal_index].push(Change {
-                        change_type: ChangeType::RemainingCards,
-                        object_id: card.id,
-                        dest: Location::RemainingCards,
-                        dest_offset: y,
-                        player,
-                        hand_offset: y - 10, // 0 for left card 1 for right card
-                        length: 2,
-                        ..Default::default()
-                    });
+                    if !new_game.no_changes {
+                        new_game.changes[deal_index].push(Change {
+                            change_type: ChangeType::DealerSelect,
+                            object_id: card.id,
+                            dest: Location::DealerSelect,
+                            dest_offset: y,
+                            player,
+                            hand_offset: y - 10, // 0 for left card 1 for right card
+                            length: 2,
+                            ..Default::default()
+                        });
+                    }
                 } else {
-                    new_game.changes[deal_index].push(Change {
-                        change_type: ChangeType::Deal,
-                        object_id: card.id,
-                        dest: Location::Hand,
-                        dest_offset: player,
-                        player,
-                        hand_offset: y,
-                        length: if player == self.dealer { 10 } else { 12 },
-                        ..Default::default()
-                    });
+                    if !new_game.no_changes {
+                        new_game.changes[deal_index].push(Change {
+                            change_type: ChangeType::Deal,
+                            object_id: card.id,
+                            dest: Location::Hand,
+                            dest_offset: player,
+                            player,
+                            hand_offset: y,
+                            length: if player == self.dealer { 10 } else { 12 },
+                            ..Default::default()
+                        });
+                    }
                     new_game.hands[player as usize].push(card);
                 }
             }
         }
 
         new_game.hands[0].sort_by(card_sorter);
-        new_game.changes[reorder_index].append(&mut reorder_hand(0, &new_game.hands[0]));
+        if !new_game.no_changes {
+            new_game.changes[reorder_index].append(&mut reorder_hand(0, &new_game.hands[0]));
+        }
         new_game
     }
 
@@ -386,15 +406,45 @@ impl Game {
                 }
 
                 if action == DEALER_SELECT_CARD || action == DEALER_SELECT_CARD + 1 {
-                    // add a dynamic element showing which trump was selected (1/4 size card in top left?)
+                    if !self.no_changes {
+                        new_game.changes[0].push(Change {
+                            change_type: ChangeType::Trump,
+                            object_id: suit_to_id(card_to_play.suit),
+                            dest: Location::Trump,
+                            ..Default::default()
+                        });
+                        new_game.changes[0].append(
+                            reorder_hand(
+                                new_game.current_player,
+                                &new_game.hands[new_game.current_player as usize],
+                            )
+                            .as_mut(),
+                        );
+                    }
                     new_game.trump_suit = Some(card_to_hand.suit);
                 }
 
-                // TODO: move card selected to play area as lead card
-
-                // TODO: animation to move card selected as trump to dealer's hand
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
+
                 new_game.current_trick[new_game.current_player as usize] = Some(card_to_play);
+                if !self.no_changes {
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Play,
+                        object_id: card_to_play.id,
+                        source_offset: new_game.current_player,
+                        dest: Location::Play,
+                        dest_offset: new_game.current_player,
+                        player: new_game.current_player,
+                        ..Default::default()
+                    });
+                    new_game.changes[0].append(
+                        reorder_hand(
+                            new_game.current_player,
+                            &new_game.hands[new_game.current_player as usize],
+                        )
+                        .as_mut(),
+                    );
+                }
                 new_game.lead_suit = Some(card_to_play.suit);
                 new_game.state = State::BidType;
 
@@ -543,9 +593,21 @@ impl Game {
                                     new_game.bid_cards[player],
                                     new_game.tricks_taken[player],
                                 );
-                            //TODO animate score
                             new_game.scores[player] += score;
                             new_game.scores_this_hand[player] += score;
+                        }
+                        if !new_game.no_changes {
+                            for player in 0..3 {
+                                new_game.changes.push(vec![Change {
+                                    change_type: ChangeType::Score,
+                                    object_id: player,
+                                    player,
+                                    dest: Location::Score,
+                                    start_score: self.scores[player as usize],
+                                    end_score: new_game.scores[player as usize],
+                                    ..Default::default()
+                                }]);
+                            }
                         }
                         if new_game.round >= 6 {
                             // game end
@@ -560,6 +622,13 @@ impl Game {
                                     }
                                 }
                             }
+                            if !self.no_changes {
+                                new_game.changes.push(vec![Change {
+                                    change_type: ChangeType::GameOver,
+                                    dest: Location::Deck,
+                                    ..Default::default()
+                                }]);
+                            }
                             return new_game;
                         }
                         return new_game.deal();
@@ -572,8 +641,10 @@ impl Game {
                     new_game.lead_suit = None;
                 }
                 let change_offset = &new_game.changes.len() - 1;
-                let mut new_changes = show_playable(&new_game);
-                new_game.changes[change_offset].append(&mut new_changes);
+                if !self.no_changes {
+                    let mut new_changes = show_playable(&new_game);
+                    new_game.changes[change_offset].append(&mut new_changes);
+                }
                 new_game
             }
         }
@@ -663,7 +734,7 @@ pub fn reorder_hand(player: i32, hand: &Vec<Card>) -> Vec<Change> {
         changes.push(Change {
             object_id: card.id,
             player,
-            dest: Location::ReorderHand,
+            dest: Location::Hand,
             change_type: ChangeType::Reorder,
             hand_offset: offset_in_hand as i32,
             length: hand.len() as i32,
