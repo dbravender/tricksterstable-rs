@@ -10,6 +10,7 @@ use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::{min, Ordering};
 use std::collections::{HashMap, HashSet};
+use std::f32::consts::E;
 use std::mem;
 
 use crate::utils::shuffle_and_divide_matching_cards;
@@ -841,24 +842,49 @@ impl ismcts::Game for Game {
             let mut sorted_scores = self.scores.clone();
             sorted_scores.sort();
             sorted_scores.reverse();
-            let high_score = sorted_scores[0];
-            let mut high_score_count = 0;
+            let high_score = sorted_scores[0] as f64;
+            let score = self.scores[player as usize] as f64;
+            let mut winners = 0;
             for score in sorted_scores {
-                if score == high_score {
-                    high_score_count += 1;
+                if score == high_score as i32 {
+                    winners += 1;
                 }
             }
-            if self.scores[player as usize] == high_score {
-                if high_score_count > 1 {
-                    Some(0.9)
-                } else {
-                    Some(1.0)
-                }
+            if score != high_score {
+                let normalized_score = (score.abs() as f64) / 25.0;
+                // Normalizing the score to 0 - .2
+                Some(0.2 * (1.0 - normalized_score))
             } else {
-                Some(-1.0)
+                // divide by number of > 0 scoring players to incentivize
+                // minimizing the number of other winners
+                let score = (score as f64 / high_score as f64) / winners as f64;
+                Some(0.2 + (0.8 * score))
             }
+            // let mut max_score: f64 = 25.0;
+            // if high_score as f64 > max_score {
+            //     max_score = high_score;
+            // }
+            // let score = score / max_score;
+            // let mut bonus = 0.0;
+            // if score == high_score {
+            //     bonus = 1.0;
+            // }
+            // return Some((0.1 * score) + (0.9 * bonus));
+            // let mut penalty_for_ties = 0.0;
+            // if score == high_score && winners > 0 {
+            //     penalty_for_ties = -0.5 * winners as f64;
+            // }
+            // if score as f64 >= (0.7 * high_score as f64) {
+            //     Some(0.5 + (0.5 * (score as f64 / max_score)) - penalty_for_ties)
+            // } else {
+            //     Some(0.5 * (score as f64 / max_score))
+            // }
         }
     }
+}
+
+pub fn sigmoid(z: &f32) -> f32 {
+    1.0 / (1.0 + E.powf(-z))
 }
 
 #[cfg(test)]
