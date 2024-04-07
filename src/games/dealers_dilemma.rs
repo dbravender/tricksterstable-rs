@@ -8,7 +8,7 @@ use colored::Colorize;
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
 use rand::seq::SliceRandom;
-use rand::{thread_rng, Rng};
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::{min, Ordering};
 use std::collections::{HashMap, HashSet};
@@ -16,7 +16,8 @@ use std::mem;
 
 use crate::utils::shuffle_and_divide_matching_cards;
 
-const PLAY_OFFSET: i32 = 0; // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for playing)
+/// Play offsets (each possible action has a unique ID)
+// 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for playing)
 pub const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card (trump selection)
 pub const DEALER_SELECT_CARD_NO_TRUMP: i32 = 38; // 38 - left card (no trump), 39 - right card (no trump)
 pub const BID_CARD_OFFSET: i32 = 40; // 40-76 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
@@ -36,7 +37,7 @@ fn color_suit(suit: Option<Suit>, string: String) -> String {
             _ => string,
         };
     } else {
-        return string;
+        string
     }
 }
 
@@ -178,12 +179,13 @@ fn card_offset(state: State, offset: i32) -> i32 {
     }
 }
 
-fn bid_type_offset(bid: BidType) -> i32 {
-    match bid {
-        BidType::Easy => 0,
-        BidType::Top => 1,
-        BidType::Zero => 2,
-        BidType::Difference => 3,
+fn bid_type_offset(bid_id: i32) -> BidType {
+    match bid_id {
+        BID_TYPE_EASY => BidType::Easy,
+        BID_TYPE_TOP => BidType::Top,
+        BID_TYPE_ZERO => BidType::Zero,
+        BID_TYPE_DIFFERENCE => BidType::Difference,
+        _ => unreachable!(),
     }
 }
 
@@ -368,23 +370,7 @@ impl Game {
 
         match new_game.state {
             State::BidType => {
-                match action {
-                    BID_TYPE_EASY => {
-                        new_game.bids[new_game.current_player as usize] = Some(BidType::Easy);
-                    }
-                    BID_TYPE_TOP => {
-                        new_game.bids[new_game.current_player as usize] = Some(BidType::Top);
-                    }
-                    BID_TYPE_ZERO => {
-                        new_game.bids[new_game.current_player as usize] = Some(BidType::Zero);
-                    }
-                    BID_TYPE_DIFFERENCE => {
-                        new_game.bids[new_game.current_player as usize] = Some(BidType::Difference);
-                    }
-                    _ => {
-                        panic!("incorrect bid type: {action}")
-                    }
-                }
+                new_game.bids[new_game.current_player as usize] = Some(bid_type_offset(action));
                 new_game.state = State::BidCard;
                 new_game
             }
@@ -745,7 +731,7 @@ impl ismcts::Game for Game {
     type PlayerTag = i32;
     type MoveList = Vec<i32>;
 
-    fn randomize_determination(&mut self, observer: Self::PlayerTag) {
+    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
 
         for p1 in 0..3 {
