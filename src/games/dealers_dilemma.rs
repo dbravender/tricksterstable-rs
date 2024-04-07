@@ -5,6 +5,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/378945/dealers-dilemma
 */
 
 use enum_iterator::{all, Sequence};
+use ismcts::IsmctsHandler;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
@@ -15,18 +16,18 @@ use std::mem;
 use crate::utils::shuffle_and_divide_matching_cards;
 
 const PLAY_OFFSET: i32 = 0; // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for playing)
-const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card (trump selection)
-const DEALER_SELECT_CARD_NO_TRUMP: i32 = 38; // 38 - left card (no trump), 39 - right card (no trump)
-const BID_CARD_OFFSET: i32 = 40; // 40-76 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
-const BID_TYPE_OFFSET: i32 = 77; // 77-80 Easy, Top, Difference, Zero
-const BID_TYPE_EASY: i32 = 77;
-const BID_TYPE_TOP: i32 = 78;
-const BID_TYPE_DIFFERENCE: i32 = 79;
-const BID_TYPE_ZERO: i32 = 80;
+pub const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card (trump selection)
+pub const DEALER_SELECT_CARD_NO_TRUMP: i32 = 38; // 38 - left card (no trump), 39 - right card (no trump)
+pub const BID_CARD_OFFSET: i32 = 40; // 40-76 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
+pub const BID_TYPE_OFFSET: i32 = 77; // 77-80 Easy, Top, Difference, Zero
+pub const BID_TYPE_EASY: i32 = 77;
+pub const BID_TYPE_TOP: i32 = 78;
+pub const BID_TYPE_DIFFERENCE: i32 = 79;
+pub const BID_TYPE_ZERO: i32 = 80;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
-enum State {
+pub enum State {
     #[default]
     Play, // trick taking, must follow
     BidType,      // the type of bid the player is selecting
@@ -36,7 +37,7 @@ enum State {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
-enum BidType {
+pub enum BidType {
     #[default]
     Easy,
     Top,
@@ -115,11 +116,11 @@ pub enum Suit {
 #[serde(rename_all = "camelCase")]
 pub struct Card {
     pub id: i32,
-    value: i32,
+    pub value: i32,
     pub suit: Suit,
 }
 
-fn move_offset(state: State, card: &Card) -> i32 {
+pub fn move_offset(state: State, card: &Card) -> i32 {
     match state {
         State::Play => card.id,
         State::BidCard => card.id + BID_CARD_OFFSET,
@@ -216,23 +217,23 @@ pub struct Change {
 #[serde(rename_all = "camelCase")]
 pub struct Game {
     action_size: i32,
-    hands: [Vec<Card>; 3],
+    pub hands: [Vec<Card>; 3],
     pub changes: Vec<Vec<Change>>,
     pub human_player: [bool; 3],
-    tricks_taken: [i32; 3],
-    bids: [Option<BidType>; 3],
-    bid_cards: [[Option<Card>; 2]; 3],
-    current_trick: [Option<Card>; 3],
+    pub tricks_taken: [i32; 3],
+    pub bids: [Option<BidType>; 3],
+    pub bid_cards: [[Option<Card>; 2]; 3],
+    pub current_trick: [Option<Card>; 3],
     pub dealer_select: Vec<Card>,
-    lead_suit: Option<Suit>,
-    trump_suit: Option<Suit>,
+    pub lead_suit: Option<Suit>,
+    pub trump_suit: Option<Suit>,
     pub round: i32,
     pub scores: [i32; 3],
     pub voids: [HashSet<Suit>; 3],
-    current_player: i32,
+    pub current_player: i32,
     pub winner: Option<i32>,
     pub dealer: i32,
-    state: State,
+    pub state: State,
     lead_player: i32,
     #[serde(default)]
     pub no_changes: bool,
@@ -241,7 +242,9 @@ pub struct Game {
 impl Game {
     /// Factory to create a default game
     pub fn new() -> Game {
-        let game = Game::default();
+        let mut game = Game::default();
+        game.dealer = 2;
+        game.current_player = 2;
         let mut game = game.deal();
         game.scores = [0, 0, 0];
         game.changes.push(show_playable(&game));
@@ -264,6 +267,7 @@ impl Game {
         new_game.tricks_taken = [0, 0, 0];
         new_game.hands = [vec![], vec![], vec![]];
         new_game.dealer = (new_game.dealer + 1) % 3;
+        println!("new dealer: {}", new_game.dealer);
         new_game.current_player = new_game.dealer;
         new_game.voids = [HashSet::new(), HashSet::new(), HashSet::new()];
         let mut cards = deck();
@@ -277,8 +281,9 @@ impl Game {
         for y in 0..12 {
             for player in 0..3 {
                 let card = cards.pop().expect("cards should be available here");
-                if player == new_game.dealer && y == 10 || y == 11 {
+                if player == new_game.dealer && (y == 10 || y == 11) {
                     new_game.dealer_select.push(card);
+                    println!("pushing: {:?}", card);
                     new_game.changes[deal_index].push(Change {
                         change_type: ChangeType::RemainingCards,
                         object_id: card.id,
@@ -380,6 +385,9 @@ impl Game {
                     new_game.current_player = (new_game.current_player + 1) % 3;
                     if new_game.bid_cards[new_game.current_player as usize][1] != None {
                         // next player to bid has already bid
+                        // first player to bid is always dealer and
+                        // they were forced to play the card they didn't select
+                        new_game.current_player = (new_game.current_player + 1) % 3;
                         new_game.state = State::Play;
                     }
                 } else {
@@ -731,23 +739,27 @@ impl ismcts::Game for Game {
             sorted_scores.sort();
             sorted_scores.reverse();
             let high_score = sorted_scores[0];
-            let mut high_score_count = 0;
-            for score in sorted_scores {
-                if score == high_score {
-                    high_score_count += 1;
-                }
-            }
-            if self.scores[player as usize] == high_score {
-                if high_score_count > 1 {
-                    Some(0.9)
-                } else {
-                    Some(1.0)
-                }
+            let mut score = self.scores[player as usize];
+            if score <= 0 {
+                // Capping the score at -8
+                score = min(-8, score);
+                let normalized_score = (score.abs() as f64) / 8.0;
+                // Normalizing the score to 0 - .2
+                Some(0.2 * (1.0 - normalized_score))
             } else {
-                Some(-1.0)
+                Some(score as f64 / high_score as f64)
             }
         }
     }
+}
+
+pub fn get_mcts_move(game: &Game) -> i32 {
+    let mut new_game = game.clone();
+    new_game.round = 6;
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 8;
+    ismcts.run_iterations(parallel_threads, 1000 / parallel_threads);
+    ismcts.best_move().expect("should have a move to make")
 }
 
 #[cfg(test)]
@@ -1084,52 +1096,15 @@ mod tests {
         }
     }
 
-    struct ScoreCase {
-        tricks_taken: Vec<i32>,
-        shorts: Vec<i32>,
-        expected_scores: Vec<i32>,
+    #[test]
+    fn test_mcts_playthrough() {
+        let mut game = Game::new();
+        //game.round = 6;
+        while game.winner.is_none() {
+            let action = get_mcts_move(&game);
+            game = game.clone_and_apply_move(action);
+            println!("{:?}", game.scores);
+        }
+        println!("{:?}", game.scores);
     }
-
-    // #[test]
-    // fn test_score_game() {
-    //     let cases = vec![
-    //         // 0: Brother Barenstain won 1 trick and has 1 short: 1 point for 1 won
-    //         //    trick and 5 points for the 1 equal pair: 6 total points.
-    //         // 1: Sister Barenstain won 3 tricks and has 3 shorts: 3 points for 3
-    //         //    won tricks and 15 points for the 3 equal pairs: 18 total.
-    //         // 2: Ditka won 3 tricks and has 2 shorts: 3 points for 3 won tricks
-    //         //    and 6 points for the 2 unequal pairs: 9 total.
-    //         ScoreCase {
-    //             tricks_taken: vec![1, 3, 3],
-    //             shorts: vec![1, 3, 2],
-    //             expected_scores: vec![6, 18, 9],
-    //         },
-    //         // 0: Smokey won 1 trick and shorted 6 times: 1 point for 1 won trick
-    //         //    and 3 points for the 1 pair: 4 total
-    //         ScoreCase {
-    //             tricks_taken: vec![1, 0, 0],
-    //             shorts: vec![6, 0, 0],
-    //             expected_scores: vec![4, 0, 0],
-    //         },
-    //     ];
-    //     for test_case in cases.iter() {
-    //         let scores = score_game(
-    //             vec![0, 0, 0],
-    //             &test_case.tricks_taken,
-    //             test_case.shorts.clone(),
-    //         );
-    //         assert_eq!(scores, *test_case.expected_scores);
-    //     }
-    //     // scores should be added to existing scores
-    //     for test_case in cases {
-    //         let scores = score_game(
-    //             vec![1, 1, 1],
-    //             &test_case.tricks_taken,
-    //             test_case.shorts.clone(),
-    //         );
-    //         let expected_scores: Vec<i32> =
-    //             test_case.expected_scores.iter().map(|s| s + 1).collect();
-    //         assert_eq!(scores, expected_scores);
-    //     }
-    // }
 }
