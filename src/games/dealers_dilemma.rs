@@ -94,10 +94,10 @@ impl BidType {
                 let facedown_card = bid_cards[1];
                 let lowest_bid = min(facedown_card.unwrap().value, faceup_card.unwrap().value);
                 match tricks {
-                    // tricks won is equal to the hidden card: score 2 points
-                    _ if tricks == facedown_card.unwrap().value => 2,
                     // tricks won is equal to the revealed card: score 4 points
                     _ if tricks == faceup_card.unwrap().value => 4,
+                    // tricks won is equal to the hidden card: score 2 points
+                    _ if tricks == facedown_card.unwrap().value => 2,
                     // -1 point per trick missed from your lowest bid value
                     _ => (lowest_bid - tricks).abs() * -1,
                 }
@@ -1052,6 +1052,24 @@ mod tests {
                 ],
                 tricks: 4,
                 expected_score: 2,
+            },
+            // successful easy bid - same value
+            BidTestCase {
+                bid_type: BidType::Easy,
+                bid_cards: [
+                    Some(Card {
+                        suit: Suit::Red,
+                        value: 2,
+                        id: 0,
+                    }),
+                    Some(Card {
+                        suit: Suit::Red,
+                        value: 2,
+                        id: 0,
+                    }),
+                ],
+                tricks: 2,
+                expected_score: 4,
             },
             // failed easy bid
             BidTestCase {
