@@ -25,6 +25,27 @@ pub const BID_TYPE_TOP: i32 = 78;
 pub const BID_TYPE_DIFFERENCE: i32 = 79;
 pub const BID_TYPE_ZERO: i32 = 80;
 
+pub fn print_suit(suit: Option<Suit>) -> String {
+    if let Some(suit) = suit {
+        match suit {
+            Suit::Red => "♥".to_string(),
+            Suit::Blue => "♣".to_string(),
+            Suit::Yellow => "♦".to_string(),
+            Suit::Green => "♠".to_string(),
+        }
+    } else {
+        "?".to_string()
+    }
+}
+
+pub fn print_card(card: Card, prefix_id: bool) -> String {
+    let string = format!("{}{}", card.value, print_suit(Some(card.suit)));
+    if !prefix_id {
+        return string;
+    }
+    return format!("{}: {}", card.id, string);
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum State {
@@ -285,7 +306,6 @@ impl Game {
                 let card = cards.pop().expect("cards should be available here");
                 if player == new_game.dealer && (y == 10 || y == 11) {
                     new_game.dealer_select.push(card);
-                    println!("pushing: {:?}", card);
                     new_game.changes[deal_index].push(Change {
                         change_type: ChangeType::RemainingCards,
                         object_id: card.id,
@@ -446,6 +466,18 @@ impl Game {
                 new_game.current_player = (new_game.current_player + 1) % 3;
                 // end trick
                 if new_game.current_trick.iter().flatten().count() == 3 {
+                    if !new_game.no_changes {
+                        println!(
+                            "trick finished: {}",
+                            new_game
+                                .current_trick
+                                .iter()
+                                .flatten()
+                                .map(|c| print_card(*c, false))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        );
+                    }
                     let trick_winner = get_winner(
                         new_game.lead_suit,
                         new_game.trump_suit,
@@ -789,6 +821,7 @@ impl ismcts::Game for Game {
 pub fn get_mcts_move(game: &Game) -> i32 {
     let mut new_game = game.clone();
     new_game.round = 6;
+    new_game.no_changes = true;
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
     ismcts.run_iterations(parallel_threads, 1000 / parallel_threads);

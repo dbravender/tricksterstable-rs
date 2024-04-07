@@ -1,8 +1,8 @@
-use colored::Colorize;
 use std::io;
 
 use tricksterstable_rs::games::dealers_dilemma::{
-    get_mcts_move, Card, Game, State, Suit, BID_CARD_OFFSET, BID_TYPE_EASY, DEALER_SELECT_CARD,
+    get_mcts_move, print_card, print_suit, Game, State, BID_CARD_OFFSET, BID_TYPE_EASY,
+    DEALER_SELECT_CARD,
 };
 
 pub fn get_input(prompt: &str) -> String {
@@ -13,20 +13,6 @@ pub fn get_input(prompt: &str) -> String {
         Err(_no_updates_is_fine) => {}
     }
     input.trim().to_string()
-}
-
-fn print_card(card: Card, prefix_id: bool) -> String {
-    let string = format!("{:<2}", card.value);
-    let colored_string = match card.suit {
-        Suit::Red => string.red(),
-        Suit::Blue => string.blue(),
-        Suit::Yellow => string.yellow(),
-        Suit::Green => string.green(),
-    };
-    if !prefix_id {
-        return colored_string.to_string();
-    }
-    return format!("{}:{}", card.id, colored_string.to_string());
 }
 
 fn display_game(game: &Game) {
@@ -45,8 +31,8 @@ fn display_game(game: &Game) {
             game.scores[player]
         );
     }
-    println!("lead_suit: {:?}", game.lead_suit);
-    println!("trump: {:?}", game.trump_suit);
+    println!("lead_suit: {:?}", print_suit(game.lead_suit));
+    println!("trump: {:?}", print_suit(game.trump_suit));
     println!(
         "current_hand:\n{}",
         game.hands[0]
@@ -121,11 +107,11 @@ fn show_moves(game: &Game) {
 fn main() {
     let mut game = Game::new();
     game.human_player[0] = true;
-    game.no_changes = true;
     display_game(&game);
     while game.winner.is_none() {
         let mut action: i32 = -1;
         if game.current_player == 0 {
+            display_game(&game);
             show_moves(&game);
             while game.get_moves().iter().all(|x| x != &action) {
                 let action_string = get_input("Move: ");
@@ -141,6 +127,6 @@ fn main() {
             action = get_mcts_move(&game);
         }
         game = game.clone_and_apply_move(action);
-        display_game(&game);
     }
+    display_game(&game);
 }
