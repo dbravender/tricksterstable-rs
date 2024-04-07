@@ -15,7 +15,7 @@ pub fn get_input(prompt: &str) -> String {
     input.trim().to_string()
 }
 
-fn print_card(card: Card) -> String {
+fn print_card(card: Card, prefix_id: bool) -> String {
     let string = format!("{:<2}", card.value);
     let colored_string = match card.suit {
         Suit::Red => string.red(),
@@ -23,6 +23,9 @@ fn print_card(card: Card) -> String {
         Suit::Yellow => string.yellow(),
         Suit::Green => string.green(),
     };
+    if !prefix_id {
+        return colored_string.to_string();
+    }
     return format!("{}:{}", card.id, colored_string.to_string());
 }
 
@@ -33,7 +36,12 @@ fn display_game(game: &Game) {
             player,
             game.tricks_taken[player],
             serde_json::to_string(&game.bids[player]).unwrap(),
-            serde_json::to_string(&game.bid_cards[player]).unwrap(),
+            game.bid_cards[player]
+                .iter()
+                .flatten()
+                .map(|c| print_card(*c, true))
+                .collect::<Vec<_>>()
+                .join(" "),
             game.scores[player]
         );
     }
@@ -43,7 +51,7 @@ fn display_game(game: &Game) {
         "current_hand:\n{}",
         game.hands[0]
             .iter()
-            .map(|c| print_card(*c))
+            .map(|c| print_card(*c, true))
             .collect::<Vec<_>>()
             .join(" ")
     );
@@ -53,7 +61,7 @@ fn display_game(game: &Game) {
         game.current_trick
             .iter()
             .flatten()
-            .map(|c| print_card(*c))
+            .map(|c| print_card(*c, false))
             .collect::<Vec<_>>()
             .join(" ")
     );
@@ -65,7 +73,7 @@ fn show_dealer_select(game: &Game) {
         "---\nSelect card to hand (trump?)\n\n{}",
         game.dealer_select
             .iter()
-            .map(|c| print_card(*c))
+            .map(|c| print_card(*c, false))
             .enumerate()
             .map(|(i, c)| format!("{}: {}", i, c))
             .collect::<Vec<_>>()
@@ -76,7 +84,7 @@ fn show_dealer_select(game: &Game) {
             "{}",
             game.dealer_select
                 .iter()
-                .map(|c| print_card(*c))
+                .map(|c| print_card(*c, false))
                 .enumerate()
                 .map(|(i, c)| format!("{}: {} (no trump)", i + 2, c))
                 .collect::<Vec<_>>()
@@ -87,12 +95,13 @@ fn show_dealer_select(game: &Game) {
 }
 
 fn show_moves(game: &Game) {
+    println!("State: {:?}", game.state);
     match game.state {
         State::Play => println!(
             "{}",
             game.hands[0]
                 .iter()
-                .map(|c| print_card(*c))
+                .map(|c| print_card(*c, true))
                 .collect::<Vec<_>>()
                 .join(" ")
         ),
@@ -101,7 +110,7 @@ fn show_moves(game: &Game) {
             "{}",
             game.hands[0]
                 .iter()
-                .map(|c| print_card(*c))
+                .map(|c| print_card(*c, true))
                 .collect::<Vec<_>>()
                 .join(" ")
         ),
