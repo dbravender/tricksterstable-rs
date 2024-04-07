@@ -16,14 +16,14 @@ pub fn get_input(prompt: &str) -> String {
 }
 
 fn print_card(card: Card) -> String {
-    let string = format!("{}: {} {:?}", card.id, card.value, card.suit);
+    let string = format!("{:<2}", card.value);
     let colored_string = match card.suit {
         Suit::Red => string.red(),
         Suit::Blue => string.blue(),
         Suit::Yellow => string.yellow(),
         Suit::Green => string.green(),
     };
-    colored_string.to_string()
+    return format!("{}:{}", card.id, colored_string.to_string());
 }
 
 fn display_game(game: &Game) {
@@ -45,7 +45,7 @@ fn display_game(game: &Game) {
             .iter()
             .map(|c| print_card(*c))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join(" ")
     );
     println!("---");
     println!(
@@ -55,7 +55,7 @@ fn display_game(game: &Game) {
             .flatten()
             .map(|c| print_card(*c))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join(" ")
     );
     println!("---");
 }
@@ -94,7 +94,7 @@ fn show_moves(game: &Game) {
                 .iter()
                 .map(|c| print_card(*c))
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join(" ")
         ),
         State::BidType => println!("0: easy\n1: top\n2: difference\n3: zero"),
         State::BidCard => println!(
@@ -103,7 +103,7 @@ fn show_moves(game: &Game) {
                 .iter()
                 .map(|c| print_card(*c))
                 .collect::<Vec<_>>()
-                .join("\n")
+                .join(" ")
         ),
         State::DealerSelect => show_dealer_select(game),
     }

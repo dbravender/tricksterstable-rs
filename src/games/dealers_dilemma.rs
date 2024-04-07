@@ -7,7 +7,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/378945/dealers-dilemma
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::cmp::{min, Ordering};
 use std::collections::{HashMap, HashSet};
@@ -150,7 +150,7 @@ pub fn deck() -> Vec<Card> {
     let mut deck: Vec<Card> = vec![];
     let mut id = 0;
     for suit in all::<Suit>() {
-        for value in 2..11 {
+        for value in 1..10 {
             deck.push(Card {
                 id,
                 value: value + 1,
@@ -228,6 +228,7 @@ pub struct Game {
     pub lead_suit: Option<Suit>,
     pub trump_suit: Option<Suit>,
     pub round: i32,
+    pub scores_this_hand: [i32; 3],
     pub scores: [i32; 3],
     pub voids: [HashSet<Suit>; 3],
     pub current_player: i32,
@@ -247,6 +248,7 @@ impl Game {
         game.current_player = 2;
         let mut game = game.deal();
         game.scores = [0, 0, 0];
+        game.scores_this_hand = [0, 0, 0];
         game.changes.push(show_playable(&game));
         game
     }
@@ -263,11 +265,11 @@ impl Game {
         new_game.bids = [None, None, None];
         new_game.bid_cards = [[None, None], [None, None], [None, None]];
         new_game.trump_suit = None;
+        new_game.lead_suit = None;
         new_game.current_trick = [None, None, None];
         new_game.tricks_taken = [0, 0, 0];
         new_game.hands = [vec![], vec![], vec![]];
         new_game.dealer = (new_game.dealer + 1) % 3;
-        println!("new dealer: {}", new_game.dealer);
         new_game.current_player = new_game.dealer;
         new_game.voids = [HashSet::new(), HashSet::new(), HashSet::new()];
         let mut cards = deck();
@@ -317,7 +319,13 @@ impl Game {
 
     pub fn clone_and_apply_move(self: Game, action: i32) -> Self {
         let mut new_game: Game = self.clone();
-        new_game.changes = vec![vec![]]; // card from player to table or discard to draw deck
+
+        // reset only after a move is made in the next round
+        new_game.scores_this_hand = [0, 0, 0];
+
+        // card from player to table or discard to draw deck
+        new_game.changes = vec![vec![]];
+
         match new_game.state {
             State::BidType => {
                 match action {
@@ -366,6 +374,7 @@ impl Game {
                 // TODO: animation to move card selected as trump to dealer's hand
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
                 new_game.current_trick[new_game.current_player as usize] = Some(card_to_play);
+                new_game.lead_suit = Some(card_to_play.suit);
                 new_game.state = State::BidType;
 
                 new_game
@@ -500,6 +509,7 @@ impl Game {
                                 );
                             //TODO animate score
                             new_game.scores[player] += score;
+                            new_game.scores_this_hand[player] += score;
                         }
                         if new_game.round >= 6 {
                             // game end
@@ -686,10 +696,21 @@ impl ismcts::Game for Game {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, observer: Self::PlayerTag) {
+        let rng = &mut thread_rng();
+
         for p1 in 0..3 {
             for p2 in 0..3 {
                 if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
                     continue;
+                }
+
+                // Add hidden bid cards to player's hands so they can be swapped
+                for player in [p1 as usize, p2 as usize] {
+                    if self.bids[player] == Some(BidType::Easy) && self.bid_cards[player][1] != None
+                    {
+                        let bid_card = self.bid_cards[player][1].unwrap();
+                        self.hands[player].push(bid_card);
+                    }
                 }
 
                 let mut combined_voids: HashSet<Suit> =
@@ -705,11 +726,19 @@ impl ismcts::Game for Game {
                 shuffle_and_divide_matching_cards(
                     |c: &Card| !combined_voids.contains(&c.suit),
                     &mut new_hands,
-                    &mut thread_rng(),
+                    rng,
                 );
 
                 self.hands[p1 as usize] = new_hands[0].clone();
                 self.hands[p2 as usize] = new_hands[1].clone();
+
+                for player in [p1 as usize, p2 as usize] {
+                    if self.bids[player] == Some(BidType::Easy) && self.bid_cards[player][1] != None
+                    {
+                        // randomly take one of the cards and make it the hidden card
+                        self.bid_cards[player][1] = self.hands[player].pop();
+                    }
+                }
             }
         }
     }
@@ -735,12 +764,12 @@ impl ismcts::Game for Game {
         if self.winner == None {
             None
         } else {
-            let mut sorted_scores = self.scores.clone();
+            let mut sorted_scores = self.scores_this_hand.clone();
             sorted_scores.sort();
             sorted_scores.reverse();
             let scorer_count = sorted_scores.iter().filter(|&x| *x > 0).count();
             let high_score = sorted_scores[0];
-            let mut score = self.scores[player as usize];
+            let mut score = self.scores_this_hand[player as usize];
             if score <= 0 {
                 // Capping the score at -8
                 score = min(-8, score);
