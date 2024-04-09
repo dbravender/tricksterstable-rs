@@ -246,12 +246,12 @@ enum Location {
     TricksTaken,  // trick counter
     Score,        // score counter
     Trump,        // trump selection
+    Reorder,      // reordering a hand
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
-    #[serde(rename(serialize = "type", deserialize = "type"))]
     pub change_type: ChangeType,
     player: i32,
     object_id: i32,
@@ -571,17 +571,15 @@ impl Game {
                     for player in 0..3 {
                         let card = new_game.current_trick[player]
                             .expect("each player should have played a card");
-                        if Some(card.suit) == new_game.lead_suit {
-                            new_game.changes[offset].push(Change {
-                                change_type: ChangeType::TricksToWinner,
-                                object_id: card.id,
-                                source_offset: player as i32,
-                                dest: Location::TricksTaken,
-                                player: trick_winner,
-                                tricks_taken: new_game.tricks_taken[trick_winner as usize],
-                                ..Default::default()
-                            });
-                        }
+                        new_game.changes[offset].push(Change {
+                            change_type: ChangeType::TricksToWinner,
+                            object_id: card.id,
+                            source_offset: player as i32,
+                            dest: Location::TricksTaken,
+                            player: trick_winner,
+                            tricks_taken: new_game.tricks_taken[trick_winner as usize],
+                            ..Default::default()
+                        });
                     }
 
                     if new_game.hands.iter().all(|h| h.is_empty()) {
