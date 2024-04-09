@@ -232,6 +232,7 @@ pub enum ChangeType {
     DealerSelect, // location for cards to be selected by dealer
     Reorder,      // reordering human player's hand
     Trump,        // trump selection
+    Bid,          // player bids a card
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -458,24 +459,37 @@ impl Game {
                     .expect("this card has to be in the player's hand")
                     .clone();
                 new_game.hands[new_game.current_player as usize].retain(|c| c.id != card_id);
-                if new_game.bid_cards[new_game.current_player as usize][0] == None {
-                    new_game.bid_cards[new_game.current_player as usize][0] = Some(*card);
-                } else if new_game.bid_cards[new_game.current_player as usize][1] == None {
-                    new_game.bid_cards[new_game.current_player as usize][1] = Some(*card);
-                    new_game.current_player = (new_game.current_player + 1) % 3;
-                    new_game.state = State::BidType;
-                    if new_game.bid_cards[new_game.current_player as usize][1] != None {
-                        // next player to bid has already bid
-                        // first player to bid is always dealer and
-                        // they were forced to play the card they didn't select
-                        new_game.current_player = (new_game.current_player + 1) % 3;
-                        new_game.state = State::Play;
-                    }
+                let bid_index: usize;
+                if new_game.bid_cards[new_game.current_player as usize][0].is_none() {
+                    bid_index = 0;
+                } else if new_game.bid_cards[new_game.current_player as usize][1].is_none() {
+                    bid_index = 1;
                 } else {
                     panic!("player has already bid two cards!")
                 }
 
-                // TODO: send bid card to table animation
+                new_game.bid_cards[new_game.current_player as usize][bid_index] = Some(*card);
+                new_game.current_player = (new_game.current_player + 1) % 3;
+                new_game.state = State::BidType;
+                if new_game.bid_cards[new_game.current_player as usize][1].is_some() {
+                    // next player to bid has already bid
+                    // first player to bid is always dealer and
+                    // they were forced to play the card they didn't select
+                    new_game.current_player = (new_game.current_player + 1) % 3;
+                    new_game.state = State::Play;
+                }
+
+                if !self.no_changes {
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Bid,
+                        object_id: card.id,
+                        source_offset: new_game.current_player,
+                        dest: Location::Bid,
+                        dest_offset: bid_index as i32,
+                        player: new_game.current_player,
+                        ..Default::default()
+                    });
+                }
                 new_game
             }
             State::Play => {
@@ -629,6 +643,14 @@ impl Game {
                             }
                             return new_game;
                         }
+                        new_game.changes.push(vec![Change {
+                            change_type: ChangeType::Shuffle,
+                            object_id: 0,
+                            source_offset: 0,
+                            dest: Location::Deck,
+                            dest_offset: 0,
+                            ..Default::default()
+                        }]);
                         return new_game.deal();
                     }
 
