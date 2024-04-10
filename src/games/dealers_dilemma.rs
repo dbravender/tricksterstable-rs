@@ -489,14 +489,16 @@ impl Game {
                     );
                 }
 
-                new_game.current_player = (new_game.current_player + 1) % 3;
-                new_game.state = State::BidType;
-                if new_game.bid_cards[new_game.current_player as usize][1].is_some() {
-                    // next player to bid has already bid
-                    // first player to bid is always dealer and
-                    // they were forced to play the card they didn't select
+                if bid_index == 1 {
                     new_game.current_player = (new_game.current_player + 1) % 3;
-                    new_game.state = State::Play;
+                    new_game.state = State::BidType;
+                    if new_game.bid_cards[new_game.current_player as usize][0].is_some() {
+                        // next player to bid has already bid
+                        // first player to bid is always dealer and
+                        // they were forced to play the card they didn't select
+                        new_game.current_player = (new_game.current_player + 1) % 3;
+                        new_game.state = State::Play;
+                    }
                 }
 
                 new_game
