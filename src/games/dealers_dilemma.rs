@@ -475,6 +475,7 @@ impl Game {
                     let faceup: Option<bool> = if new_game.bids[new_game.current_player as usize]
                         == Some(BidType::Easy)
                         && bid_index == 1
+                        && new_game.human_player[new_game.current_player as usize] == false
                     {
                         Some(false)
                     } else {
