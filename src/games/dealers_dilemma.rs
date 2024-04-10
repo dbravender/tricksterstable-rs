@@ -469,15 +469,6 @@ impl Game {
                 }
 
                 new_game.bid_cards[new_game.current_player as usize][bid_index] = Some(*card);
-                new_game.current_player = (new_game.current_player + 1) % 3;
-                new_game.state = State::BidType;
-                if new_game.bid_cards[new_game.current_player as usize][1].is_some() {
-                    // next player to bid has already bid
-                    // first player to bid is always dealer and
-                    // they were forced to play the card they didn't select
-                    new_game.current_player = (new_game.current_player + 1) % 3;
-                    new_game.state = State::Play;
-                }
 
                 if !self.no_changes {
                     new_game.changes[0].push(Change {
@@ -489,7 +480,25 @@ impl Game {
                         player: new_game.current_player,
                         ..Default::default()
                     });
+                    new_game.changes[0].append(
+                        reorder_hand(
+                            new_game.current_player,
+                            &new_game.hands[new_game.current_player as usize],
+                        )
+                        .as_mut(),
+                    );
                 }
+
+                new_game.current_player = (new_game.current_player + 1) % 3;
+                new_game.state = State::BidType;
+                if new_game.bid_cards[new_game.current_player as usize][1].is_some() {
+                    // next player to bid has already bid
+                    // first player to bid is always dealer and
+                    // they were forced to play the card they didn't select
+                    new_game.current_player = (new_game.current_player + 1) % 3;
+                    new_game.state = State::Play;
+                }
+
                 new_game
             }
             State::Play => {
