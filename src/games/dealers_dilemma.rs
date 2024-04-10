@@ -365,7 +365,7 @@ impl Game {
                             dest_offset: player,
                             player,
                             hand_offset: y,
-                            length: if player == self.dealer { 10 } else { 12 },
+                            length: if player == new_game.dealer { 10 } else { 12 },
                             ..Default::default()
                         });
                     }
