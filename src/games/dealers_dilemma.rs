@@ -265,6 +265,7 @@ pub struct Change {
     hand_offset: i32,
     length: i32,
     cards_remaining: i32,
+    pub faceup: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -471,6 +472,14 @@ impl Game {
                 new_game.bid_cards[new_game.current_player as usize][bid_index] = Some(*card);
 
                 if !self.no_changes {
+                    let faceup: Option<bool> = if new_game.bids[new_game.current_player as usize]
+                        == Some(BidType::Easy)
+                        && bid_index == 1
+                    {
+                        Some(false)
+                    } else {
+                        None
+                    };
                     new_game.changes[0].push(Change {
                         change_type: ChangeType::Bid,
                         object_id: card.id,
@@ -478,6 +487,7 @@ impl Game {
                         dest: Location::Bid,
                         dest_offset: bid_index as i32,
                         player: new_game.current_player,
+                        faceup,
                         ..Default::default()
                     });
                     new_game.changes[0].append(
