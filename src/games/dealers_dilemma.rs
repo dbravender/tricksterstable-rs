@@ -129,6 +129,60 @@ impl BidType {
             },
         }
     }
+
+    fn bid_display(&self, bid_cards: [Option<Card>; 2], is_human: bool) -> String {
+        match self {
+            BidType::Easy => {
+                let faceup_card = bid_cards[0].unwrap();
+                let facedown_card = bid_cards[1].unwrap();
+                if is_human {
+                    format!("{} or {}", faceup_card.value, facedown_card.value)
+                } else {
+                    format!("{} or ?", faceup_card.value)
+                }
+            }
+            BidType::Top => {
+                let top_card = bid_cards[0].unwrap();
+                format!("{}", top_card.value)
+            }
+            BidType::Difference => {
+                let faceup_card = bid_cards[0];
+                let sideways_card = bid_cards[1];
+                let bid = (faceup_card.unwrap().value - sideways_card.unwrap().value).abs();
+                format!("{}", bid)
+            }
+            BidType::Zero => "0".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Eq)]
+#[serde(rename_all = "camelCase")]
+struct BidOption {
+    id: i32,
+    description: String,
+}
+
+fn bid_options(bid_cards: [Option<Card>; 2]) -> Vec<BidOption> {
+    let mut bid_options: Vec<BidOption> = [
+        BidType::Easy,
+        BidType::Top,
+        BidType::Difference,
+        BidType::Zero,
+    ]
+    .into_iter()
+    .map(|bid_option| BidOption {
+        id: bid_type_to_offset(bid_option),
+        description: bid_option.bid_display(bid_cards, true),
+    })
+    .collect();
+
+    bid_options.push(BidOption {
+        id: -1,
+        description: "Undo".to_string(),
+    });
+
+    return bid_options;
 }
 
 #[derive(
@@ -188,12 +242,22 @@ fn card_offset(state: State, offset: i32) -> i32 {
     }
 }
 
-fn bid_type_offset(bid_id: i32) -> BidType {
+fn offset_to_bid_type(bid_id: i32) -> BidType {
     match bid_id {
         BID_TYPE_EASY => BidType::Easy,
         BID_TYPE_TOP => BidType::Top,
         BID_TYPE_ZERO => BidType::Zero,
         BID_TYPE_DIFFERENCE => BidType::Difference,
+        _ => unreachable!(),
+    }
+}
+
+fn bid_type_to_offset(bid_type: BidType) -> i32 {
+    match bid_type {
+        BidType::Easy => BID_TYPE_EASY,
+        BidType::Top => BID_TYPE_TOP,
+        BidType::Zero => BID_TYPE_ZERO,
+        BidType::Difference => BID_TYPE_DIFFERENCE,
         _ => unreachable!(),
     }
 }
@@ -233,6 +297,8 @@ pub enum ChangeType {
     Reorder,      // reordering human player's hand
     Trump,        // trump selection
     Bid,          // player bids a card
+    BidDisplay,   // system sends bid string
+    BidOptions,   // system sends bid options to be displayed in a dialog
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -248,9 +314,11 @@ enum Location {
     Score,        // score counter
     Trump,        // trump selection
     Reorder,      // reordering a hand
+    BidDisplay,   // display of bid e.g. / 3 or ?
+    BidOptions,   // display a dialog for bid options
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub change_type: ChangeType,
@@ -266,6 +334,7 @@ pub struct Change {
     length: i32,
     cards_remaining: i32,
     pub faceup: Option<bool>,
+    bid_display: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -276,6 +345,7 @@ pub struct Game {
     pub changes: Vec<Vec<Change>>,
     pub human_player: [bool; 3],
     pub tricks_taken: [i32; 3],
+    pub trump_card: Option<Card>, // used to roll back changes
     pub bids: [Option<BidType>; 3],
     pub bid_cards: [[Option<Card>; 2]; 3],
     pub current_trick: [Option<Card>; 3],
@@ -392,7 +462,7 @@ impl Game {
 
         match new_game.state {
             State::BidType => {
-                new_game.bids[new_game.current_player as usize] = Some(bid_type_offset(action));
+                new_game.bids[new_game.current_player as usize] = Some(offset_to_bid_type(action));
                 new_game.state = State::BidCard;
                 new_game
             }
@@ -424,6 +494,7 @@ impl Game {
                         );
                     }
                     new_game.trump_suit = Some(card_to_hand.suit);
+                    new_game.trump_card = Some(card_to_hand);
                 }
 
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
@@ -501,6 +572,23 @@ impl Game {
                 }
 
                 if bid_index == 1 {
+                    // player just finished bidding
+
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::BidDisplay,
+                        object_id: card.id,
+                        source_offset: new_game.current_player,
+                        dest: Location::BidDisplay,
+                        player: new_game.current_player,
+                        bid_display: new_game.bids[new_game.current_player as usize]
+                            .unwrap()
+                            .bid_display(
+                                new_game.bid_cards[new_game.current_player as usize],
+                                new_game.human_player[new_game.current_player as usize],
+                            ),
+                        ..Default::default()
+                    });
+
                     new_game.current_player = (new_game.current_player + 1) % 3;
                     new_game.state = State::BidType;
                     if new_game.bid_cards[new_game.current_player as usize][0].is_some() {
