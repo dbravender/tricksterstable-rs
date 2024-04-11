@@ -581,14 +581,7 @@ impl Game {
                         if new_game.human_player[new_game.current_player as usize] {
                             let options =
                                 bid_options(new_game.bid_cards[new_game.current_player as usize]);
-                            new_game.changes[0].push(Change {
-                                change_type: ChangeType::BidOptions,
-                                object_id: -1, // No specific card associated with this change
-                                player: new_game.current_player,
-                                dest: Location::BidOptions,
-                                cards_remaining: options.len() as i32,
-                                ..Default::default()
-                            });
+                            let bid_option_descriptions = options.iter().map(|o| o.description.clone()).collect();
                         }
                     }
 
@@ -694,12 +687,14 @@ impl Game {
                                 change_type: ChangeType::ShowWinningCard,
                                 object_id: winning_card.id,
                                 dest: Location::Play,
+                                bid_options: Some(bid_option_descriptions),
                                 ..Default::default()
                             },
                             Change {
                                 change_type: ChangeType::OptionalPause,
                                 object_id: 0,
                                 dest: Location::Play,
+                                bid_options: Some(bid_option_descriptions),
                                 ..Default::default()
                             },
                             Change {
@@ -707,6 +702,7 @@ impl Game {
                                 change_type: ChangeType::HidePlayable,
                                 dest: Location::Hand,
                                 dest_offset: new_game.current_player,
+                                bid_options: Some(bid_option_descriptions),
                                 ..Default::default()
                             },
                         ]);
@@ -748,7 +744,8 @@ impl Game {
                                     dest: Location::Score,
                                     start_score: self.scores[player as usize],
                                     end_score: new_game.scores[player as usize],
-                                    ..Default::default()
+                                    bid_options: Some(bid_option_descriptions),
+                                ..Default::default()
                                 }]);
                             }
                         }
@@ -769,7 +766,8 @@ impl Game {
                                 new_game.changes.push(vec![Change {
                                     change_type: ChangeType::GameOver,
                                     dest: Location::Deck,
-                                    ..Default::default()
+                                    bid_options: Some(bid_option_descriptions),
+                                ..Default::default()
                                 }]);
                             }
                             return new_game;
