@@ -575,6 +575,18 @@ impl Game {
                     if new_game.bid_cards[new_game.current_player as usize][0].is_some() &&
                        new_game.bid_cards[new_game.current_player as usize][1].is_some() {
                         new_game.state = State::BidType;
+                        // If the current player is human, add a change with bid options
+                        if new_game.human_player[new_game.current_player as usize] {
+                            let options = bid_options(new_game.bid_cards[new_game.current_player as usize]);
+                            new_game.changes[0].push(Change {
+                                change_type: ChangeType::BidOptions,
+                                object_id: -1, // No specific card associated with this change
+                                player: new_game.current_player,
+                                dest: Location::BidOptions,
+                                cards_remaining: options.len() as i32,
+                                ..Default::default()
+                            });
+                        }
                     }
 
                     new_game.changes[0].push(Change {
