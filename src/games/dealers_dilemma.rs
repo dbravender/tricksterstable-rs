@@ -543,10 +543,8 @@ impl Game {
                 new_game.bid_cards[new_game.current_player as usize][bid_index] = Some(*card);
 
                 if !self.no_changes {
-                    let faceup: Option<bool> = if new_game.bids[new_game.current_player as usize]
-                        == Some(BidType::Easy)
-                        && bid_index == 1
-                        && new_game.human_player[new_game.current_player as usize] == false
+                    let faceup = if bid_index == 1
+                        && !new_game.human_player[new_game.current_player as usize]
                     {
                         Some(false)
                     } else {
