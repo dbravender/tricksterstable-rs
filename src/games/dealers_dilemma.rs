@@ -335,6 +335,7 @@ pub struct Change {
     cards_remaining: i32,
     pub faceup: Option<bool>,
     bid_display: String,
+    bid_options: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -572,12 +573,14 @@ impl Game {
                 if bid_index == 1 {
                     // player just finished bidding
                     // Transition to BidType state only after both bid cards have been selected
-                    if new_game.bid_cards[new_game.current_player as usize][0].is_some() &&
-                       new_game.bid_cards[new_game.current_player as usize][1].is_some() {
+                    if new_game.bid_cards[new_game.current_player as usize][0].is_some()
+                        && new_game.bid_cards[new_game.current_player as usize][1].is_some()
+                    {
                         new_game.state = State::BidType;
                         // If the current player is human, add a change with bid options
                         if new_game.human_player[new_game.current_player as usize] {
-                            let options = bid_options(new_game.bid_cards[new_game.current_player as usize]);
+                            let options =
+                                bid_options(new_game.bid_cards[new_game.current_player as usize]);
                             new_game.changes[0].push(Change {
                                 change_type: ChangeType::BidOptions,
                                 object_id: -1, // No specific card associated with this change
@@ -607,8 +610,9 @@ impl Game {
                     new_game.current_player = (new_game.current_player + 1) % 3;
                     new_game.state = State::BidType;
                     // Check if the next player has also finished bidding
-                    if new_game.bid_cards[new_game.current_player as usize][0].is_some() &&
-                       new_game.bid_cards[new_game.current_player as usize][1].is_some() {
+                    if new_game.bid_cards[new_game.current_player as usize][0].is_some()
+                        && new_game.bid_cards[new_game.current_player as usize][1].is_some()
+                    {
                         // next player to bid has already bid
                         // first player to bid is always dealer and
                         // they were forced to play the card they didn't select
