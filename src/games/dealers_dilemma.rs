@@ -335,7 +335,7 @@ pub struct Change {
     cards_remaining: i32,
     pub faceup: Option<bool>,
     bid_display: String,
-    bid_options: Option<Vec<String>>,
+    bid_options: Option<Vec<BidOption>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -579,17 +579,14 @@ impl Game {
                         new_game.state = State::BidType;
                         // If the current player is human, add a change with bid options
                         if new_game.human_player[new_game.current_player as usize] {
-                            let options =
-                                bid_options(new_game.bid_cards[new_game.current_player as usize]);
-                            let bid_option_descriptions =
-                                options.iter().map(|o| o.description.clone()).collect();
                             new_game.changes[0].push(Change {
                                 change_type: ChangeType::BidOptions,
                                 object_id: -1, // No specific card associated with this change
                                 player: new_game.current_player,
                                 dest: Location::BidOptions,
-                                cards_remaining: options.len() as i32,
-                                bid_options: Some(bid_option_descriptions),
+                                bid_options: Some(bid_options(
+                                    new_game.bid_cards[new_game.current_player as usize],
+                                )),
                                 ..Default::default()
                             });
                         }
