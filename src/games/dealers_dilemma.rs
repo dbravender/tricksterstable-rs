@@ -474,8 +474,11 @@ impl Game {
                                 object_id: bid_card.id,
                                 player: new_game.current_player,
                                 dest: Location::Hand,
-                                hand_offset: new_game.hands[new_game.current_player as usize].len() as i32 - 1,
-                                length: new_game.hands[new_game.current_player as usize].len() as i32,
+                                hand_offset: new_game.hands[new_game.current_player as usize].len()
+                                    as i32
+                                    - 1,
+                                length: new_game.hands[new_game.current_player as usize].len()
+                                    as i32,
                                 ..Default::default()
                             });
                         }
@@ -542,7 +545,7 @@ impl Game {
                     );
                 }
                 new_game.lead_suit = Some(card_to_play.suit);
-                new_game.state = State::BidType;
+                new_game.state = State::BidCard;
 
                 new_game
             }
