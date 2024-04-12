@@ -469,18 +469,8 @@ impl Game {
                     for bid_card in bid_cards.iter().flatten() {
                         new_game.hands[new_game.current_player as usize].push(*bid_card);
                         if !self.no_changes {
-                            new_game.changes[0].push(Change {
-                                change_type: ChangeType::Reorder,
-                                object_id: bid_card.id,
-                                player: new_game.current_player,
-                                dest: Location::Hand,
-                                hand_offset: new_game.hands[new_game.current_player as usize].len()
-                                    as i32
-                                    - 1,
-                                length: new_game.hands[new_game.current_player as usize].len()
-                                    as i32,
-                                ..Default::default()
-                            });
+                            new_game.hands[0].sort_by(card_sorter);
+                            new_game.changes[0].append(&mut reorder_hand(0, &new_game.hands[0]));
                         }
                     }
                     new_game.bid_cards[new_game.current_player as usize] = [None, None];
