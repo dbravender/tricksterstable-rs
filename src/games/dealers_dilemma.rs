@@ -489,7 +489,29 @@ impl Game {
                     return new_game;
                 }
                 new_game.bids[new_game.current_player as usize] = Some(offset_to_bid_type(action));
+                new_game.changes[0].push(Change {
+                    change_type: ChangeType::BidDisplay,
+                    object_id: -1,
+                    source_offset: new_game.current_player,
+                    dest: Location::BidDisplay,
+                    player: new_game.current_player,
+                    bid_display: new_game.bids[new_game.current_player as usize]
+                        .unwrap()
+                        .bid_display(
+                            new_game.bid_cards[new_game.current_player as usize],
+                            new_game.human_player[new_game.current_player as usize],
+                        ),
+                    ..Default::default()
+                });
+                // TODO: reveal second card if not easy bid
                 new_game.state = State::BidCard;
+                new_game.current_player = (new_game.current_player + 1) % 3;
+                if new_game.bids[new_game.current_player as usize].is_some() {
+                    // next player has already bid - they must be the dealer and it must be the next
+                    // player's lead because the dealer's lead card was already played
+                    new_game.current_player = (new_game.current_player + 1) % 3;
+                    new_game.state = State::Play;
+                }
                 new_game
             }
             State::DealerSelect => {
@@ -598,51 +620,19 @@ impl Game {
                 if bid_index == 1 {
                     // player just finished bidding
                     // Transition to BidType state only after both bid cards have been selected
-                    if new_game.bid_cards[new_game.current_player as usize][0].is_some()
-                        && new_game.bid_cards[new_game.current_player as usize][1].is_some()
-                    {
-                        new_game.state = State::BidType;
-                        // If the current player is human, add a change with bid options
-                        if new_game.human_player[new_game.current_player as usize] {
-                            new_game.changes[0].push(Change {
-                                change_type: ChangeType::BidOptions,
-                                object_id: -1, // No specific card associated with this change
-                                player: new_game.current_player,
-                                dest: Location::BidOptions,
-                                bid_options: Some(bid_options(
-                                    new_game.bid_cards[new_game.current_player as usize],
-                                )),
-                                ..Default::default()
-                            });
-                        }
-                    }
-
-                    new_game.changes[0].push(Change {
-                        change_type: ChangeType::BidDisplay,
-                        object_id: card.id,
-                        source_offset: new_game.current_player,
-                        dest: Location::BidDisplay,
-                        player: new_game.current_player,
-                        bid_display: new_game.bids[new_game.current_player as usize]
-                            .unwrap()
-                            .bid_display(
-                                new_game.bid_cards[new_game.current_player as usize],
-                                new_game.human_player[new_game.current_player as usize],
-                            ),
-                        ..Default::default()
-                    });
-
-                    new_game.current_player = (new_game.current_player + 1) % 3;
                     new_game.state = State::BidType;
-                    // Check if the next player has also finished bidding
-                    if new_game.bid_cards[new_game.current_player as usize][0].is_some()
-                        && new_game.bid_cards[new_game.current_player as usize][1].is_some()
-                    {
-                        // next player to bid has already bid
-                        // first player to bid is always dealer and
-                        // they were forced to play the card they didn't select
-                        new_game.current_player = (new_game.current_player + 1) % 3;
-                        new_game.state = State::Play;
+                    // If the current player is human, add a change with bid options
+                    if new_game.human_player[new_game.current_player as usize] {
+                        new_game.changes[0].push(Change {
+                            change_type: ChangeType::BidOptions,
+                            object_id: -1, // No specific card associated with this change
+                            player: new_game.current_player,
+                            dest: Location::BidOptions,
+                            bid_options: Some(bid_options(
+                                new_game.bid_cards[new_game.current_player as usize],
+                            )),
+                            ..Default::default()
+                        });
                     }
                 }
 
@@ -1418,11 +1408,11 @@ mod tests {
 
         let new_game = game.clone().clone_and_apply_move(DEALER_SELECT_CARD);
         assert_eq!(new_game.trump_suit, Some(Suit::Red));
-        assert_eq!(new_game.state, State::BidType);
+        assert_eq!(new_game.state, State::BidCard);
 
         let new_game = game.clone().clone_and_apply_move(DEALER_SELECT_CARD + 1);
         assert_eq!(new_game.trump_suit, Some(Suit::Blue));
-        assert_eq!(new_game.state, State::BidType);
+        assert_eq!(new_game.state, State::BidCard);
 
         game.dealer_select = vec![
             Card {
@@ -1441,13 +1431,13 @@ mod tests {
             .clone()
             .clone_and_apply_move(DEALER_SELECT_CARD_NO_TRUMP);
         assert_eq!(new_game.trump_suit, None);
-        assert_eq!(new_game.state, State::BidType);
+        assert_eq!(new_game.state, State::BidCard);
 
         let new_game = game
             .clone()
             .clone_and_apply_move(DEALER_SELECT_CARD_NO_TRUMP + 1);
         assert_eq!(new_game.trump_suit, None);
-        assert_eq!(new_game.state, State::BidType);
+        assert_eq!(new_game.state, State::BidCard);
     }
 
     #[test]
@@ -1455,6 +1445,18 @@ mod tests {
         let mut game = Game::new();
         game.round = 6;
         while game.winner.is_none() {
+            if game.state == State::Play {
+                // all players should have same number of cards
+                let mut cards: [usize; 3] = [0, 0, 0];
+                for player in 0..3 {
+                    cards[player] += game.hands[player].len();
+                    if game.current_trick[player].is_some() {
+                        cards[player] += 1;
+                    }
+                }
+                assert_eq!(cards[0], cards[1]);
+                assert_eq!(cards[1], cards[2]);
+            }
             let mut moves = game.get_moves();
             moves.shuffle(&mut thread_rng());
             let action = *moves.first().unwrap();
