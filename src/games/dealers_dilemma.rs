@@ -463,6 +463,28 @@ impl Game {
 
         match new_game.state {
             State::BidType => {
+                if action == -1 {
+                    // Undo the bid for the human player
+                    let bid_cards = new_game.bid_cards[new_game.current_player as usize];
+                    for bid_card in bid_cards.iter().flatten() {
+                        new_game.hands[new_game.current_player as usize].push(*bid_card);
+                        if !self.no_changes {
+                            new_game.changes[0].push(Change {
+                                change_type: ChangeType::Reorder,
+                                object_id: bid_card.id,
+                                player: new_game.current_player,
+                                dest: Location::Hand,
+                                hand_offset: new_game.hands[new_game.current_player as usize].len() as i32 - 1,
+                                length: new_game.hands[new_game.current_player as usize].len() as i32,
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    new_game.bid_cards[new_game.current_player as usize] = [None, None];
+                    new_game.bids[new_game.current_player as usize] = None;
+                    new_game.state = State::BidCard;
+                    return new_game;
+                }
                 new_game.bids[new_game.current_player as usize] = Some(offset_to_bid_type(action));
                 new_game.state = State::BidCard;
                 new_game
