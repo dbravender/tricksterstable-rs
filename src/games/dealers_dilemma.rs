@@ -461,6 +461,10 @@ impl Game {
         // card from player to table or discard to draw deck
         new_game.changes = vec![vec![]];
 
+        if !self.get_moves().contains(&action) {
+            return new_game;
+        }
+
         match new_game.state {
             State::BidType => {
                 if action == -1 {
