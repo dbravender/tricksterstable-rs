@@ -461,7 +461,10 @@ impl Game {
         // card from player to table or discard to draw deck
         new_game.changes = vec![vec![]];
 
-        if !self.get_moves().contains(&action) {
+        let mut moves = self.get_moves();
+        moves.push(-1); // undo
+
+        if !moves.contains(&action) {
             return new_game;
         }
 
@@ -480,6 +483,9 @@ impl Game {
                     new_game.bid_cards[new_game.current_player as usize] = [None, None];
                     new_game.bids[new_game.current_player as usize] = None;
                     new_game.state = State::BidCard;
+                    if !self.no_changes {
+                        new_game.changes.push(show_playable(&new_game));
+                    }
                     return new_game;
                 }
                 new_game.bids[new_game.current_player as usize] = Some(offset_to_bid_type(action));
@@ -505,6 +511,9 @@ impl Game {
                     // player's lead because the dealer's lead card was already played
                     new_game.current_player = (new_game.current_player + 1) % 3;
                     new_game.state = State::Play;
+                }
+                if !self.no_changes {
+                    new_game.changes.push(show_playable(&new_game));
                 }
                 new_game
             }
@@ -542,6 +551,8 @@ impl Game {
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
 
                 new_game.current_trick[new_game.current_player as usize] = Some(card_to_play);
+                new_game.lead_suit = Some(card_to_play.suit);
+                new_game.state = State::BidCard;
                 if !self.no_changes {
                     new_game.changes[0].push(Change {
                         change_type: ChangeType::Play,
@@ -559,9 +570,8 @@ impl Game {
                         )
                         .as_mut(),
                     );
+                    new_game.changes.push(show_playable(&new_game));
                 }
-                new_game.lead_suit = Some(card_to_play.suit);
-                new_game.state = State::BidCard;
 
                 new_game
             }
@@ -609,6 +619,8 @@ impl Game {
                         )
                         .as_mut(),
                     );
+                    let mut new_changes = show_playable(&new_game);
+                    new_game.changes[0].append(&mut new_changes);
                 }
 
                 if bid_index == 1 {
@@ -995,34 +1007,6 @@ impl ismcts::Game for Game {
                     &mut new_hands,
                     rng,
                 );
-
-                /*println!("shared voids: {:?}", combined_voids);
-                println!(
-                    "original hands: {}\n{}\n",
-                    self.hands[p1 as usize]
-                        .iter()
-                        .map(|c| print_card(*c, false))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    self.hands[p2 as usize]
-                        .iter()
-                        .map(|c| print_card(*c, false))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                );
-                println!(
-                    "new hands: {}\n{}\n",
-                    new_hands[0]
-                        .iter()
-                        .map(|c| print_card(*c, false))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    new_hands[1]
-                        .iter()
-                        .map(|c| print_card(*c, false))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                        );*/
 
                 self.hands[p1 as usize] = new_hands[0].clone();
                 self.hands[p2 as usize] = new_hands[1].clone();
