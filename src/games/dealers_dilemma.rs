@@ -480,6 +480,38 @@ impl Game {
             State::BidType => {
                 if action == -1 {
                     // Undo the bid for the human player
+                    if new_game.current_player == new_game.dealer {
+                        new_game.hands[new_game.current_player as usize].retain(|c| {
+                            c.id != new_game.dealer_select[0].id
+                                && c.id != new_game.dealer_select[1].id
+                        });
+                        new_game.trump_suit = None;
+                        new_game.trump_card = None;
+                        if !self.no_changes {
+                            // hide trump card
+                            new_game.changes[0].push(Change {
+                                change_type: ChangeType::Trump,
+                                object_id: -100,
+                                dest: Location::Trump,
+                                ..Default::default()
+                            });
+                            for (offset, card) in new_game.dealer_select.iter().enumerate() {
+                                new_game.changes[0].push(Change {
+                                    change_type: ChangeType::DealerSelect,
+                                    object_id: card.id,
+                                    dest: Location::DealerSelect,
+                                    dest_offset: offset as i32,
+                                    player: 0 as i32,
+                                    hand_offset: offset as i32,
+                                    length: 2,
+                                    ..Default::default()
+                                });
+                            }
+                            new_game.hands[0].sort_by(card_sorter);
+                            new_game.changes[0].append(&mut reorder_hand(0, &new_game.hands[0]));
+                        }
+                    }
+
                     let bid_cards = new_game.bid_cards[new_game.current_player as usize];
                     for bid_card in bid_cards.iter().flatten() {
                         new_game.hands[new_game.current_player as usize].push(*bid_card);
@@ -491,9 +523,14 @@ impl Game {
                     new_game.bid_cards[new_game.current_player as usize] = [None, None];
                     new_game.bids[new_game.current_player as usize] = None;
                     new_game.state = State::BidCard;
+
+                    if new_game.current_player == new_game.dealer {
+                        new_game.state = State::DealerSelect;
+                    }
                     if !self.no_changes {
                         new_game.changes.push(show_playable(&new_game));
                     }
+
                     return new_game;
                 }
                 new_game.bids[new_game.current_player as usize] = Some(offset_to_bid_type(action));
@@ -627,6 +664,14 @@ impl Game {
                     }
                 } else {
                     new_game.trump_suit = Some(card_to_hand.suit);
+                    if !new_game.no_changes {
+                        new_game.changes[0].push(Change {
+                            change_type: ChangeType::Trump,
+                            object_id: suit_to_id(new_game.trump_card.unwrap().suit),
+                            dest: Location::Trump,
+                            ..Default::default()
+                        });
+                    }
                     new_game.state = State::BidCard;
                 }
 
