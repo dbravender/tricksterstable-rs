@@ -10,7 +10,6 @@ use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::{min, Ordering};
 use std::collections::{HashMap, HashSet};
-use std::f32::consts::E;
 use std::mem;
 
 use crate::utils::shuffle_and_divide_matching_cards;

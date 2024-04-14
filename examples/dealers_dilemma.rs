@@ -2,7 +2,7 @@ use std::io;
 
 use tricksterstable_rs::games::dealers_dilemma::{
     get_mcts_move, print_card, print_suit, Game, State, BID_CARD_OFFSET, BID_TYPE_EASY,
-    DEALER_SELECT_CARD,
+    DEALER_SELECT_CARD, TRUMP_SELECT,
 };
 
 pub fn get_input(prompt: &str) -> String {
@@ -92,6 +92,7 @@ fn show_moves(game: &Game) {
                 .join(" ")
         ),
         State::BidType => println!("0: easy\n1: top\n2: difference\n3: zero"),
+        State::TrumpSelect => println!("0: trump, 1: no trump"),
         State::BidCard => println!(
             "{}",
             game.hands[0]
@@ -121,6 +122,7 @@ fn main() {
                     State::BidCard => BID_CARD_OFFSET,
                     State::DealerSelect => DEALER_SELECT_CARD,
                     State::BidType => BID_TYPE_EASY,
+                    State::TrumpSelect => TRUMP_SELECT,
                 };
             }
         } else {

@@ -19,7 +19,9 @@ use crate::utils::shuffle_and_divide_matching_cards;
 /// Play offsets (each possible action has a unique ID)
 // 0-35 - 36 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for playing)
 pub const DEALER_SELECT_CARD: i32 = 36; // 36 - left card, 37 - right card (trump selection)
-pub const DEALER_SELECT_CARD_NO_TRUMP: i32 = 38; // 38 - left card (no trump), 39 - right card (no trump)
+pub const TRUMP_SELECT: i32 = 38;
+pub const TRUMP: i32 = 38;
+pub const NO_TRUMP: i32 = 39;
 pub const BID_CARD_OFFSET: i32 = 40; // 40-76 cards 2 3 4 5 6 7 8 9 10 in 4 suits (for bidding)
 pub const BID_TYPE_OFFSET: i32 = 77; // 77-80 Easy, Top, Difference, Zero
 pub const BID_TYPE_EASY: i32 = 77;
@@ -75,6 +77,8 @@ pub enum State {
     BidType,      // the type of bid the player is selecting
     BidCard, // each player bids by putting 2 cards from their hand onto the table in front of them
     DealerSelect, // the Dealer picks one of the cards into their hand
+    TrumpSelect, // the Dealer selects if there will be trump or no trump
+             // (no trump only possible when both cards have the same suit)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Eq)]
@@ -230,6 +234,7 @@ pub fn move_offset(state: State, card: &Card) -> i32 {
         State::Play => card.id,
         State::BidCard => card.id + BID_CARD_OFFSET,
         State::DealerSelect => DEALER_SELECT_CARD,
+        State::TrumpSelect => TRUMP_SELECT,
         State::BidType => unreachable!(),
     }
 }
@@ -238,6 +243,7 @@ fn card_offset(state: State, offset: i32) -> i32 {
         State::Play => offset,
         State::BidCard => offset - BID_CARD_OFFSET,
         State::DealerSelect => offset - DEALER_SELECT_CARD,
+        State::TrumpSelect => offset - TRUMP_SELECT,
         State::BidType => unreachable!(),
     }
 }
@@ -388,6 +394,7 @@ impl Game {
 
     fn deal(self: Game) -> Self {
         let mut new_game = self.clone();
+        new_game.trump_card = None;
         new_game.state = State::DealerSelect;
         new_game.round = self.round + 1;
         new_game.bids = [None, None, None];
@@ -531,10 +538,29 @@ impl Game {
                 }
                 new_game
             }
+            State::TrumpSelect => {
+                new_game.state = State::BidCard;
+                match action {
+                    NO_TRUMP => new_game,
+                    _ => {
+                        new_game.trump_suit = Some(new_game.trump_card.unwrap().suit);
+                        if !new_game.no_changes {
+                            new_game.changes[0].push(Change {
+                                change_type: ChangeType::Trump,
+                                object_id: suit_to_id(new_game.trump_card.unwrap().suit),
+                                dest: Location::Trump,
+                                ..Default::default()
+                            });
+                        }
+
+                        new_game
+                    }
+                }
+            }
             State::DealerSelect => {
                 let card_to_hand: Card;
                 let card_to_play: Card;
-                if action == DEALER_SELECT_CARD || action == DEALER_SELECT_CARD_NO_TRUMP {
+                if action == DEALER_SELECT_CARD {
                     card_to_hand = new_game.dealer_select[0];
                     card_to_play = new_game.dealer_select[1];
                 } else {
@@ -542,25 +568,15 @@ impl Game {
                     card_to_play = new_game.dealer_select[0];
                 }
 
-                if action == DEALER_SELECT_CARD || action == DEALER_SELECT_CARD + 1 {
-                    if !self.no_changes {
-                        new_game.changes[0].push(Change {
-                            change_type: ChangeType::Trump,
-                            object_id: suit_to_id(card_to_hand.suit),
-                            dest: Location::Trump,
-                            ..Default::default()
-                        });
-                        new_game.changes[0].append(
-                            reorder_hand(
-                                new_game.current_player,
-                                &new_game.hands[new_game.current_player as usize],
-                            )
-                            .as_mut(),
-                        );
-                    }
-                    new_game.trump_suit = Some(card_to_hand.suit);
-                    new_game.trump_card = Some(card_to_hand);
-                }
+                new_game.changes[0].append(
+                    reorder_hand(
+                        new_game.current_player,
+                        &new_game.hands[new_game.current_player as usize],
+                    )
+                    .as_mut(),
+                );
+
+                new_game.trump_card = Some(card_to_hand);
 
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
 
@@ -585,6 +601,33 @@ impl Game {
                         .as_mut(),
                     );
                     new_game.changes.push(show_playable(&new_game));
+                }
+
+                if card_to_hand.suit == card_to_play.suit {
+                    // player can select trump or no trump
+                    new_game.state = State::TrumpSelect;
+                    if new_game.human_player[new_game.current_player as usize] {
+                        new_game.changes[0].push(Change {
+                            change_type: ChangeType::BidOptions,
+                            object_id: -1, // No specific card associated with this change
+                            player: new_game.current_player,
+                            dest: Location::BidOptions,
+                            bid_options: Some(vec![
+                                BidOption {
+                                    id: NO_TRUMP,
+                                    description: "No trump".to_string(),
+                                },
+                                BidOption {
+                                    id: TRUMP,
+                                    description: "Trump".to_string(),
+                                },
+                            ]),
+                            ..Default::default()
+                        });
+                    }
+                } else {
+                    new_game.trump_suit = Some(card_to_hand.suit);
+                    new_game.state = State::BidCard;
                 }
 
                 new_game
@@ -837,6 +880,9 @@ impl Game {
     }
 
     pub fn get_moves(self: &Game) -> Vec<i32> {
+        if self.state == State::TrumpSelect {
+            return vec![TRUMP, NO_TRUMP];
+        }
         if self.state == State::BidType {
             return (0..4).map(|x| x + BID_TYPE_OFFSET).collect();
         }
@@ -847,14 +893,6 @@ impl Game {
                 .collect();
         }
         if self.state == State::DealerSelect {
-            if self.dealer_select[0].suit == self.dealer_select[1].suit {
-                return vec![
-                    DEALER_SELECT_CARD,
-                    DEALER_SELECT_CARD + 1,
-                    DEALER_SELECT_CARD_NO_TRUMP,
-                    DEALER_SELECT_CARD_NO_TRUMP + 1,
-                ];
-            }
             return vec![DEALER_SELECT_CARD, DEALER_SELECT_CARD + 1];
         }
         let actions: Vec<i32>;
@@ -1394,16 +1432,24 @@ mod tests {
             Card {
                 id: 11,
                 value: 5,
-                suit: Suit::Blue,
+                suit: Suit::Red,
             },
         ];
 
         let new_game = game.clone().clone_and_apply_move(DEALER_SELECT_CARD);
+        assert_eq!(new_game.trump_suit, None);
+        assert_eq!(new_game.state, State::TrumpSelect);
+
+        let new_game = new_game.clone().clone_and_apply_move(TRUMP);
         assert_eq!(new_game.trump_suit, Some(Suit::Red));
         assert_eq!(new_game.state, State::BidCard);
 
         let new_game = game.clone().clone_and_apply_move(DEALER_SELECT_CARD + 1);
-        assert_eq!(new_game.trump_suit, Some(Suit::Blue));
+        assert_eq!(new_game.trump_suit, None);
+        assert_eq!(new_game.state, State::TrumpSelect);
+
+        let new_game = new_game.clone().clone_and_apply_move(NO_TRUMP);
+        assert_eq!(new_game.trump_suit, None);
         assert_eq!(new_game.state, State::BidCard);
 
         game.dealer_select = vec![
@@ -1418,18 +1464,6 @@ mod tests {
                 suit: Suit::Red,
             },
         ];
-
-        let new_game = game
-            .clone()
-            .clone_and_apply_move(DEALER_SELECT_CARD_NO_TRUMP);
-        assert_eq!(new_game.trump_suit, None);
-        assert_eq!(new_game.state, State::BidCard);
-
-        let new_game = game
-            .clone()
-            .clone_and_apply_move(DEALER_SELECT_CARD_NO_TRUMP + 1);
-        assert_eq!(new_game.trump_suit, None);
-        assert_eq!(new_game.state, State::BidCard);
     }
 
     #[test]
