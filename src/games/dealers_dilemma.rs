@@ -504,7 +504,20 @@ impl Game {
                         ),
                     ..Default::default()
                 });
-                // TODO: reveal second card if not easy bid
+                if new_game.bids[new_game.current_player as usize] != Some(BidType::Easy) {
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Bid,
+                        object_id: new_game.bid_cards[new_game.current_player as usize][1]
+                            .unwrap()
+                            .id,
+                        source_offset: new_game.current_player,
+                        dest: Location::Bid,
+                        dest_offset: 1,
+                        player: new_game.current_player,
+                        faceup: Some(true), // non-easy bid cards are all face up
+                        ..Default::default()
+                    });
+                }
                 new_game.state = State::BidCard;
                 new_game.current_player = (new_game.current_player + 1) % 3;
                 if new_game.bids[new_game.current_player as usize].is_some() {
