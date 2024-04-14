@@ -532,7 +532,7 @@ impl Game {
                     if !self.no_changes {
                         new_game.changes[0].push(Change {
                             change_type: ChangeType::Trump,
-                            object_id: suit_to_id(card_to_play.suit),
+                            object_id: suit_to_id(card_to_hand.suit),
                             dest: Location::Trump,
                             ..Default::default()
                         });
