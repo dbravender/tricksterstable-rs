@@ -448,6 +448,7 @@ impl Game {
         new_game.hands[0].sort_by(card_sorter);
         if !new_game.no_changes {
             new_game.changes[reorder_index].append(&mut reorder_hand(0, &new_game.hands[0]));
+            new_game.changes.push(show_playable(&new_game));
         }
         new_game
     }
