@@ -480,8 +480,18 @@ impl Game {
             State::BidType => {
                 if action == -1 {
                     // Undo the bid for the human player
+
+                    let bid_cards = new_game.bid_cards[new_game.current_player as usize];
+                    for bid_card in bid_cards.iter().flatten() {
+                        new_game.hands[new_game.current_player as usize].push(*bid_card);
+                    }
+                    if !self.no_changes {
+                        new_game.hands[0].sort_by(card_sorter);
+                        new_game.changes[0].append(&mut reorder_hand(0, &new_game.hands[0]));
+                    }
+
                     if new_game.current_player == new_game.dealer {
-                        new_game.hands[new_game.current_player as usize].retain(|c| {
+                        new_game.hands[0].retain(|c| {
                             c.id != new_game.dealer_select[0].id
                                 && c.id != new_game.dealer_select[1].id
                         });
@@ -512,14 +522,6 @@ impl Game {
                         }
                     }
 
-                    let bid_cards = new_game.bid_cards[new_game.current_player as usize];
-                    for bid_card in bid_cards.iter().flatten() {
-                        new_game.hands[new_game.current_player as usize].push(*bid_card);
-                        if !self.no_changes {
-                            new_game.hands[0].sort_by(card_sorter);
-                            new_game.changes[0].append(&mut reorder_hand(0, &new_game.hands[0]));
-                        }
-                    }
                     new_game.bid_cards[new_game.current_player as usize] = [None, None];
                     new_game.bids[new_game.current_player as usize] = None;
                     new_game.state = State::BidCard;
@@ -605,17 +607,20 @@ impl Game {
                     card_to_play = new_game.dealer_select[0];
                 }
 
-                new_game.changes[0].append(
-                    reorder_hand(
-                        new_game.current_player,
-                        &new_game.hands[new_game.current_player as usize],
-                    )
-                    .as_mut(),
-                );
-
                 new_game.trump_card = Some(card_to_hand);
 
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
+
+                if !new_game.no_changes && new_game.human_player[new_game.current_player as usize] {
+                    new_game.hands[0].sort_by(card_sorter);
+                    new_game.changes[0].append(
+                        reorder_hand(
+                            new_game.current_player,
+                            &new_game.hands[new_game.current_player as usize],
+                        )
+                        .as_mut(),
+                    );
+                }
 
                 new_game.current_trick[new_game.current_player as usize] = Some(card_to_play);
                 new_game.lead_suit = Some(card_to_play.suit);
