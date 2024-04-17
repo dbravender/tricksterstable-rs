@@ -134,12 +134,12 @@ impl BidType {
         }
     }
 
-    fn bid_display(&self, bid_cards: [Option<Card>; 2], is_human: bool) -> String {
+    fn bid_display(&self, bid_cards: [Option<Card>; 2], show_second_easy_bid: bool) -> String {
         match self {
             BidType::Easy => {
                 let faceup_card = bid_cards[0].unwrap();
                 let facedown_card = bid_cards[1].unwrap();
-                if is_human {
+                if show_second_easy_bid {
                     format!("{} or {}", faceup_card.value, facedown_card.value)
                 } else {
                     format!("{} or ?", faceup_card.value)
@@ -857,6 +857,7 @@ impl Game {
 
                     if new_game.hands.iter().all(|h| h.is_empty()) {
                         // hand end
+                        let reveal_bid_offset: usize = new_game.changes.len() - 1;
                         for player in 0..3 {
                             let score = new_game.bids[player]
                                 .expect("Must have bid here")
@@ -869,16 +870,48 @@ impl Game {
                         }
                         if !new_game.no_changes {
                             for player in 0..3 {
+                                // reveal player's bid display (e.g. 2 or ? -> 2 or 3)
+                                // only affects players that bid easy bids
+                                new_game.changes[reveal_bid_offset].push(Change {
+                                    change_type: ChangeType::BidDisplay,
+                                    object_id: -1,
+                                    source_offset: player as i32,
+                                    dest: Location::BidDisplay,
+                                    player: player as i32,
+                                    bid_display: new_game.bids[player]
+                                        .unwrap()
+                                        .bid_display(new_game.bid_cards[player], true),
+                                    ..Default::default()
+                                });
+                                // reveal bid cards (will only affect players that had a hidden easy bid card)
+                                new_game.changes[reveal_bid_offset].push(Change {
+                                    change_type: ChangeType::Bid,
+                                    object_id: new_game.bid_cards[player][1].unwrap().id,
+                                    source_offset: player as i32,
+                                    dest: Location::Bid,
+                                    dest_offset: 1,
+                                    player: player as i32,
+                                    faceup: Some(true),
+                                    ..Default::default()
+                                });
+                                // modify player's score
                                 new_game.changes.push(vec![Change {
                                     change_type: ChangeType::Score,
-                                    object_id: player,
-                                    player,
+                                    object_id: player as i32,
+                                    player: player as i32,
                                     dest: Location::Score,
                                     start_score: self.scores[player as usize],
                                     end_score: new_game.scores[player as usize],
                                     ..Default::default()
                                 }]);
                             }
+                            // let the human user see the result of the round
+                            new_game.changes.push(vec![Change {
+                                change_type: ChangeType::OptionalPause,
+                                object_id: 0,
+                                dest: Location::Play,
+                                ..Default::default()
+                            }]);
                         }
                         if new_game.round >= 6 {
                             // game end
