@@ -635,6 +635,23 @@ impl Game {
 
                 new_game.hands[new_game.current_player as usize].push(card_to_hand);
 
+                if !new_game.no_changes && !new_game.human_player[new_game.current_player as usize]
+                {
+                    // highlight card CPU player selected to move to their hand and wait for input
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::ShowWinningCard,
+                        object_id: card_to_hand.id,
+                        dest: Location::Play,
+                        ..Default::default()
+                    });
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::OptionalPause,
+                        object_id: 0,
+                        dest: Location::Play,
+                        ..Default::default()
+                    });
+                }
+
                 if !new_game.no_changes && new_game.human_player[new_game.current_player as usize] {
                     new_game.hands[0].sort_by(card_sorter);
                     new_game.changes[0].append(
