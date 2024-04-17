@@ -158,6 +158,30 @@ impl BidType {
             BidType::Zero => "0".to_string(),
         }
     }
+
+    fn bid_display_detailed(&self, bid_cards: [Option<Card>; 2]) -> String {
+        match self {
+            BidType::Easy => {
+                let faceup_card = bid_cards[0].unwrap();
+                let facedown_card = bid_cards[1].unwrap();
+                format!(
+                    "Easy bid {} (+4) or {} (+2)",
+                    faceup_card.value, facedown_card.value
+                )
+            }
+            BidType::Top => {
+                let top_card = bid_cards[0].unwrap();
+                format!("Top bid {} (+8)", top_card.value)
+            }
+            BidType::Difference => {
+                let faceup_card = bid_cards[0];
+                let sideways_card = bid_cards[1];
+                let bid = (faceup_card.unwrap().value - sideways_card.unwrap().value).abs();
+                format!("Difference bid {} (+8)", bid)
+            }
+            BidType::Zero => "Zero bid (+6)".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Eq)]
@@ -177,7 +201,7 @@ fn bid_options(bid_cards: [Option<Card>; 2]) -> Vec<BidOption> {
     .into_iter()
     .map(|bid_option| BidOption {
         id: bid_type_to_offset(bid_option),
-        description: bid_option.bid_display(bid_cards, true),
+        description: bid_option.bid_display_detailed(bid_cards),
     })
     .collect();
 
