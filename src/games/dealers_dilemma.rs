@@ -366,6 +366,7 @@ pub struct Change {
     pub faceup: Option<bool>,
     bid_display: String,
     bid_options: Option<Vec<BidOption>>,
+    round: i32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -982,6 +983,7 @@ impl Game {
                             source_offset: 0,
                             dest: Location::Deck,
                             dest_offset: 0,
+                            round: new_game.round + 1,
                             ..Default::default()
                         }]);
                         return new_game.deal();
