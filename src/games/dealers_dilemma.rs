@@ -1617,6 +1617,20 @@ mod tests {
     }
 
     #[test]
+    fn graph_mcts_playthrough() {
+        let mut new_game = Game::new();
+        new_game.round = 6;
+        new_game.no_changes = true;
+        let mut ismcts = IsmctsHandler::new(new_game);
+        let parallel_threads: usize = 8;
+        ismcts.run_iterations(
+            parallel_threads,
+            (2000 as f64 / parallel_threads as f64) as usize,
+        );
+        ismcts.dotty_graph();
+    }
+
+    #[test]
     fn test_mcts_playthrough() {
         let mut iterations = vec![10, 250, 1000];
         let mut wins: HashMap<i32, i32> = HashMap::from_iter(iterations.iter().map(|i| (*i, 0)));
