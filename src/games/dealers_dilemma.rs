@@ -329,6 +329,7 @@ pub enum ChangeType {
     Bid,          // player bids a card
     BidDisplay,   // system sends bid string
     BidOptions,   // system sends bid options to be displayed in a dialog
+    Message,      // message to display to the user
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -346,12 +347,14 @@ enum Location {
     Reorder,      // reordering a hand
     BidDisplay,   // display of bid e.g. / 3 or ?
     BidOptions,   // display a dialog for bid options
+    Message,      // message to display to the user
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub change_type: ChangeType,
+    message: Option<String>,
     player: i32,
     object_id: i32,
     source_offset: i32,
@@ -638,6 +641,19 @@ impl Game {
 
                 if !new_game.no_changes && !new_game.human_player[new_game.current_player as usize]
                 {
+                    // Add a label which mentions which player picked trump
+                    let player_name = match new_game.current_player {
+                        1 => "West",
+                        2 => "East",
+                        _ => unreachable!(),
+                    };
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Message,
+                        message: Some(format!("{} selected a card", player_name)),
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    });
                     // highlight card CPU player selected to move to their hand and wait for input
                     new_game.changes[0].push(Change {
                         change_type: ChangeType::ShowWinningCard,
@@ -651,9 +667,25 @@ impl Game {
                         dest: Location::Play,
                         ..Default::default()
                     });
+                    // clear message
+                    new_game.changes[0].push(Change {
+                        message: None,
+                        change_type: ChangeType::Message,
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    });
                 }
 
                 if !new_game.no_changes && new_game.human_player[new_game.current_player as usize] {
+                    // clear message
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Message,
+                        message: None,
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    });
                     new_game.hands[0].sort_by(card_sorter);
                     new_game.changes[0].append(
                         reorder_hand(
@@ -778,6 +810,14 @@ impl Game {
                     new_game.state = State::BidType;
                     // If the current player is human, add a change with bid options
                     if new_game.human_player[new_game.current_player as usize] {
+                        // clear message
+                        new_game.changes[0].push(Change {
+                            message: None,
+                            change_type: ChangeType::Message,
+                            object_id: -1,
+                            dest: Location::Message,
+                            ..Default::default()
+                        });
                         new_game.changes[0].push(Change {
                             change_type: ChangeType::BidOptions,
                             object_id: -1, // No specific card associated with this change
@@ -788,6 +828,16 @@ impl Game {
                             )),
                             ..Default::default()
                         });
+                    }
+                } else {
+                    if new_game.human_player[new_game.current_player as usize] {
+                        new_game.changes.push(vec![Change {
+                            message: Some(format!("Select your secondary bid card")),
+                            change_type: ChangeType::Message,
+                            object_id: -1,
+                            dest: Location::Message,
+                            ..Default::default()
+                        }]);
                     }
                 }
 
@@ -1101,7 +1151,28 @@ fn show_playable(new_game: &Game) -> Vec<Change> {
     let mut changes: Vec<Change> = vec![];
 
     if new_game.current_player == 0 {
+        if new_game.state == State::BidCard && new_game.bid_cards[0][0].is_none() {
+            changes.push(Change {
+                message: Some(format!("Select your primary bid card")),
+                change_type: ChangeType::Message,
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            });
+        }
         if new_game.state == State::DealerSelect {
+            let message = if new_game.dealer_select[0].suit != new_game.dealer_select[1].suit {
+                "\nand name trump as its suit"
+            } else {
+                "\nand optionally name trump\nas its suit"
+            };
+            changes.push(Change {
+                change_type: ChangeType::Message,
+                message: Some(format!("Select a card to take{}", message)),
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            });
             for card in new_game.dealer_select.clone().into_iter() {
                 changes.push(Change {
                     object_id: card.id,
