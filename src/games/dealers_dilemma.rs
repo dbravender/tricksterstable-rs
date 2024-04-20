@@ -645,7 +645,7 @@ impl Game {
                     let player_name = match new_game.current_player {
                         1 => "West",
                         2 => "East",
-                        _ => unreachable!(),
+                        _ => "South",
                     };
                     new_game.changes[0].push(Change {
                         change_type: ChangeType::Message,
