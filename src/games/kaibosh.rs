@@ -64,7 +64,12 @@ impl KaiboshGame {
             lead_card: None,
             state: GameState::Bid,
             bids: [None, None, None, None],
-            voids: [HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new()],
+            voids: [
+                HashSet::new(),
+                HashSet::new(),
+                HashSet::new(),
+                HashSet::new(),
+            ],
         }
     }
 
@@ -91,7 +96,7 @@ impl KaiboshGame {
     fn create_deck() -> Vec<Card> {
         let mut deck = Vec::new();
         for suit in &[Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades] {
-            for value in 1..=13 {
+            for value in 9..=14 {
                 deck.push(Card { value, suit: *suit });
             }
         }
