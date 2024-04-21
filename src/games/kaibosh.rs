@@ -4,6 +4,7 @@ A Euchre variant where players bid to name trump
 See rules/kaibosh.txt for game rules
 */
 
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
