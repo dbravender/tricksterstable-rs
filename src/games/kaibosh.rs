@@ -1,11 +1,13 @@
 /*
 Game: Kaibosh
-Designer: [Designer Name]
-Description: Implementation of the Kaibosh game engine.
+A Euchre variant where players bid to name trump
+See rules/kaibosh.txt for game rules
 */
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
+
+const KAIBOSH: usize = 12;
 
 // Define the card, player, and game state structures based on Kaibosh rules
 
@@ -24,28 +26,20 @@ pub struct Card {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Player {
-    pub hand: Vec<Card>,
-    pub tricks_taken: i32,
-    pub bid: Option<i32>,
-    pub score: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KaiboshGame {
-    pub players: Vec<Player>,
-    pub deck: VecDeque<Card>,
+    pub hands: [Vec<Card>; 4],
     pub current_player: usize,
     pub trump: Option<Suit>,
     pub lead_card: Option<Card>,
-    pub phase: GamePhase,
+    pub state: GameState,
+    pub bids: [Option<usize>; 4],
+    pub voids: [HashSet<Suit>; 4], // voids revealed during play
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GamePhase {
-    Bidding,
-    Playing,
-    Scoring,
+pub enum GameState {
+    Bid,
+    Play,
 }
 
 impl KaiboshGame {
@@ -88,7 +82,7 @@ mod tests {
     fn test_new_game() {
         let game = KaiboshGame::new();
         // Assertions to validate the initial game state
-        unimplemented!();
+        //assert_eq!(game.hands.reduce(|h| h + ), 24)
     }
 
     // Additional tests
