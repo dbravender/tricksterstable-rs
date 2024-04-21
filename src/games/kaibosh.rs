@@ -34,13 +34,25 @@ pub struct KaiboshGame {
     pub trump: Option<Suit>,
     pub lead_card: Option<Card>,
     pub state: GameState,
-    pub bids: [Option<usize>; 4],
+    pub bids: [Option<Bid>; 4],
     pub voids: [HashSet<Suit>; 4], // voids revealed during play
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Bid {
+    Pass,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Kaibosh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameState {
-    Bid,
+    Bidding,
     Play,
 }
 
@@ -83,9 +95,19 @@ impl KaiboshGame {
         unimplemented!();
     }
 
-    pub fn bid(&mut self, player_index: usize, bid: i32) {
+    pub fn bid(&mut self, player_index: usize, bid: Bid) {
         // Handle player bidding
-        unimplemented!();
+        if self.state != GameState::Bidding {
+            panic!("Cannot bid outside of the bidding phase");
+        }
+        if player_index != self.current_player {
+            panic!("It's not this player's turn to bid");
+        }
+        self.bids[player_index] = Some(bid);
+        self.current_player = (self.current_player + 1) % 4;
+        if self.current_player == 0 {
+            self.state = GameState::Play;
+        }
     }
 
     pub fn calculate_scores(&mut self) {
