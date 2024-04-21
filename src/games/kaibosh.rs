@@ -45,20 +45,8 @@ pub enum GameState {
 
 impl KaiboshGame {
     pub fn new() -> Self {
-        // Initialize a new game with shuffled deck, players, and set the first phase
-        let mut deck = Self::create_deck();
-        let mut rng = rand::thread_rng();
-        deck.shuffle(&mut rng);
-
-        let mut hands = [vec![], vec![], vec![], vec![]];
-        for _ in 0..6 {
-            for hand in &mut hands {
-                hand.push(deck.pop().expect("The deck should have enough cards"));
-            }
-        }
-
         Self {
-            hands,
+            hands: [vec![], vec![], vec![], vec![]],
             current_player: 0,
             trump: None,
             lead_card: None,
@@ -73,9 +61,16 @@ impl KaiboshGame {
         }
     }
 
-    pub fn deal_cards(&mut self) {
-        // Deal cards to players
-        unimplemented!();
+    pub fn deal(&mut self) {
+        let mut deck = Self::create_deck();
+        let mut rng = rand::thread_rng();
+        deck.shuffle(&mut rng);
+
+        for _ in 0..6 {
+            for hand in &mut self.hands {
+                hand.push(deck.pop().expect("The deck should have enough cards"));
+            }
+        }
     }
 
     pub fn play_card(&mut self, player_index: usize, card: Card) {
