@@ -30,6 +30,7 @@ pub struct Card {
 pub struct KaiboshGame {
     pub hands: [Vec<Card>; 4],
     pub current_player: usize,
+    pub current_trick: [Option<Card>; 4],
     pub trump: Option<Suit>,
     pub lead_card: Option<Card>,
     pub state: GameState,
@@ -46,12 +47,13 @@ pub enum GameState {
 impl KaiboshGame {
     pub fn new() -> Self {
         Self {
-            hands: [vec![], vec![], vec![], vec![]],
+            hands: Self::deal(),
             current_player: 0,
             trump: None,
             lead_card: None,
             state: GameState::Bid,
             bids: [None, None, None, None],
+            current_trick: [None, None, None, None],
             voids: [
                 HashSet::new(),
                 HashSet::new(),
@@ -61,16 +63,19 @@ impl KaiboshGame {
         }
     }
 
-    pub fn deal(&mut self) {
+    fn deal() -> [Vec<Card>; 4] {
         let mut deck = Self::create_deck();
         let mut rng = rand::thread_rng();
+        let mut hands: [Vec<Card>; 4] = [vec![], vec![], vec![], vec![]];
         deck.shuffle(&mut rng);
 
         for _ in 0..6 {
-            for hand in &mut self.hands {
+            for hand in &mut hands {
                 hand.push(deck.pop().expect("The deck should have enough cards"));
             }
         }
+
+        return hands;
     }
 
     pub fn play_card(&mut self, player_index: usize, card: Card) {
