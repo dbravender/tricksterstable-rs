@@ -90,12 +90,14 @@ impl KaiboshGame {
         return hands;
     }
 
-    pub fn play_card(&mut self, player_index: usize, card: Card) {
+    pub fn play_card(&mut self, card: Card) {
+        let player_index = self.current_player;
         // Handle playing a card
         unimplemented!();
     }
 
-    pub fn bid(&mut self, player_index: usize, bid: Bid) {
+    pub fn bid(&mut self, bid: Bid) {
+        let player_index = self.current_player;
         // Handle player bidding
         if self.state != GameState::Bidding {
             panic!("Cannot bid outside of the bidding phase");
