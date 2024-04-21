@@ -34,21 +34,10 @@ pub struct KaiboshGame {
     pub trump: Option<Suit>,
     pub lead_card: Option<Card>,
     pub state: GameState,
-    pub bids: [Option<Bid>; 4],
+    pub bids: [Option<i32>; 4],
     pub voids: [HashSet<Suit>; 4], // voids revealed during play
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Bid {
-    Pass,
-    One,
-    Two,
-    Three,
-    Four,
-    Five,
-    Six,
-    Kaibosh,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameState {
@@ -96,7 +85,7 @@ impl KaiboshGame {
         unimplemented!();
     }
 
-    pub fn bid(&mut self, bid: Bid) {
+    pub fn bid(&mut self, bid: i32) {
         let player_index = self.current_player;
         // Handle player bidding
         if self.state != GameState::Bidding {
