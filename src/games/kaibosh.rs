@@ -82,7 +82,9 @@ impl KaiboshGame {
     pub fn play_card(&mut self, card: Card) {
         let player_index = self.current_player;
         // Handle playing a card
-        unimplemented!();
+        if self.lead_card.is_none() {
+            self.lead_card = Some(card);
+        }
     }
 
     pub fn bid(&mut self, bid: i32) {
