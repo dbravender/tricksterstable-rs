@@ -45,7 +45,26 @@ pub enum GameState {
 impl KaiboshGame {
     pub fn new() -> Self {
         // Initialize a new game with shuffled deck, players, and set the first phase
-        unimplemented!();
+        let mut deck = Self::create_deck();
+        let mut rng = rand::thread_rng();
+        deck.shuffle(&mut rng);
+
+        let mut hands = [vec![], vec![], vec![], vec![]];
+        for _ in 0..6 {
+            for hand in &mut hands {
+                hand.push(deck.pop().expect("The deck should have enough cards"));
+            }
+        }
+
+        Self {
+            hands,
+            current_player: 0,
+            trump: None,
+            lead_card: None,
+            state: GameState::Bid,
+            bids: [None, None, None, None],
+            voids: [HashSet::new(), HashSet::new(), HashSet::new(), HashSet::new()],
+        }
     }
 
     pub fn deal_cards(&mut self) {
@@ -81,8 +100,16 @@ mod tests {
     #[test]
     fn test_new_game() {
         let game = KaiboshGame::new();
-        // Assertions to validate the initial game state
-        //assert_eq!(game.hands.reduce(|h| h + ), 24)
+        // Each player should have 6 cards
+        assert!(game.hands.iter().all(|hand| hand.len() == 6));
+        // The game should start with the first player
+        assert_eq!(game.current_player, 0);
+        // The initial game state should be bidding
+        assert_eq!(game.state, GameState::Bid);
+        // No bids should be placed yet
+        assert!(game.bids.iter().all(|&bid| bid.is_none()));
+        // No voids should be known at the start
+        assert!(game.voids.iter().all(|void| void.is_empty()));
     }
 
     // Additional tests
