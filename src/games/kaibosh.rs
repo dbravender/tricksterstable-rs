@@ -63,7 +63,7 @@ impl KaiboshGame {
             current_player: 0,
             trump: None,
             lead_card: None,
-            state: GameState::Bid,
+            state: GameState::Bidding,
             bids: [None, None, None, None],
             current_trick: [None, None, None, None],
             voids: [
@@ -144,7 +144,7 @@ mod tests {
         // The game should start with the first player
         assert_eq!(game.current_player, 0);
         // The initial game state should be bidding
-        assert_eq!(game.state, GameState::Bid);
+        assert_eq!(game.state, GameState::Bidding);
         // No bids should be placed yet
         assert!(game.bids.iter().all(|&bid| bid.is_none()));
         // No voids should be known at the start
