@@ -87,6 +87,15 @@ impl KaiboshGame {
         unimplemented!();
     }
 
+    fn create_deck() -> Vec<Card> {
+        let mut deck = Vec::new();
+        for suit in &[Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades] {
+            for value in 1..=13 {
+                deck.push(Card { value, suit: *suit });
+            }
+        }
+        deck
+    }
     // Additional methods for game logic
 }
 
