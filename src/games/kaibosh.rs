@@ -523,4 +523,51 @@ mod tests {
         assert_eq!(options.len(), 2);
         assert!(options.contains(&1) && options.contains(&2));
     }
+
+    #[test]
+    fn test_calculate_scores_bidder_wins() {
+        let mut game = KaiboshGame::new();
+        game.bids[0] = Some(2); // Player 0 bids 2
+        game.tricks_taken[0] = 2; // Player 0's team wins 2 tricks
+        game.calculate_scores();
+        assert_eq!(game.scores[0], 2); // Player 0's team should score 2 points
+    }
+
+    #[test]
+    fn test_calculate_scores_bidder_loses() {
+        let mut game = KaiboshGame::new();
+        game.bids[0] = Some(3); // Player 0 bids 3
+        game.tricks_taken[0] = 2; // Player 0's team wins 2 tricks, less than the bid
+        game.calculate_scores();
+        assert_eq!(game.scores[0], -3); // Player 0's team should lose 3 points
+    }
+
+    #[test]
+    fn test_calculate_scores_kaibosh_win() {
+        let mut game = KaiboshGame::new();
+        game.bids[0] = Some(KAIBOSH); // Player 0 bids KAIBOSH
+        game.tricks_taken[0] = 6; // Player 0's team wins all 6 tricks
+        game.calculate_scores();
+        assert_eq!(game.scores[0], 12); // Player 0's team should score 12 points
+    }
+
+    #[test]
+    fn test_calculate_scores_kaibosh_lose() {
+        let mut game = KaiboshGame::new();
+        game.bids[0] = Some(KAIBOSH); // Player 0 bids KAIBOSH
+        game.tricks_taken[0] = 5; // Player 0's team wins 5 tricks, not all
+        game.tricks_taken[1] = 1; // Player 1's team wins 1 trick
+        game.calculate_scores();
+        assert_eq!(game.scores[0], -12); // Player 0's team should lose 12 points
+        assert_eq!(game.scores[1], 1); // Player 1's team should score 1 point
+    }
+
+    #[test]
+    fn test_calculate_scores_defender_scores() {
+        let mut game = KaiboshGame::new();
+        game.bids[2] = Some(3); // Player 2 bids 3
+        game.tricks_taken[1] = 4; // Player 2's team (defenders) wins 4 tricks
+        game.calculate_scores();
+        assert_eq!(game.scores[1], 4); // Player 2's team should score 4 points
+    }
 }
