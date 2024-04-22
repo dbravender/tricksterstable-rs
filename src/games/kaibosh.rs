@@ -8,7 +8,7 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-const KAIBOSH: usize = 12;
+const KAIBOSH: i32 = 12;
 
 // Define the card, player, and game state structures based on Kaibosh rules
 
@@ -26,42 +26,67 @@ pub struct Card {
     pub suit: Suit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KaiboshGame {
     pub hands: [Vec<Card>; 4],
+    pub dealer: usize,
     pub current_player: usize,
     pub current_trick: [Option<Card>; 4],
     pub trump: Option<Suit>,
     pub lead_card: Option<Card>,
     pub state: GameState,
     pub bids: [Option<i32>; 4],
-    pub voids: [HashSet<Suit>; 4], // voids revealed during play
+    pub voids: [HashSet<Suit>; 4], // voids revealed during play (used for hidden information state determization)
+    pub scores: [usize; 2],
+    pub score_threshold: usize,
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GameState {
+    #[default]
     Bidding,
     Play,
 }
 
 impl KaiboshGame {
     pub fn new() -> Self {
-        Self {
-            hands: Self::deal(),
-            current_player: 0,
-            trump: None,
-            lead_card: None,
-            state: GameState::Bidding,
-            bids: [None, None, None, None],
-            current_trick: [None, None, None, None],
-            voids: [
-                HashSet::new(),
-                HashSet::new(),
-                HashSet::new(),
-                HashSet::new(),
-            ],
-        }
+        let mut game = Self {
+            ..Default::default()
+        };
+        game.new_hand();
+        // always let human bid first
+        game.current_player = 0;
+        game.dealer = 3;
+        // TODO: make this configurable for humans playing the game
+        game.score_threshold = 25;
+        return game;
+    }
+
+    fn new_hand(&mut self) {
+        // deal goes counter clockwise around the table
+        self.dealer = (self.dealer + 1) % 4;
+        // deal out cards
+        self.hands = Self::deal();
+        // player to the left of the dealer leads
+        self.current_player = (self.dealer + 1) % 4;
+        // reset trump
+        self.trump = None;
+        // reset lead card
+        self.lead_card = None;
+        // start state is bidding
+        self.state = GameState::Bidding;
+        // reset bids
+        self.bids = [None; 4];
+        // clean up trick
+        self.current_trick = [None; 4];
+        // no longer know which voids a player has revealed
+        self.voids = [
+            HashSet::new(),
+            HashSet::new(),
+            HashSet::new(),
+            HashSet::new(),
+        ];
+        self.scores = [0, 0];
     }
 
     fn deal() -> [Vec<Card>; 4] {
@@ -80,25 +105,61 @@ impl KaiboshGame {
     }
 
     pub fn play_card(&mut self, card: Card) {
-        let player_index = self.current_player;
         // Handle playing a card
         if self.lead_card.is_none() {
             self.lead_card = Some(card);
         }
+        self.hands[self.current_player].retain(|c: &Card| *c != card);
+        self.current_trick[self.current_player] = Some(card);
+        // TODO - animate trick to table
+        self.check_trick_and_hand_end()
     }
 
-    pub fn bid(&mut self, bid: i32) {
-        let player_index = self.current_player;
-        // Handle player bidding
-        if self.state != GameState::Bidding {
-            panic!("Cannot bid outside of the bidding phase");
+    fn check_trick_and_hand_end(&mut self) {
+        if self
+            .current_trick
+            .iter()
+            .filter(|&card| card.is_some())
+            .count()
+            == 4
+        {
+            // trick is over
+            // check if hand is over
+            if self.hands.iter().all(|hand| hand.is_empty()) {
+                self.calculate_scores();
+                // check for end of game
+                if self.game_over() {
+                    return;
+                }
+                // Prepare for a new hand if the game continues
+                // TODO: animate shuffle
+                self.new_hand();
+            }
         }
-        if player_index != self.current_player {
-            panic!("It's not this player's turn to bid");
+    }
+
+    fn game_over(&mut self) -> bool {
+        if self
+            .scores
+            .iter()
+            .any(|&score| score > self.score_threshold)
+        {
+            // Animate game end - declare winner
+            return true;
         }
-        self.bids[player_index] = Some(bid);
+        return false;
+    }
+
+    fn bid(&mut self, bid: i32) {
+        self.bids[self.current_player] = Some(bid);
+        if bid == KAIBOSH {
+            // play begins immediately, current player leads
+            self.state = GameState::Play;
+            return;
+        }
         self.current_player = (self.current_player + 1) % 4;
-        if self.current_player == 0 {
+        if self.bids[self.current_player].is_some() {
+            // everyone bid
             self.state = GameState::Play;
         }
     }
@@ -117,15 +178,28 @@ impl KaiboshGame {
         }
         deck
     }
-    // Additional methods for game logic
 }
 
-// Utility functions for card and game management
-
+fn bid_to_string(bid: i32) -> String {
+    match bid {
+        KAIBOSH => "kaibosh".to_string(),
+        _ => bid.to_string(),
+    }
+}
 // Tests for game logic
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bid_to_string_kaibosh() {
+        assert_eq!(bid_to_string(KAIBOSH), "kaibosh");
+    }
+
+    #[test]
+    fn test_bid_to_string_numeric() {
+        assert_eq!(bid_to_string(10), "10");
+    }
 
     #[test]
     fn test_new_game() {
