@@ -6,9 +6,10 @@ See rules/kaibosh.txt for game rules
 
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const KAIBOSH: i32 = 12;
+const JACK: i32 = 11;
 
 // Define the card, player, and game state structures based on Kaibosh rules
 
@@ -39,7 +40,7 @@ pub struct KaiboshGame {
     pub state: GameState,
     pub bids: [Option<i32>; 4],
     pub voids: [HashSet<Suit>; 4], // voids revealed during play (used for hidden information state determization)
-    pub scores: [i32; 2],
+    pub scores: [i32; 2],          // team scores
     pub score_threshold: i32,
 }
 
@@ -109,12 +110,33 @@ impl KaiboshGame {
         return hands;
     }
 
-    pub fn play_card(&mut self, card: Card) {
+    pub fn name_trump(&mut self, trump: i32) {
+        let suit = match trump {
+            0 => Suit::Clubs,
+            1 => Suit::Diamonds,
+            2 => Suit::Hearts,
+            3 => Suit::Spades,
+            _ => panic!("Invalid trump suit"),
+        };
+        self.trump = Some(suit);
+    }
+
+    pub fn play_card(&mut self, id: i32) {
+        let card = *self.hands[self.current_player]
+            .iter()
+            .find(|c| c.id == id)
+            .expect("Card not found in player's hand");
         // Handle playing a card
         if self.lead_card.is_none() {
             self.lead_card = Some(card);
         }
         self.hands[self.current_player].retain(|c: &Card| *c != card);
+        if self.lead_card.is_some() && card.suit != self.lead_card.unwrap().suit {
+            // if the player didn't follow suit then they have revealed a void
+            // which is used when determining which cards a player might have
+            // during simulations
+            self.voids[self.current_player].insert(self.lead_card.unwrap().suit);
+        }
         self.current_trick[self.current_player] = Some(card);
         // TODO - animate trick to table
         self.check_trick_and_hand_end()
@@ -129,6 +151,18 @@ impl KaiboshGame {
             == 4
         {
             // trick is over
+
+            let trick_winner = get_winner(
+                self.lead_card.unwrap().suit,
+                self.trump.unwrap(),
+                &self.current_trick,
+            );
+            let winning_card =
+                self.current_trick[trick_winner].expect("there has to be a trick_winner card");
+            self.tricks_taken[trick_winner] += 1;
+            // TODO: animate trick to winner
+            // winner of the trick leads
+            self.current_player = trick_winner;
             // check if hand is over
             if self.hands.iter().all(|hand| hand.is_empty()) {
                 self.calculate_scores();
@@ -208,6 +242,14 @@ impl KaiboshGame {
         }
     }
 
+    pub fn apply_move(&mut self, mov: Option<i32>) {
+        match self.state {
+            GameState::Bidding => self.bid(mov),
+            GameState::NameTrump => self.name_trump(mov.unwrap()),
+            GameState::Play => self.play_card(mov.unwrap()),
+        }
+    }
+
     pub fn made_it(&self, trick_count: i32, bid: i32) -> bool {
         if bid == KAIBOSH {
             trick_count == 6
@@ -278,6 +320,43 @@ fn bid_to_string(bid: i32) -> String {
     }
 }
 
+pub fn get_winner(lead_suit: Suit, trump_suit: Suit, trick: &[Option<Card>; 4]) -> usize {
+    let mut card_id_to_player: HashMap<i32, usize> = HashMap::new();
+    for (index, card_option) in trick.iter().enumerate() {
+        if let Some(card) = card_option {
+            card_id_to_player.insert(card.id, index);
+        }
+    }
+    let mut cards: Vec<Card> = trick.iter().filter_map(|&c| c).collect();
+    cards.sort_by_key(|c| std::cmp::Reverse(value_for_card(lead_suit, trump_suit, c)));
+    *card_id_to_player
+        .get(&cards.first().expect("there should be a winning card").id)
+        .expect("cards_to_player missing card")
+}
+
+pub fn same_color(suita: Suit, suitb: Suit) -> bool {
+    suita == Suit::Diamonds && suitb == Suit::Hearts
+        || suita == Suit::Hearts && suitb == Suit::Diamonds
+        || suita == Suit::Clubs && suitb == Suit::Spades
+        || suita == Suit::Spades && suitb == Suit::Clubs
+}
+
+pub fn value_for_card(lead_suit: Suit, trump_suit: Suit, c: &Card) -> i32 {
+    if c.suit == trump_suit && c.value == JACK {
+        return 1000;
+    }
+    if same_color(trump_suit, c.suit) && c.value == JACK {
+        return 500;
+    }
+    if c.suit == trump_suit {
+        return c.value + 200;
+    }
+    if c.suit == lead_suit {
+        return c.value + 100;
+    }
+    return c.value;
+}
+
 // Tests for game logic
 #[cfg(test)]
 mod tests {
@@ -341,7 +420,7 @@ mod tests {
             suit: Suit::Hearts,
         };
         game.hands[0] = vec![test_card]; // Simplify the hand for the test
-        game.play_card(test_card);
+        game.play_card(0);
         assert!(game.hands[0].is_empty());
         assert_eq!(game.current_trick[0], Some(test_card));
     }
