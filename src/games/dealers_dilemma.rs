@@ -191,28 +191,6 @@ struct BidOption {
     description: String,
 }
 
-fn bid_options(bid_cards: [Option<Card>; 2]) -> Vec<BidOption> {
-    let mut bid_options: Vec<BidOption> = [
-        BidType::Easy,
-        BidType::Top,
-        BidType::Difference,
-        BidType::Zero,
-    ]
-    .into_iter()
-    .map(|bid_option| BidOption {
-        id: bid_type_to_offset(bid_option),
-        description: bid_option.bid_display_detailed(bid_cards),
-    })
-    .collect();
-
-    bid_options.push(BidOption {
-        id: -1,
-        description: "Undo".to_string(),
-    });
-
-    return bid_options;
-}
-
 #[derive(
     Debug,
     PartialOrd,
@@ -278,16 +256,6 @@ fn offset_to_bid_type(bid_id: i32) -> BidType {
         BID_TYPE_TOP => BidType::Top,
         BID_TYPE_ZERO => BidType::Zero,
         BID_TYPE_DIFFERENCE => BidType::Difference,
-        _ => unreachable!(),
-    }
-}
-
-fn bid_type_to_offset(bid_type: BidType) -> i32 {
-    match bid_type {
-        BidType::Easy => BID_TYPE_EASY,
-        BidType::Top => BID_TYPE_TOP,
-        BidType::Zero => BID_TYPE_ZERO,
-        BidType::Difference => BID_TYPE_DIFFERENCE,
         _ => unreachable!(),
     }
 }
@@ -818,6 +786,7 @@ impl Game {
                             dest: Location::Message,
                             ..Default::default()
                         });
+                        let moves = new_game.get_moves();
                         new_game.changes[0].push(Change {
                             change_type: ChangeType::BidOptions,
                             object_id: -1, // No specific card associated with this change
@@ -825,6 +794,7 @@ impl Game {
                             dest: Location::BidOptions,
                             bid_options: Some(bid_options(
                                 new_game.bid_cards[new_game.current_player as usize],
+                                moves,
                             )),
                             ..Default::default()
                         });
@@ -1044,38 +1014,75 @@ impl Game {
     }
 
     pub fn get_moves(self: &Game) -> Vec<i32> {
-        if self.state == State::TrumpSelect {
-            return vec![TRUMP, NO_TRUMP];
-        }
-        if self.state == State::BidType {
-            return (0..4).map(|x| x + BID_TYPE_OFFSET).collect();
-        }
-        if self.state == State::BidCard {
-            return self.hands[self.current_player as usize]
+        match self.state {
+            State::TrumpSelect => {
+                vec![TRUMP, NO_TRUMP]
+            }
+            State::BidType => {
+                if self.bid_cards[self.current_player as usize][0]
+                    .unwrap()
+                    .value
+                    == self.bid_cards[self.current_player as usize][1]
+                        .unwrap()
+                        .value
+                {
+                    // difference bids with the same value (e.g. 4 - 4 = 0) is not allowed
+                    // zero bids are always categorized as zero bids and are worth 6 points when made
+                    vec![BID_TYPE_EASY, BID_TYPE_TOP, BID_TYPE_ZERO]
+                } else {
+                    vec![
+                        BID_TYPE_EASY,
+                        BID_TYPE_TOP,
+                        BID_TYPE_DIFFERENCE,
+                        BID_TYPE_ZERO,
+                    ]
+                }
+            }
+            State::BidCard => self.hands[self.current_player as usize]
                 .iter()
                 .map(|c| move_offset(self.state, c))
-                .collect();
-        }
-        if self.state == State::DealerSelect {
-            return vec![DEALER_SELECT_CARD, DEALER_SELECT_CARD + 1];
-        }
-        let actions: Vec<i32>;
-        if self.lead_suit.is_some() {
-            actions = self.hands[self.current_player as usize]
-                .iter()
-                .filter(|c| Some(c.suit) == self.lead_suit)
-                .map(|c| move_offset(self.state, c))
-                .collect();
-            if !actions.is_empty() {
-                return actions;
+                .collect(),
+            State::DealerSelect => {
+                vec![DEALER_SELECT_CARD, DEALER_SELECT_CARD + 1]
+            }
+            _ => {
+                let actions: Vec<i32>;
+                if self.lead_suit.is_some() {
+                    actions = self.hands[self.current_player as usize]
+                        .iter()
+                        .filter(|c| Some(c.suit) == self.lead_suit)
+                        .map(|c| move_offset(self.state, c))
+                        .collect();
+                    if !actions.is_empty() {
+                        return actions;
+                    }
+                }
+                self.hands[self.current_player as usize]
+                    .iter()
+                    .map(|c| move_offset(self.state, c))
+                    .collect()
             }
         }
-        self.hands[self.current_player as usize]
-            .iter()
-            .map(|c| move_offset(self.state, c))
-            .collect()
     }
 }
+
+fn bid_options(bid_cards: [Option<Card>; 2], moves: Vec<i32>) -> Vec<BidOption> {
+    let mut bid_options: Vec<BidOption> = moves
+        .into_iter()
+        .map(|bid_option| BidOption {
+            id: bid_option,
+            description: offset_to_bid_type(bid_option).bid_display_detailed(bid_cards),
+        })
+        .collect();
+
+    bid_options.push(BidOption {
+        id: -1,
+        description: "Undo".to_string(),
+    });
+
+    bid_options
+}
+
 fn card_sorter(a: &Card, b: &Card) -> Ordering {
     match a.suit.cmp(&b.suit) {
         Ordering::Less => Ordering::Less,
