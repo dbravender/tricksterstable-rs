@@ -420,7 +420,7 @@ impl Game {
         self.no_changes = true;
     }
 
-    fn deal(self: Game) -> Self {
+    pub fn deal(self: Game) -> Self {
         let mut new_game = self.clone();
         new_game.trump_card = None;
         new_game.state = State::DealerSelect;
@@ -885,18 +885,6 @@ impl Game {
                 new_game.current_player = (new_game.current_player + 1) % 3;
                 // end trick
                 if new_game.current_trick.iter().flatten().count() == 3 {
-                    if !new_game.no_changes {
-                        println!(
-                            "trick finished: {}",
-                            new_game
-                                .current_trick
-                                .iter()
-                                .flatten()
-                                .map(|c| print_card(*c, false))
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        );
-                    }
                     let trick_winner = get_winner(
                         new_game.lead_suit,
                         new_game.trump_suit,
@@ -1218,7 +1206,9 @@ fn hide_playable(new_game: &Game) -> Vec<Change> {
     changes
 }
 
-impl ismcts::Game for Game {
+use duplicate::duplicate_item;
+#[duplicate_item(name; [ismcts::Game]; [ismctsbaseline::Game])]
+impl name for Game {
     type Move = i32;
     type PlayerTag = i32;
     type MoveList = Vec<i32>;
