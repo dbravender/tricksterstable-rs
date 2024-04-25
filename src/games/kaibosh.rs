@@ -342,9 +342,11 @@ pub fn same_color(suita: Suit, suitb: Suit) -> bool {
 }
 
 pub fn value_for_card(lead_suit: Suit, trump_suit: Suit, c: &Card) -> i32 {
+    // jack of trump is the strongest card (right bower)
     if c.suit == trump_suit && c.value == JACK {
         return 1000;
     }
+    // jack of same color suit as trump is the second strongest card (left bower)
     if same_color(trump_suit, c.suit) && c.value == JACK {
         return 500;
     }

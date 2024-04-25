@@ -17,7 +17,7 @@ There is a simple bidding convention:
 
 If a player kaiboshes bidding stops immediately, they name a suit, lead and play the hand alone (without their partner).
 
-During the bidding phase if a player has four 9s or three 9s and two 10s they may optionally declare a misdeal. This only happens in turn order so if a player bids a kaibosh before a player has a turn to bid they may not declare a misdeal. If a misdeal is declared the hand ends immediately and the dealer moves clockwise and a new hand is dealt.
+During the bidding phase if a player has four 9s or three 9s and two 10s they may optionally declare a misdeal. This is only allowed when it is a player’s turn to bid. If a player bids a kaibosh before a player has a turn to bid they may not declare a misdeal. If a misdeal is declared the hand ends immediately and the dealer moves clockwise and a new hand is dealt.
 
 The player who bid the highest names trump. After that the player to the left of the dealer leads.
 
