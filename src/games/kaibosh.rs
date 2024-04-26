@@ -1,7 +1,7 @@
 /*
 Game: Kaibosh
 A Euchre variant where players bid to name trump
-See rules/kaibosh.txt for game rules
+See rules/kaibosh.md for game rules
 */
 
 use rand::seq::SliceRandom;
