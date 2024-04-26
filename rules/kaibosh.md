@@ -33,6 +33,6 @@ Play continues clockwise. Each player plays one card. You must play a card of th
 
 Scores are per team. When a hand is finished you tally the number of tricks that partners have made together. If the team that won the bid makes their bid or higher, they score as many points as they took tricks. If they do not make it, the other team earns a point for each trick they took and the team that won the bid loses the number of points that they bid. It is possible to have a negative score because of this.
 
-If a player makes their Kaibosh they score 12 points if they take a trick. If a player kaiboshed and did not make their bid their team loses 12 points.
+If a player makes their Kaibosh by taking all 6 tricks they score 12 points. If a player kaiboshed and did not make their bid their team loses 12 points.
 
 Play continues with the deal moving clockwise after each hand. Games can be played to any agreed upon score or number of deals. Generally play is to 50 or 100.
