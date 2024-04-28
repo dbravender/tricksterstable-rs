@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 const KAIBOSH: i32 = 12;
 const JACK: i32 = 11;
+const MISDEAL: i32 = 100; // high so it can be "bid" anytime
 
 // Define the card, player, and game state structures based on Kaibosh rules
 
@@ -189,6 +190,13 @@ impl KaiboshGame {
         return false;
     }
 
+    fn check_for_misdeal(&self, player: usize) -> bool {
+        let hand = &self.hands[player];
+        let nines_count = hand.iter().filter(|&card| card.value == 9).count();
+        let tens_count = hand.iter().filter(|&card| card.value == 10).count();
+        nines_count == 4 || (nines_count == 3 && tens_count >= 2)
+    }
+
     fn bid(&mut self, bid: Option<i32>) {
         if bid.is_some() && bid.unwrap() <= self.bids.iter().filter_map(|&b| b).max().unwrap_or(0) {
             panic!("bid must increase");
@@ -198,6 +206,14 @@ impl KaiboshGame {
         if bid == Some(KAIBOSH) {
             // play begins immediately, current player leads
             self.state = GameState::Play;
+            return;
+        }
+
+        if bid == Some(MISDEAL) {
+            // redeal - dealer moves to the next player - no score
+            // TODO: animation or dialog informing of the misdeal
+            self.dealer = (self.dealer + 1) % 4;
+            self.new_hand();
             return;
         }
 
@@ -211,6 +227,9 @@ impl KaiboshGame {
     pub fn bidding_options(self: &KaiboshGame) -> Vec<i32> {
         let max_bid = self.bids.iter().filter_map(|&b| b).max().unwrap_or(0);
         let mut bids: Vec<i32> = (0..=6).collect();
+        if self.check_for_misdeal(self.current_player) {
+            bids.push(MISDEAL);
+        }
         bids.push(KAIBOSH);
         bids.retain(|bid| *bid > max_bid);
         bids
@@ -651,4 +670,211 @@ mod tests {
         game.calculate_scores();
         assert_eq!(game.scores[1], 4); // Player 2's team should score 4 points
     }
+}
+#[test]
+fn test_misdeal_with_four_nines() {
+    let mut game = KaiboshGame::new();
+    // Set up a hand with four nines for the current player
+    game.hands[game.current_player] = vec![
+        Card {
+            value: 9,
+            suit: Suit::Hearts,
+            id: 0,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Diamonds,
+            id: 1,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Clubs,
+            id: 2,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Spades,
+            id: 3,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Hearts,
+            id: 4,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Diamonds,
+            id: 5,
+        },
+    ];
+    assert!(game.check_for_misdeal(game.current_player));
+}
+
+#[test]
+fn test_misdeal_with_three_nines_two_tens() {
+    let mut game = KaiboshGame::new();
+    // Set up a hand with three nines and two tens for the current player
+    game.hands[game.current_player] = vec![
+        Card {
+            value: 9,
+            suit: Suit::Hearts,
+            id: 0,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Diamonds,
+            id: 1,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Clubs,
+            id: 2,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Spades,
+            id: 3,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Hearts,
+            id: 4,
+        },
+        Card {
+            value: 11,
+            suit: Suit::Diamonds,
+            id: 5,
+        },
+    ];
+    assert!(game.check_for_misdeal(game.current_player));
+}
+
+#[test]
+fn test_get_moves_includes_misdeal() {
+    let mut game = KaiboshGame::new();
+    // Set up a hand with four nines for the current player
+    game.hands[game.current_player] = vec![
+        Card {
+            value: 9,
+            suit: Suit::Hearts,
+            id: 0,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Diamonds,
+            id: 1,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Clubs,
+            id: 2,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Spades,
+            id: 3,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Hearts,
+            id: 4,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Diamonds,
+            id: 5,
+        },
+    ];
+    let moves = game.get_moves();
+    assert!(
+        moves.contains(&MISDEAL),
+        "get_moves should include MISDEAL for a misdeal-eligible hand"
+    );
+}
+
+#[test]
+fn test_bid_with_misdeal_advances_game_state() {
+    let mut game = KaiboshGame::new();
+    // Set up a hand with four nines for the current player
+    game.hands[game.current_player] = vec![
+        Card {
+            value: 9,
+            suit: Suit::Hearts,
+            id: 0,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Diamonds,
+            id: 1,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Clubs,
+            id: 2,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Spades,
+            id: 3,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Hearts,
+            id: 4,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Diamonds,
+            id: 5,
+        },
+    ];
+    game.bid(Some(MISDEAL));
+    assert_eq!(
+        game.state,
+        GameState::Bidding,
+        "Game state should be reset to Bidding after a misdeal"
+    );
+    assert_eq!(
+        game.dealer, 1,
+        "Dealer should advance to the next player after a misdeal"
+    );
+}
+
+#[test]
+fn test_no_misdeal_with_insufficient_nines_or_tens() {
+    let mut game = KaiboshGame::new();
+    // Set up a hand without the necessary nines or tens for misdeal
+    game.hands[game.current_player] = vec![
+        Card {
+            value: 9,
+            suit: Suit::Hearts,
+            id: 0,
+        },
+        Card {
+            value: 9,
+            suit: Suit::Diamonds,
+            id: 1,
+        },
+        Card {
+            value: 10,
+            suit: Suit::Hearts,
+            id: 2,
+        },
+        Card {
+            value: 11,
+            suit: Suit::Hearts,
+            id: 3,
+        },
+        Card {
+            value: 12,
+            suit: Suit::Hearts,
+            id: 4,
+        },
+        Card {
+            value: 13,
+            suit: Suit::Hearts,
+            id: 5,
+        },
+    ];
+    assert!(!game.check_for_misdeal(game.current_player));
 }

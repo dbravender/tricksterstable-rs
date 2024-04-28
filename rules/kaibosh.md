@@ -9,15 +9,16 @@ Partners sit across from each other. All the cards are dealt so that each player
 ## Bidding
 
 Bidding begins with the player left of the dealer and proceeds clockwise around the table. Each player bids one time. Valid bids are pass, 1, 2, 3, 4, 5, 6 and kaibosh (take all tricks alone). You must bid higher than the previous highest bid or pass.
+
 There is a simple bidding convention:
 
-* 1 - signals to your partner that you have two or more aces.
-* 2 - signals to your partner that you have one black jack and one red jack.
-* 3 - is usually used to block the other team from signaling to each other.
+- 1 - signals to your partner that you have two or more aces.
+- 2 - signals to your partner that you have one black jack and one red jack.
+- 3 - is usually used to block the other team from signaling to each other.
 
 If a player kaiboshes bidding stops immediately, they name a suit, lead and play the hand alone (without their partner).
 
-During the bidding phase if a player has four 9s or three 9s and two 10s they may optionally declare a misdeal. This is only allowed when it is a player’s turn to bid. If a player bids a kaibosh before a player has a turn to bid they may not declare a misdeal. If a misdeal is declared the hand ends immediately and the dealer moves clockwise and a new hand is dealt.
+During the bidding phase if a player has four 9s or three 9s and two or more 10s they may optionally declare a misdeal. This is only allowed when it is a player’s turn to bid. If a player bids a kaibosh before a player has a turn to bid they may not declare a misdeal. If a misdeal is declared the hand ends immediately and the dealer moves clockwise and a new hand is dealt.
 
 The player who bid the highest names trump. After that the player to the left of the dealer leads.
 
