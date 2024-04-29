@@ -1,6 +1,7 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use tricksterstable_rs::games::dealers_dilemma::Game;
 
@@ -8,7 +9,7 @@ use tricksterstable_rs::games::dealers_dilemma::Game;
 enum Engine {
     Random,
     Baseline,
-    DivideByZeroFix,
+    Improved,
 }
 
 fn get_mcts_move(game: &Game, engine: Engine) -> i32 {
@@ -31,7 +32,7 @@ fn get_mcts_move(game: &Game, engine: Engine) -> i32 {
             );
             ismcts.best_move().expect("should have a move to make")
         }
-        Engine::DivideByZeroFix => {
+        Engine::Improved => {
             let mut ismcts = ismcts::IsmctsHandler::new(new_game);
             let parallel_threads: usize = 8;
             ismcts.run_iterations(
@@ -46,10 +47,12 @@ fn get_mcts_move(game: &Game, engine: Engine) -> i32 {
 fn main() {
     let mut wins: HashMap<Engine, i32> = HashMap::new();
     let mut scores: HashMap<Engine, i32> = HashMap::new();
-    let engines = [Engine::Random, Engine::Baseline, Engine::DivideByZeroFix];
+    let mut durations: HashMap<Engine, Duration> = HashMap::new();
+    let engines = [Engine::Random, Engine::Baseline, Engine::Improved];
     for engine in engines {
         wins.insert(engine, 0);
         scores.insert(engine, 0);
+        durations.insert(engine, Duration::new(0, 0));
     }
 
     for i in 0..1000 {
@@ -59,7 +62,10 @@ fn main() {
         let engine = engines[i % 3];
         while game.winner.is_none() {
             if game.current_player == 0 {
+                let duration = durations.get_mut(&engine).unwrap();
+                let start = Instant::now();
                 let action = get_mcts_move(&game, engine);
+                *duration += start.elapsed();
                 game = game.clone_and_apply_move(action);
             } else {
                 let mut moves = game.get_moves();
@@ -75,5 +81,8 @@ fn main() {
         let scores = scores.get_mut(&engine).unwrap();
         *scores += game.scores[0];
     }
-    println!("wins: {:?} scores: {:?}", wins, scores);
+    println!(
+        "wins: {:?}\nscores: {:?}\ndurations: {:?}",
+        wins, scores, durations
+    );
 }
