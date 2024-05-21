@@ -4,9 +4,15 @@ A Euchre variant where players bid to name trump
 See rules/kaibosh.md for game rules
 */
 
-use rand::seq::SliceRandom;
+use ismcts::IsmctsHandler;
+use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::min,
+    collections::{HashMap, HashSet},
+};
+
+use crate::utils::shuffle_and_divide_matching_cards;
 
 const KAIBOSH: i32 = 12;
 const JACK: i32 = 11;
@@ -32,6 +38,8 @@ pub struct Card {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KaiboshGame {
     pub hands: [Vec<Card>; 4],
+    pub bidder: Option<usize>, // player that bid
+    pub high_bid: Option<i32>, // bid made by the bidder
     pub dealer: usize,
     pub current_player: usize,
     pub current_trick: [Option<Card>; 4],
@@ -42,6 +50,7 @@ pub struct KaiboshGame {
     pub bids: [Option<i32>; 4],
     pub voids: [HashSet<Suit>; 4], // voids revealed during play (used for hidden information state determization)
     pub scores: [i32; 2],          // team scores
+    pub scores_this_hand: [i32; 2], // team scores for current hand (used during search)
     pub score_threshold: i32,
 }
 
@@ -68,6 +77,10 @@ impl KaiboshGame {
     }
 
     fn new_hand(&mut self) {
+        // reset bidder
+        self.bidder = None;
+        // reset bid
+        self.high_bid = None;
         // deal goes counter clockwise around the table
         self.dealer = (self.dealer + 1) % 4;
         // deal out cards
@@ -92,6 +105,7 @@ impl KaiboshGame {
             HashSet::new(),
         ];
         self.scores = [0, 0];
+        self.scores_this_hand = [0, 0];
     }
 
     fn deal() -> [Vec<Card>; 4] {
@@ -120,6 +134,11 @@ impl KaiboshGame {
             _ => panic!("Invalid trump suit"),
         };
         self.trump = Some(suit);
+        if self.high_bid != Some(KAIBOSH) {
+            // current player stays when kaibosh is bid
+            self.current_player = (self.dealer + 1) % 4;
+        }
+        self.state = GameState::Play;
     }
 
     pub fn play_card(&mut self, id: i32) {
@@ -139,17 +158,27 @@ impl KaiboshGame {
             self.voids[self.current_player].insert(self.lead_card.unwrap().suit);
         }
         self.current_trick[self.current_player] = Some(card);
+        self.current_player = (self.current_player + 1) % 4;
+        if self.high_bid == Some(KAIBOSH) && self.current_player == (self.bidder.unwrap() + 2) % 4 {
+            // skip partner during loners
+            self.current_player = (self.current_player + 1) % 4;
+        }
         // TODO - animate trick to table
         self.check_trick_and_hand_end()
     }
 
     fn check_trick_and_hand_end(&mut self) {
+        let card_count = if self.bids.contains(&Some(KAIBOSH)) {
+            3
+        } else {
+            4
+        };
         if self
             .current_trick
             .iter()
             .filter(|&card| card.is_some())
             .count()
-            == 4
+            == card_count
         {
             // trick is over
 
@@ -160,15 +189,18 @@ impl KaiboshGame {
             );
             let winning_card =
                 self.current_trick[trick_winner].expect("there has to be a trick_winner card");
-            self.tricks_taken[trick_winner] += 1;
+            self.current_trick = [None; 4];
+            self.lead_card = None;
+            self.tricks_taken[trick_winner % 2] += 1;
             // TODO: animate trick to winner
             // winner of the trick leads
             self.current_player = trick_winner;
             // check if hand is over
-            if self.hands.iter().all(|hand| hand.is_empty()) {
+            if self.hands.iter().filter(|hand| hand.is_empty()).count() >= 3 {
                 self.calculate_scores();
                 // check for end of game
                 if self.game_over() {
+                    // Animate game end - declare winner
                     return;
                 }
                 // Prepare for a new hand if the game continues
@@ -178,13 +210,12 @@ impl KaiboshGame {
         }
     }
 
-    fn game_over(&mut self) -> bool {
+    fn game_over(&self) -> bool {
         if self
             .scores
             .iter()
-            .any(|&score| score > self.score_threshold)
+            .any(|&score| score >= self.score_threshold)
         {
-            // Animate game end - declare winner
             return true;
         }
         return false;
@@ -204,8 +235,10 @@ impl KaiboshGame {
 
         self.bids[self.current_player] = bid;
         if bid == Some(KAIBOSH) {
-            // play begins immediately, current player leads
-            self.state = GameState::Play;
+            self.high_bid = Some(KAIBOSH);
+            self.bidder = Some(self.current_player);
+            // player names trump and then leads immediately
+            self.state = GameState::NameTrump;
             return;
         }
 
@@ -220,7 +253,17 @@ impl KaiboshGame {
         self.current_player = (self.current_player + 1) % 4;
         if self.bids[self.current_player].is_some() {
             // everyone bid
-            self.state = GameState::Play;
+            let bidder = self
+                .bids
+                .iter()
+                .enumerate()
+                .max_by_key(|&(_, &bid)| bid.unwrap_or(0))
+                .map(|(i, _)| i)
+                .unwrap();
+            self.bidder = Some(bidder);
+            self.high_bid = self.bids[bidder];
+            self.current_player = bidder;
+            self.state = GameState::NameTrump;
         }
     }
 
@@ -237,23 +280,25 @@ impl KaiboshGame {
 
     fn play_options(&self) -> Vec<i32> {
         let actions: Vec<i32>;
-        if self.lead_card.is_some() {
+        if let Some(lead_card) = self.lead_card {
             actions = self.hands[self.current_player as usize]
                 .iter()
-                .filter(|c| Some(c.suit) == Some(self.lead_card.unwrap().suit))
+                .filter(|c| c.suit == lead_card.suit)
                 .map(|c| c.id)
                 .collect();
             if !actions.is_empty() {
                 return actions;
             }
         }
-        self.hands[self.current_player as usize]
+
+        let actions: Vec<i32> = self.hands[self.current_player as usize]
             .iter()
             .map(|c| c.id)
-            .collect()
+            .collect();
+        actions
     }
 
-    pub fn get_moves(&mut self) -> Vec<i32> {
+    pub fn get_moves(&self) -> Vec<i32> {
         match self.state {
             GameState::Bidding => self.bidding_options(),
             GameState::NameTrump => (0..=3).collect::<Vec<i32>>(),
@@ -262,6 +307,9 @@ impl KaiboshGame {
     }
 
     pub fn apply_move(&mut self, mov: Option<i32>) {
+        // reset only after a move is made in the next round
+        // so the tree search can see the result
+        self.scores_this_hand = [0, 0];
         match self.state {
             GameState::Bidding => self.bid(mov),
             GameState::NameTrump => self.name_trump(mov.unwrap()),
@@ -308,10 +356,13 @@ impl KaiboshGame {
         let bid = self.bids[bidder].unwrap();
         let tricks_taken_by_bidding_team = self.tricks_taken[bidding_team];
         self.scores[bidding_team] += self.points_for_bid(tricks_taken_by_bidding_team, bid);
+        self.scores_this_hand[bidding_team] +=
+            self.points_for_bid(tricks_taken_by_bidding_team, bid);
         let tricks_taken_by_defender = self.tricks_taken[defending_team];
         // Defending team scores all tricks taken if the bidder did not make their bid
         if !self.made_it(tricks_taken_by_bidding_team, bid) {
             self.scores[defending_team] += tricks_taken_by_defender;
+            self.scores_this_hand[defending_team] += tricks_taken_by_defender;
         }
     }
 
@@ -378,6 +429,90 @@ pub fn value_for_card(lead_suit: Suit, trump_suit: Suit, c: &Card) -> i32 {
     return c.value;
 }
 
+impl ismcts::Game for KaiboshGame {
+    type Move = i32;
+    type PlayerTag = i32;
+    type MoveList = Vec<i32>;
+
+    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        let rng = &mut thread_rng();
+
+        for p1 in 0..4 {
+            for p2 in 0..4 {
+                if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
+                    continue;
+                }
+
+                let mut combined_voids: HashSet<Suit> =
+                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
+                combined_voids.extend(self.voids[p2 as usize].iter());
+
+                let mut new_hands = vec![
+                    self.hands[p1 as usize].clone(),
+                    self.hands[p2 as usize].clone(),
+                ];
+
+                // allow swapping of any cards that are not in the combined void set
+                shuffle_and_divide_matching_cards(
+                    |c: &Card| !combined_voids.contains(&c.suit),
+                    &mut new_hands,
+                    rng,
+                );
+
+                self.hands[p1 as usize] = new_hands[0].clone();
+                self.hands[p2 as usize] = new_hands[1].clone();
+            }
+        }
+    }
+
+    fn current_player(&self) -> Self::PlayerTag {
+        self.current_player as i32
+    }
+
+    fn next_player(&self) -> Self::PlayerTag {
+        (self.current_player as i32 + 1) % 4
+    }
+
+    fn available_moves(&self) -> Self::MoveList {
+        self.get_moves()
+    }
+
+    fn make_move(&mut self, mov: &Self::Move) {
+        self.apply_move(Some(*mov));
+    }
+
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        let hand_over = self.scores_this_hand.iter().any(|&score| score != 0);
+        if !hand_over {
+            None
+        } else {
+            let mut score = self.scores_this_hand[player as usize % 2];
+            if score <= 0 {
+                // Capping the score at -6
+                score = min(-6, score);
+                let normalized_score = (score.abs() as f64) / 6.0;
+                // Normalizing the score to 0 - .2
+                Some(0.2 * (1.0 - normalized_score))
+            } else {
+                let score = score as f64 / 6.0;
+                Some(0.2 + (0.8 * score))
+            }
+        }
+    }
+}
+
+pub fn get_mcts_move(game: &KaiboshGame, iterations: i32) -> i32 {
+    let mut new_game = game.clone();
+    new_game.score_threshold = -10000;
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 1;
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
+    ismcts.best_move().expect("should have a move to make")
+}
+
 // Tests for game logic
 #[cfg(test)]
 mod tests {
@@ -429,7 +564,7 @@ mod tests {
     fn test_bid_function_kaibosh_ends_bidding() {
         let mut game = KaiboshGame::new();
         game.bid(Some(KAIBOSH));
-        assert_eq!(game.state, GameState::Play);
+        assert_eq!(game.state, GameState::NameTrump);
     }
 
     #[test]
@@ -497,7 +632,7 @@ mod tests {
         let mut game = KaiboshGame::new();
         game.bid(Some(KAIBOSH)); // Player 0 bids Kaibosh
         assert_eq!(game.bids[0], Some(KAIBOSH));
-        assert_eq!(game.state, GameState::Play); // State should change to Play
+        assert_eq!(game.state, GameState::NameTrump); // State should change to Play
     }
 
     #[test]
@@ -545,7 +680,6 @@ mod tests {
         game.bid(Some(5));
         game.current_player = 1; // Move to next player to test options
         let options = game.bidding_options();
-        println!("{:?}", options);
         assert!(options.contains(&6), "Options should include 6");
         assert!(options.contains(&KAIBOSH), "Options should include kaibosh");
     }
