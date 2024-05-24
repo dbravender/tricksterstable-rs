@@ -5,11 +5,7 @@ Yokai Septet Designers: yio, Muneyuki Yokouchi (横内宗幸)
 BoardGameGeek: https://boardgamegeek.com/boardgame/251433/yokai-septet
 */
 
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    default,
-};
+use std::{cmp::Ordering, collections::HashSet};
 
 use enum_iterator::{all, Sequence};
 use rand::seq::SliceRandom;
@@ -134,6 +130,7 @@ pub enum State {
     SelectSeven,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Yokai2pGame {
     state: State,
     trump_card: Option<Card>,
@@ -153,6 +150,7 @@ pub struct Yokai2pGame {
     overall_winner: Option<usize>,
     lead_player: usize,
     round: i32,
+    pub no_changes: bool, // save time when running simulations by skipping animation metadata
 }
 
 impl Yokai2pGame {
@@ -166,29 +164,35 @@ impl Yokai2pGame {
         self.lead_player = (self.lead_player + 1) % 2;
         self.captured_sevens = [vec![], vec![]];
         self.voids = [HashSet::new(), HashSet::new()];
-        let deal_index = self.changes.len() as usize;
         self.changes.extend(vec![]); // deal
+        let deal_index = self.changes.len() - 1 as usize;
         let mut cards = deck();
         let trump_card = cards.pop().unwrap();
-        self.changes[deal_index].push(Change {
-            change_type: ChangeType::Trump,
-            object_id: trump_card.id,
-            dest: Location::Trump,
-            ..Default::default()
-        });
+        self.add_change(
+            deal_index,
+            Change {
+                change_type: ChangeType::Trump,
+                object_id: trump_card.id,
+                dest: Location::Trump,
+                ..Default::default()
+            },
+        );
         self.straw_bottom = [vec![], vec![]];
         for y in 0..7 {
             for player in 0..2 as usize {
                 let card = cards.pop().unwrap();
-                self.changes[deal_index].push(Change {
-                    change_type: ChangeType::Deal,
-                    object_id: card.id,
-                    dest: Location::StrawBottom,
-                    player,
-                    hand_offset: y,
-                    length: 7,
-                    ..Default::default()
-                });
+                self.add_change(
+                    deal_index,
+                    Change {
+                        change_type: ChangeType::Deal,
+                        object_id: card.id,
+                        dest: Location::StrawBottom,
+                        player,
+                        hand_offset: y,
+                        length: 7,
+                        ..Default::default()
+                    },
+                );
                 self.straw_bottom[player].push(Some(card));
             }
         }
@@ -200,15 +204,18 @@ impl Yokai2pGame {
         for y in 0..6 {
             for player in 0..2 {
                 let card = cards.pop().unwrap();
-                self.changes[deal_index].push(Change {
-                    change_type: ChangeType::Deal,
-                    object_id: card.id,
-                    dest: Location::StrawTop,
-                    player,
-                    hand_offset: y,
-                    length: 6,
-                    ..Default::default()
-                });
+                self.add_change(
+                    deal_index,
+                    Change {
+                        change_type: ChangeType::Deal,
+                        object_id: card.id,
+                        dest: Location::StrawTop,
+                        player,
+                        hand_offset: y,
+                        length: 6,
+                        ..Default::default()
+                    },
+                );
                 self.straw_top[player].push(Some(card));
             }
         }
@@ -227,49 +234,58 @@ impl Yokai2pGame {
         for y in 0..11 {
             for player in 0..2 {
                 let card = self.hands[player][y];
-                self.changes[deal_index].push(Change {
-                    change_type: ChangeType::Deal,
-                    object_id: card.id,
-                    dest: Location::Hand,
-                    player,
-                    hand_offset: y,
-                    length: 11,
-                    ..Default::default()
-                });
+                self.add_change(
+                    deal_index,
+                    Change {
+                        change_type: ChangeType::Deal,
+                        object_id: card.id,
+                        dest: Location::Hand,
+                        player,
+                        hand_offset: y,
+                        length: 11,
+                        ..Default::default()
+                    },
+                );
             }
         }
         self.show_playable();
+    }
+
+    #[inline]
+    fn add_change(&mut self, index: usize, change: Change) {
+        if !self.no_changes {
+            self.changes[index].push(change);
+        }
     }
 
     fn show_playable(&mut self) {
         if self.changes.is_empty() {
             self.changes = vec![vec![]];
         }
-        let mut changes = vec![];
-        let change_len = self.changes.len();
+        let change_index = self.changes.len() - 1;
         if self.current_player == 0 {
             for id in self.get_moves() {
-                changes.push(Change {
-                    object_id: id,
-                    change_type: ChangeType::ShowPlayable,
-                    dest: Location::Hand,
-                    player: self.current_player,
-                    ..Default::default()
-                });
+                self.add_change(
+                    change_index,
+                    Change {
+                        object_id: id,
+                        change_type: ChangeType::ShowPlayable,
+                        dest: Location::Hand,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
             }
-            self.changes[change_len - 1] = changes;
         } else {
             self.hide_playable();
         }
     }
 
     fn hide_playable(&mut self) {
-        let change_len = self.changes.len();
         if self.changes.is_empty() {
             self.changes = vec![vec![]];
         }
-        let mut changes = vec![];
-
+        let change_index = self.changes.len() - 1;
         let mut cards = self.hands[0].clone();
         cards.extend(self.exposed_straw_bottoms(0));
         cards.extend(
@@ -279,16 +295,17 @@ impl Yokai2pGame {
                 .collect::<Vec<_>>(),
         );
         for card in cards {
-            changes.push(Change {
-                object_id: card.id,
-                change_type: ChangeType::HidePlayable,
-                dest: Location::Hand,
-                player: self.current_player,
-                ..Default::default()
-            });
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: card.id,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    player: self.current_player,
+                    ..Default::default()
+                },
+            );
         }
-
-        self.changes[change_len - 1] = changes;
     }
 
     fn exposed_straw_bottoms(&self, player: usize) -> HashSet<Card> {
@@ -297,8 +314,8 @@ impl Yokai2pGame {
             if card.is_none() {
                 continue;
             }
-            let mut left_open: bool = false;
-            let mut right_open: bool = false;
+            let left_open: bool;
+            let right_open: bool;
             if i == 0 {
                 left_open = true;
             } else {
@@ -355,6 +372,36 @@ impl Yokai2pGame {
             .filter(|x| !exposed_straw_bottoms.contains(x))
             .collect();
     }
+
+    pub fn reveal_straw_bottoms(&self, player: usize) -> Vec<Change> {
+        return self
+            .exposed_straw_bottoms(player)
+            .iter()
+            .map(|c| Change {
+                change_type: ChangeType::RevealCard,
+                dest: Location::Hand,
+                object_id: c.id,
+                ..Default::default()
+            })
+            .collect();
+    }
+
+    pub fn reorder_hand(&self, player: usize) -> Vec<Change> {
+        let length = self.hands[self.current_player].len();
+        self.hands[self.current_player]
+            .iter()
+            .enumerate()
+            .map(|(hand_offset, card)| Change {
+                change_type: ChangeType::Reorder,
+                dest: Location::ReorderHand,
+                object_id: card.id,
+                player,
+                hand_offset,
+                length,
+                ..Default::default()
+            })
+            .collect()
+    }
 }
 
 // state = State.playCard;
@@ -364,27 +411,6 @@ impl Yokai2pGame {
 class Game implements GameState<Move, Player> {
 
 
-  List<Change> revealStrawBottoms(int player) {
-    return exposedStrawBottoms(player)
-        .map((c) =>
-            Change(type: ChangeType.revealCard, dest: Location.hand, id: c.id))
-        .toList();
-  }
-
-  List<Change> reorderHand(int player) {
-    List<Change> changes = [];
-    List<Card> hand = hands[currentPlayer!];
-    hand.asMap().forEach((offsetInHand, card) {
-      changes.add(Change(
-          dest: Location.reorderHand,
-          id: card.id,
-          player: player,
-          type: ChangeType.reorder,
-          handOffset: offsetInHand,
-          length: hand.length));
-    });
-    return changes;
-  }
 
   @override
   Game cloneAndApplyMove(Move move, Node<Move, Player>? root) {
@@ -592,95 +618,107 @@ class Game implements GameState<Move, Player> {
     return newGame;
   }
 
-  @override
-  GameState<Move, Player>? determine(GameState<Move, Player>? initialState) {
-    // return clone();
-    var game = clone();
-    List<Card> remainingCards = [];
-    List<Set<Card>> hiddenStrawBottoms = [{}, {}];
-
-    game.hands.asMap().forEach((player, hand) {
-      if (player != currentPlayer) {
-        remainingCards.addAll(hand);
-      }
-      var exposedStrawBottoms = game.exposedStrawBottoms(player);
-      hiddenStrawBottoms[player] =
-          Set.from(strawBottom[player].whereType<Card>())
-            ..removeAll(exposedStrawBottoms);
-
-      remainingCards.addAll(hiddenStrawBottoms[player]);
-    });
-
-    remainingCards.shuffle(random);
-    game.hands.asMap().forEach((player, hand) {
-      var originalHandLength = game.hands[player].length;
-      if (player != currentPlayer) {
-        var pc = extractShortSuitedCards(remainingCards, game.voids[player]);
-        game.hands[player] = [];
-        pc.cards.shuffle(random);
-        for (var i = 0; i < originalHandLength; i++) {
-          var card = pc.cards.removeAt(0);
-          game.hands[player].add(card);
-        }
-        remainingCards = pc.leftovers + pc.cards;
-      }
-      assert(originalHandLength == game.hands[player].length);
-    });
-
-    remainingCards.shuffle(random);
-    game.strawBottom.asMap().forEach((player, List<Card?> strawBottom) {
-      strawBottom.asMap().forEach((i, card) {
-        if (card != null &&
-            hiddenStrawBottoms[player].contains(strawBottom[i])) {
-          strawBottom[i] = remainingCards.removeAt(0);
-        }
-      });
-    });
-
-    assert(remainingCards.isEmpty);
-    return game;
-  }
-
-
-  factory Game.fromJson(Map<String, dynamic> json) => _$GameFromJson(json);
-  @override
-  Map<String, dynamic> toJson() => _$GameToJson(this);
-
-  @override
-  String toString() {
-    return toJson().toString();
-  }
-}
-
-Player getWinner(Suit leadSuit, Card trumpCard, Map<Player, Card> trick) {
-  Map<Card, Player> cardsToPlayer = {};
-  trick.forEach((player, card) {
-    cardsToPlayer[card] = player;
-  });
-  List<Card> cards = List.from(trick.values);
-  cards.sort((a, b) => valueForCard(leadSuit, trumpCard, b)
-      .compareTo(valueForCard(leadSuit, trumpCard, a)));
-  return cardsToPlayer[cards[0]]!;
-}
-
-int suitSort(Card card) {
-  return (suitOffsets[card.suit]! * 100) + card.value;
-}
-
-int valueForCard(Suit leadSuit, Card trumpCard, Card card) {
-  if (card.value == 1 && card.suit == Suit.green) {
-    return 1000;
-  }
-  if (card.suit == leadSuit) {
-    return card.value + 50;
-  }
-  if (card.suit == trumpCard.suit) {
-    return card.value + 100;
-  }
-  return card.value;
-}
 
 */
+
+impl ismcts::Game for Yokai2pGame {
+    type Move = i32;
+    type PlayerTag = i32;
+    type MoveList = Vec<i32>;
+
+    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        let rng = &mut thread_rng();
+        let mut remaining_cards: Vec<Card> = vec![];
+        let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
+
+        for player in 0..2 {
+            if player != self.current_player {
+                remaining_cards.extend(self.hands[player].iter());
+            }
+
+            hidden_straw_bottoms[player] =
+                HashSet::from_iter(self.straw_bottom[player].iter().filter_map(|&x| x))
+                    .difference(&self.exposed_straw_bottoms(player))
+                    .cloned()
+                    .collect();
+
+            remaining_cards.extend(hidden_straw_bottoms[player].iter());
+        }
+
+        remaining_cards.shuffle(rng);
+
+        for player in 0..2 {
+            let original_hand_length: usize = self.hands[player].len();
+            if player != self.current_player {
+                let mut pc = extract_short_suited_cards(&remaining_cards, &self.voids[player]);
+                self.hands[player] = vec![];
+                pc.cards.shuffle(rng);
+                for _ in 0..original_hand_length {
+                    let card = pc.cards.pop().unwrap();
+                    self.hands[player].push(card);
+                }
+                remaining_cards.extend(pc.leftovers);
+                remaining_cards.extend(pc.cards);
+            }
+            assert!(original_hand_length == self.hands[player].len());
+        }
+
+        remaining_cards.shuffle(rng);
+        for player in 0..2 {
+            for i in 0..self.straw_bottom[player].len() {
+                let card = self.straw_bottom[player][i];
+                if !card.is_none() && hidden_straw_bottoms[player].contains(&card.unwrap()) {
+                    self.straw_bottom[player][i] = remaining_cards.pop();
+                }
+            }
+        }
+
+        assert!(remaining_cards.is_empty());
+    }
+
+    fn current_player(&self) -> Self::PlayerTag {
+        todo!()
+    }
+
+    fn next_player(&self) -> Self::PlayerTag {
+        todo!()
+    }
+
+    fn available_moves(&self) -> Self::MoveList {
+        todo!()
+    }
+
+    fn make_move(&mut self, mov: &Self::Move) {
+        todo!()
+    }
+
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        todo!()
+    }
+}
+
+pub fn get_winner(lead_suit: Suit, trump_card: Card, trick: [Option<Card>; 2]) -> i32 {
+    if value_for_card(lead_suit, trump_card, trick[0].unwrap())
+        > value_for_card(lead_suit, trump_card, trick[1].unwrap())
+    {
+        0
+    } else {
+        1
+    }
+}
+
+pub fn value_for_card(lead_suit: Suit, trump_card: Card, card: Card) -> i32 {
+    if card.value == 1 && card.suit == Suit::Green {
+        return 1000;
+    }
+    if card.suit == lead_suit {
+        return card.value + 50;
+    }
+    if card.suit == trump_card.suit {
+        return card.value + 100;
+    }
+    return card.value;
+}
 
 pub fn seven_value(suit: &Suit) -> i32 {
     match suit {
@@ -708,4 +746,32 @@ pub fn card_sorter(a: &Card, b: &Card) -> Ordering {
         Ordering::Greater => Ordering::Greater,
         Ordering::Equal => a.value.cmp(&b.value),
     }
+}
+
+struct PossibleCards {
+    cards: Vec<Card>,
+    leftovers: Vec<Card>,
+}
+
+pub fn extract_short_suited_cards(
+    remaining_cards: &Vec<Card>,
+    voids: &HashSet<Suit>,
+) -> PossibleCards {
+    let mut leftovers: Vec<Card> = vec![];
+
+    let mut possible_cards = remaining_cards.clone();
+
+    for suit in voids {
+        possible_cards.retain(|card| {
+            let belongs_to_suit = card.suit == *suit;
+            if belongs_to_suit {
+                leftovers.push(*card);
+            }
+            !belongs_to_suit
+        });
+    }
+    return PossibleCards {
+        cards: possible_cards,
+        leftovers,
+    };
 }
