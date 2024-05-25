@@ -6,6 +6,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/251433/yokai-septet
 */
 
 use enum_iterator::{all, Sequence};
+use ismcts::IsmctsHandler;
 use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -147,13 +148,14 @@ pub struct Yokai2pGame {
     tricks_taken: [i32; 2],
     lead_suit: Option<Suit>,
     scores: [i32; 2],
+    hand_scores: [i32; 2],
     overall_scores: [i32; 2],
     pub voids: [HashSet<Suit>; 2],
     captured_sevens: [Vec<Card>; 2],
     straw_bottom: [Vec<Option<Card>>; 2],
     straw_top: [Vec<Option<Card>>; 2],
     current_player: usize,
-    winner: Option<usize>,
+    pub winner: Option<usize>,
     overall_winner: Option<usize>,
     lead_player: usize,
     round: i32,
@@ -161,6 +163,14 @@ pub struct Yokai2pGame {
 }
 
 impl Yokai2pGame {
+    pub fn new() -> Self {
+        let mut game = Self {
+            ..Default::default()
+        };
+        game.deal();
+        game
+    }
+
     pub fn deal(&mut self) {
         self.lead_suit = None;
         self.round += 1;
@@ -171,15 +181,14 @@ impl Yokai2pGame {
         self.lead_player = (self.lead_player + 1) % 2;
         self.captured_sevens = [vec![], vec![]];
         self.voids = [HashSet::new(), HashSet::new()];
-        self.changes.extend(vec![]); // deal
-        let deal_index = self.changes.len() - 1 as usize;
         let mut cards = deck();
-        let trump_card = cards.pop().unwrap();
+        self.trump_card = cards.pop();
+        let deal_index = self.new_change();
         self.add_change(
             deal_index,
             Change {
                 change_type: ChangeType::Trump,
-                object_id: trump_card.id,
+                object_id: self.trump_card.unwrap().id,
                 dest: Location::Trump,
                 ..Default::default()
             },
@@ -417,8 +426,10 @@ impl Yokai2pGame {
             .collect()
     }
 
-    fn apply_move(&mut self, action: i32) {
-        if !self.get_moves().contains(&action) {
+    pub fn apply_move(&mut self, action: &i32) {
+        // reset per-hand scores after a move is made
+        self.hand_scores = [0, 0];
+        if !self.get_moves().contains(action) {
             panic!("illegal move");
         }
         self.changes = vec![vec![]]; // card from player to table
@@ -474,7 +485,7 @@ impl Yokai2pGame {
                     0,
                     Change {
                         change_type: ChangeType::Play,
-                        object_id: action,
+                        object_id: *action,
                         dest: Location::Play,
                         player: self.current_player,
                         ..Default::default()
@@ -497,7 +508,7 @@ impl Yokai2pGame {
                 self.current_player = (self.current_player + 1) % 2;
                 self.hide_playable();
 
-                if (self.current_trick.len() == 2) {
+                if self.current_trick.iter().flatten().count() == 2 {
                     // end trick
 
                     let trick_winner = get_winner(
@@ -520,7 +531,7 @@ impl Yokai2pGame {
                         },
                     );
                     self.add_change(
-                        self.changes.len(),
+                        index,
                         Change {
                             change_type: ChangeType::OptionalPause,
                             object_id: 0,
@@ -641,8 +652,9 @@ impl Yokai2pGame {
 
                     if let Some(hand_winning_player) = hand_winning_player {
                         let c7s = self.captured_sevens[hand_winning_player].clone();
-                        self.scores[hand_winning_player] = self.scores[hand_winning_player]
-                            + score_sevens(&c7s, &self.trump_card.unwrap());
+                        let points = score_sevens(&c7s, &self.trump_card.unwrap());
+                        self.scores[hand_winning_player] += points;
+                        self.hand_scores[hand_winning_player] += points;
                         let index = self.new_change();
                         self.add_change(
                             index,
@@ -714,7 +726,7 @@ impl Yokai2pGame {
 
 impl ismcts::Game for Yokai2pGame {
     type Move = i32;
-    type PlayerTag = i32;
+    type PlayerTag = usize;
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
@@ -764,27 +776,47 @@ impl ismcts::Game for Yokai2pGame {
             }
         }
 
-        assert!(remaining_cards.is_empty());
+        //assert!(remaining_cards.is_empty());
     }
 
     fn current_player(&self) -> Self::PlayerTag {
-        todo!()
+        self.current_player
     }
 
     fn next_player(&self) -> Self::PlayerTag {
-        todo!()
+        (self.current_player + 1) % 2
     }
 
     fn available_moves(&self) -> Self::MoveList {
-        todo!()
+        self.get_moves()
     }
 
     fn make_move(&mut self, mov: &Self::Move) {
-        todo!()
+        self.apply_move(mov);
     }
 
-    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        todo!()
+    fn result(&self, _player: Self::PlayerTag) -> Option<f64> {
+        if let Some(winner) = self.winner {
+            // someone won the game
+            if winner == self.current_player {
+                Some(1.0)
+            } else {
+                Some(0.0)
+            }
+        } else {
+            if self.hand_scores == [0, 0] {
+                // the hand is not over
+                None
+            } else {
+                let current_player_score = self.hand_scores[self.current_player] as f64;
+                let other_player_score = self.hand_scores[(self.current_player + 1) % 2] as f64;
+                if current_player_score > other_player_score {
+                    Some(0.2 + ((current_player_score / 7.0) * 0.8))
+                } else {
+                    Some((1.0 - (other_player_score / 7.0)) * 0.2)
+                }
+            }
+        }
     }
 }
 
@@ -865,4 +897,16 @@ pub fn extract_short_suited_cards(
         cards: possible_cards,
         leftovers,
     };
+}
+
+pub fn get_mcts_move(game: &Yokai2pGame, iterations: i32) -> i32 {
+    let mut new_game = game.clone();
+    new_game.no_changes = true;
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 8;
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
+    ismcts.best_move().expect("should have a move to make")
 }
