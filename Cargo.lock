@@ -626,6 +626,7 @@ dependencies = [
  "ismcts 0.1.0 (git+https://github.com/Deliquescence/ismcts?rev=50494a7)",
  "ismcts 0.1.0 (git+https://github.com/Deliquescence/ismcts?rev=d5cd5ad)",
  "memoize",
+ "once_cell",
  "rand 0.8.5",
  "serde",
  "serde_json",

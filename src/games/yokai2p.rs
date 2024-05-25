@@ -5,12 +5,15 @@ Yokai Septet Designers: yio, Muneyuki Yokouchi (横内宗幸)
 BoardGameGeek: https://boardgamegeek.com/boardgame/251433/yokai-septet
 */
 
-use std::{cmp::Ordering, collections::HashSet};
-
 use enum_iterator::{all, Sequence};
+use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 #[derive(
     Debug, PartialOrd, Ord, Clone, Copy, Sequence, Serialize, Deserialize, Hash, PartialEq, Eq,
@@ -62,7 +65,13 @@ pub fn deck() -> Vec<Card> {
     deck
 }
 
-// Map<int, Card> idToCard = {for (var card in deck(null)) card.id: card};
+static ID_TO_CARD: Lazy<HashMap<i32, Card>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    for card in deck().iter() {
+        m.insert(card.id, *card);
+    }
+    m
+});
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -126,8 +135,6 @@ pub enum State {
     #[default]
     Discard,
     PlayCard,
-    Swap,
-    SelectSeven,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -154,7 +161,7 @@ pub struct Yokai2pGame {
 }
 
 impl Yokai2pGame {
-    pub fn deal(mut self) {
+    pub fn deal(&mut self) {
         self.lead_suit = None;
         self.round += 1;
         self.tricks_taken = [0, 0];
@@ -249,6 +256,12 @@ impl Yokai2pGame {
             }
         }
         self.show_playable();
+    }
+
+    #[inline]
+    fn new_change(&mut self) -> usize {
+        self.changes.push(vec![]);
+        self.changes.len() - 1
     }
 
     #[inline]
@@ -373,17 +386,18 @@ impl Yokai2pGame {
             .collect();
     }
 
-    pub fn reveal_straw_bottoms(&self, player: usize) -> Vec<Change> {
-        return self
-            .exposed_straw_bottoms(player)
-            .iter()
-            .map(|c| Change {
-                change_type: ChangeType::RevealCard,
-                dest: Location::Hand,
-                object_id: c.id,
-                ..Default::default()
-            })
-            .collect();
+    pub fn reveal_straw_bottoms(&mut self, player: usize) {
+        if self.no_changes {
+            return;
+        }
+        let index = self.changes.len() - 1;
+        let exposed_straw_bottoms = self.exposed_straw_bottoms(player);
+        self.changes[index].extend(exposed_straw_bottoms.iter().map(|c| Change {
+            change_type: ChangeType::RevealCard,
+            dest: Location::Hand,
+            object_id: c.id,
+            ..Default::default()
+        }));
     }
 
     pub fn reorder_hand(&self, player: usize) -> Vec<Change> {
@@ -402,224 +416,301 @@ impl Yokai2pGame {
             })
             .collect()
     }
+
+    fn apply_move(&mut self, action: i32) {
+        if !self.get_moves().contains(&action) {
+            panic!("illegal move");
+        }
+        self.changes = vec![vec![]]; // card from player to table
+        let card: &Card = ID_TO_CARD.get(&action).unwrap();
+        match self.state {
+            State::Discard => {
+                self.hands[self.current_player].retain(|c| c.id != card.id);
+                self.add_change(
+                    0,
+                    Change {
+                        object_id: card.id,
+                        change_type: ChangeType::Discard,
+                        dest: Location::Discard,
+                        ..Default::default()
+                    },
+                );
+                self.reorder_hand(self.current_player);
+
+                if self.hands.iter().all(|h| h.len() == 10) {
+                    self.state = State::PlayCard;
+                }
+                self.current_player = (self.current_player + 1) % 2;
+                self.show_playable();
+                return;
+            }
+            State::PlayCard => {
+                if let Some(index) =
+                    self.straw_bottom[self.current_player]
+                        .iter()
+                        .position(|c| match c {
+                            Some(c_inner) => c_inner.id == card.id,
+                            None => false,
+                        })
+                {
+                    // card played was from straw_bottom
+                    self.straw_bottom[self.current_player][index] = None;
+                } else if let Some(index) =
+                    self.straw_top[self.current_player]
+                        .iter()
+                        .position(|c| match c {
+                            Some(c_inner) => c_inner.id == card.id,
+                            None => false,
+                        })
+                {
+                    // card played was from straw_top
+                    self.straw_top[self.current_player][index] = None;
+                } else {
+                    // card played was from hand
+                    self.hands[self.current_player].retain(|c| c.id != card.id);
+                }
+
+                self.add_change(
+                    0,
+                    Change {
+                        change_type: ChangeType::Play,
+                        object_id: action,
+                        dest: Location::Play,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+                self.reorder_hand(self.current_player);
+                self.current_trick[self.current_player] = Some(*card);
+
+                if let Some(lead_suit) = self.lead_suit {
+                    if card.suit != lead_suit {
+                        // Player has revealed a void
+                        self.voids[self.current_player].insert(lead_suit);
+                    }
+                }
+
+                if self.lead_suit.is_none() {
+                    self.lead_suit = Some(card.suit);
+                }
+
+                self.current_player = (self.current_player + 1) % 2;
+                self.hide_playable();
+
+                if (self.current_trick.len() == 2) {
+                    // end trick
+
+                    let trick_winner = get_winner(
+                        self.lead_suit.unwrap(),
+                        self.trump_card.unwrap(),
+                        self.current_trick,
+                    );
+                    let winning_card = self.current_trick[trick_winner].unwrap();
+                    self.tricks_taken[trick_winner] = self.tricks_taken[trick_winner] + 1;
+                    // winner of the trick leads
+                    self.current_player = trick_winner;
+                    let index = self.new_change();
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::ShowWinningCard,
+                            object_id: winning_card.id,
+                            dest: Location::Play,
+                            ..Default::default()
+                        },
+                    );
+                    self.add_change(
+                        self.changes.len(),
+                        Change {
+                            change_type: ChangeType::OptionalPause,
+                            object_id: 0,
+                            dest: Location::Play,
+                            ..Default::default()
+                        },
+                    );
+
+                    self.reveal_straw_bottoms(0);
+                    self.reveal_straw_bottoms(1);
+
+                    self.changes.extend([
+                        vec![], // sevens
+                        vec![], // trick to team
+                    ]);
+
+                    let seven_changes_index = self.changes.len() - 2;
+                    let trick_to_team_index = self.changes.len() - 1;
+                    for player in 0..2 {
+                        for card in self.hands[player].clone().iter() {
+                            if card.value == 7 {
+                                self.captured_sevens[trick_winner].push(*card);
+                                self.add_change(
+                                    seven_changes_index,
+                                    Change {
+                                        change_type: ChangeType::CaptureSeven,
+                                        object_id: card.id,
+                                        dest: Location::SevensPile,
+                                        hand_offset: self.captured_sevens[trick_winner]
+                                            .iter()
+                                            .position(|c| c.id == card.id)
+                                            .unwrap(),
+                                        player: trick_winner,
+                                        ..Default::default()
+                                    },
+                                );
+                            } else {
+                                self.add_change(
+                                    trick_to_team_index,
+                                    Change {
+                                        change_type: ChangeType::TricksToWinner,
+                                        object_id: card.id,
+                                        dest: Location::TricksTaken,
+                                        player: trick_winner,
+                                        tricks_taken: self.tricks_taken[trick_winner],
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                        }
+                    }
+
+                    self.current_trick = [None; 2];
+                    self.lead_suit = None;
+
+                    let mut hand_winning_player: Option<usize> = None;
+
+                    // player with >= 4 sevens wins the round
+                    for player in 0..2 {
+                        if self.captured_sevens[player].len() >= 4 {
+                            hand_winning_player = Some(player);
+                            break;
+                        }
+                    }
+
+                    // player with >= 7 tricks loses
+
+                    if hand_winning_player.is_none() {
+                        let mut overall_hands: [Vec<Card>; 2] = [vec![], vec![]];
+                        for player in 0..2 {
+                            overall_hands[player].extend(self.hands[player].clone());
+                            overall_hands[player]
+                                .extend(self.straw_bottom[player].iter().flatten());
+                            overall_hands[player].extend(self.straw_top[player].iter().flatten());
+                        }
+
+                        if overall_hands.iter().all(|h| h.is_empty()) {
+                            // player that played last wins if there are no cards left
+                            // and the other win conditions are not met
+                            hand_winning_player = Some(self.current_player);
+                        }
+                        for player in 0..2 {
+                            if (self.tricks_taken[player] >= 13) {
+                                // the other player won
+                                hand_winning_player = Some((player + 1) % 2);
+                            }
+                        }
+                        if let Some(hand_winning_player) = hand_winning_player {
+                            let mut sevens: Vec<Card> = vec![];
+                            for hand in self.hands.iter() {
+                                sevens.extend(hand.iter().filter(|c| c.value == 7));
+                            }
+                            for pile in self.straw_top.iter() {
+                                sevens.extend(pile.iter().flatten().filter(|c| c.value == 7));
+                            }
+                            for pile in self.straw_bottom.iter() {
+                                sevens.extend(pile.iter().flatten().filter(|c| c.value == 7));
+                            }
+                            self.captured_sevens[hand_winning_player].extend(sevens.iter());
+                            for seven in sevens.iter() {
+                                self.add_change(
+                                    seven_changes_index,
+                                    Change {
+                                        change_type: ChangeType::CaptureSeven,
+                                        object_id: seven.id,
+                                        dest: Location::SevensPile,
+                                        hand_offset: self.captured_sevens[hand_winning_player]
+                                            .iter()
+                                            .position(|c| c.id == seven.id)
+                                            .unwrap(),
+                                        player: hand_winning_player,
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                        }
+                    }
+
+                    if let Some(hand_winning_player) = hand_winning_player {
+                        let c7s = self.captured_sevens[hand_winning_player].clone();
+                        self.scores[hand_winning_player] = self.scores[hand_winning_player]
+                            + score_sevens(&c7s, &self.trump_card.unwrap());
+                        let index = self.new_change();
+                        self.add_change(
+                            index,
+                            Change {
+                                object_id: 0,
+                                change_type: ChangeType::Score,
+                                dest: Location::Score,
+                                start_score: self.scores[hand_winning_player],
+                                end_score: self.scores[hand_winning_player],
+                                player: hand_winning_player,
+                                ..Default::default()
+                            },
+                        );
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::OptionalPause,
+                                object_id: 0,
+                                dest: Location::Play,
+                                ..Default::default()
+                            },
+                        );
+
+                        let mut game_winner: Option<usize> = None;
+
+                        for player in 0..2 {
+                            if self.scores[player] >= 7 {
+                                game_winner = Some(player);
+                                self.winner = Some(player);
+                            }
+                        }
+
+                        let index = self.new_change();
+
+                        if game_winner.is_some() {
+                            self.winner = game_winner;
+                            self.add_change(
+                                index,
+                                Change {
+                                    change_type: ChangeType::GameOver,
+                                    object_id: 0,
+                                    dest: Location::Deck,
+                                    ..Default::default()
+                                },
+                            );
+                            return;
+                        } else {
+                            self.add_change(
+                                index,
+                                Change {
+                                    change_type: ChangeType::Shuffle,
+                                    object_id: 0,
+                                    dest: Location::Deck,
+                                    ..Default::default()
+                                },
+                            );
+                            self.deal();
+                            return;
+                        }
+                    }
+
+                    self.show_playable();
+                    return;
+                }
+            }
+        }
+    }
 }
-
-// state = State.playCard;
-
-/*
-@JsonSerializable()
-class Game implements GameState<Move, Player> {
-
-
-
-  @override
-  Game cloneAndApplyMove(Move move, Node<Move, Player>? root) {
-    if (!getMoves().contains(move)) {
-      parent = null;
-      d.log('game: $this move: $move legalMoves: ${getMoves()}');
-    }
-    var newGame = clone();
-    // reset previous MCTS round winner
-    newGame.winner = null;
-    // reset previous MCTS round scores
-    newGame.scores = {0: 0, 1: 0};
-    newGame.changes = [[]]; // card from player to table
-    newGame.currentTrick = Map.from(currentTrick);
-    List<Card> currentHand = newGame.hands[currentPlayer!];
-    newGame.hands[currentPlayer!] = currentHand;
-    var card = idToCard[move]!;
-    newGame.playedCards[newGame.currentPlayer!].add(card);
-    if (newGame.state == State.discard) {
-      currentHand.remove(card);
-      newGame.changes.add([
-        Change(id: card.id, type: ChangeType.discard, dest: Location.discard),
-        ...newGame.reorderHand(currentPlayer!),
-      ]);
-      if (newGame.hands.every((h) => h.length == 10)) {
-        newGame.state = State.playCard;
-      }
-      newGame.currentPlayer = (currentPlayer! + 1) % 2;
-      showPlayable(this, newGame);
-      return newGame;
-    }
-    List<Card?> strawBottom = newGame.strawBottom[currentPlayer!];
-    List<Card?> strawTop = newGame.strawTop[currentPlayer!];
-    if (strawBottom.contains(card)) {
-      int index = strawBottom.indexOf(card);
-      strawBottom[index] = null;
-    } else if (strawTop.contains(card)) {
-      int index = strawTop.indexOf(card);
-      strawTop[index] = null;
-    } else {
-      currentHand.remove(card);
-    }
-    newGame.changes[0].addAll([
-      Change(
-          type: ChangeType.play,
-          id: move,
-          dest: Location.play,
-          player: currentPlayer!),
-      ...newGame.reorderHand(currentPlayer!),
-    ]);
-    newGame.currentTrick[currentPlayer!] = card;
-    if (newGame.leadSuit != null && card.suit != newGame.leadSuit) {
-      // Player has revealed a void
-      newGame.voids[currentPlayer!][newGame.leadSuit!] = true;
-    }
-    newGame.leadSuit ??= card.suit;
-    newGame.currentPlayer = (currentPlayer! + 1) % 2;
-    hidePlayable(this, newGame);
-    // end trick
-    if (newGame.currentTrick.length == 2) {
-      int trickWinner = getWinner(
-          newGame.leadSuit!, newGame.trumpCard!, newGame.currentTrick);
-      Card winningCard = newGame.currentTrick[trickWinner]!;
-      newGame.tricksTaken[trickWinner] = newGame.tricksTaken[trickWinner]! + 1;
-      // winner of the trick leads
-      newGame.currentPlayer = trickWinner;
-      newGame.changes.add([
-        Change(
-            type: ChangeType.showWinningCard,
-            id: winningCard.id,
-            dest: Location.play),
-        Change(type: ChangeType.optionalPause, id: 0, dest: Location.play),
-        ...newGame.revealStrawBottoms(0),
-        ...newGame.revealStrawBottoms(1),
-      ]);
-      List<Change> sevenChanges = [];
-      List<Change> trickChanges = [];
-      newGame.changes.addAll(
-        [
-          sevenChanges, // sevens
-          trickChanges, // trick to team
-        ],
-      );
-      newGame.currentTrick.forEach((player, card) {
-        if (card.value == 7) {
-          newGame.capturedSevens[trickWinner].add(card);
-          sevenChanges.add(Change(
-              type: ChangeType.captureSeven,
-              id: card.id,
-              dest: Location.sevensPile,
-              handOffset: newGame.capturedSevens[trickWinner].indexOf(card),
-              player: trickWinner));
-        } else {
-          trickChanges.add(Change(
-              type: ChangeType.tricksToWinner,
-              id: card.id,
-              dest: Location.tricksTaken,
-              player: trickWinner,
-              tricksTaken: newGame.tricksTaken[trickWinner]!));
-        }
-      });
-      newGame.currentTrick = {};
-      newGame.leadSuit = null;
-
-      int? handWinningPlayer;
-
-      // player with >= 4 sevens wins the round
-      newGame.capturedSevens.asMap().forEach((player, c7s) {
-        if (c7s.length >= 4) {
-          handWinningPlayer = player;
-        }
-      });
-
-      // player with >= 7 tricks loses
-
-      if (handWinningPlayer == null) {
-        List<List<Card>> overallHands = [
-          newGame.hands[0] +
-              newGame.strawBottom[0].whereType<Card>().toList() +
-              newGame.strawTop[0].whereType<Card>().toList(),
-          newGame.hands[1] +
-              newGame.strawBottom[1].whereType<Card>().toList() +
-              newGame.strawTop[1].whereType<Card>().toList()
-        ];
-        if (overallHands.every((x) => x.isEmpty)) {
-          handWinningPlayer = newGame.currentPlayer;
-        }
-        newGame.tricksTaken.forEach((player, tricks) {
-          if (tricks >= 13) {
-            // the other player won
-            handWinningPlayer = (player + 1) % 2;
-          }
-        });
-        if (handWinningPlayer != null) {
-          List<Card> sevens = [];
-          for (var hand in newGame.hands) {
-            sevens.addAll(hand.where((x) => x.value == 7));
-          }
-          for (var pile in newGame.strawTop) {
-            sevens.addAll(pile.whereType<Card>().where((x) => x.value == 7));
-          }
-          for (var pile in newGame.strawBottom) {
-            sevens.addAll(pile.whereType<Card>().where((x) => x.value == 7));
-          }
-          newGame.capturedSevens[handWinningPlayer!].addAll(sevens);
-          for (var seven in sevens) {
-            sevenChanges.add(Change(
-                type: ChangeType.captureSeven,
-                id: seven.id,
-                dest: Location.sevensPile,
-                handOffset:
-                    newGame.capturedSevens[handWinningPlayer!].indexOf(seven),
-                player: handWinningPlayer!));
-          }
-        }
-      }
-
-      if (handWinningPlayer != null) {
-        var c7s = newGame.capturedSevens[handWinningPlayer!];
-        newGame.scores[handWinningPlayer!] =
-            newGame.scores[handWinningPlayer]! +
-                scoreSevens(c7s, newGame.trumpCard!);
-        newGame.overallScores[handWinningPlayer!] =
-            newGame.overallScores[handWinningPlayer]! +
-                scoreSevens(c7s, newGame.trumpCard!);
-        newGame.changes.add([
-          Change(
-              id: 0,
-              type: ChangeType.score,
-              dest: Location.score,
-              startScore: overallScores[handWinningPlayer]!,
-              endScore: newGame.overallScores[handWinningPlayer]!,
-              player: handWinningPlayer!),
-          Change(type: ChangeType.optionalPause, id: 0, dest: Location.play),
-        ]);
-
-        int? gameWinner;
-
-        if (handWinningPlayer != null) {
-          newGame.winner = handWinningPlayer;
-        }
-
-        newGame.overallScores.forEach((player, score) {
-          if (score >= 7) {
-            gameWinner = player;
-            newGame.winner = player;
-          }
-        });
-
-        if (gameWinner != null) {
-          newGame.overallWinner = gameWinner;
-          newGame.winner = gameWinner;
-          newGame.changes.add(
-              [Change(type: ChangeType.gameOver, id: 0, dest: Location.deck)]);
-          return newGame;
-        } else {
-          newGame.changes.add(
-              [Change(type: ChangeType.shuffle, id: 0, dest: Location.deck)]);
-          newGame.deal();
-          return newGame;
-        }
-      }
-    }
-    showPlayable(this, newGame);
-    return newGame;
-  }
-
-
-*/
 
 impl ismcts::Game for Yokai2pGame {
     type Move = i32;
@@ -697,7 +788,7 @@ impl ismcts::Game for Yokai2pGame {
     }
 }
 
-pub fn get_winner(lead_suit: Suit, trump_card: Card, trick: [Option<Card>; 2]) -> i32 {
+pub fn get_winner(lead_suit: Suit, trump_card: Card, trick: [Option<Card>; 2]) -> usize {
     if value_for_card(lead_suit, trump_card, trick[0].unwrap())
         > value_for_card(lead_suit, trump_card, trick[1].unwrap())
     {
@@ -732,7 +823,7 @@ pub fn seven_value(suit: &Suit) -> i32 {
     }
 }
 
-pub fn score_sevens(sevens: Vec<Card>, trump_card: Card) -> i32 {
+pub fn score_sevens(sevens: &Vec<Card>, trump_card: &Card) -> i32 {
     sevens
         .iter()
         .filter(|&card| card.suit != trump_card.suit)
@@ -748,7 +839,7 @@ pub fn card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-struct PossibleCards {
+pub struct PossibleCards {
     cards: Vec<Card>,
     leftovers: Vec<Card>,
 }
