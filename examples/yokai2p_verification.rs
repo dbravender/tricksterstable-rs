@@ -37,20 +37,17 @@ struct Yokai2pDartFormat {
     round: i32,
 }
 
+fn remove_empty_changes(mut game: Yokai2pGame) -> Yokai2pGame {
+    game.changes.retain(|x| !x.is_empty());
+    game
+}
+
 impl Yokai2pDartFormat {
     fn to_rust(&self) -> Yokai2pGame {
         let trick1: Option<Card> = self.current_trick.get(&0).cloned();
         let trick2: Option<Card> = self.current_trick.get(&1).cloned();
         let mut changes = self.changes.clone();
-        for (index, _change) in self.changes.iter().enumerate() {
-            // There is a bug where duplicate HidePlayable
-            // entries are added on the Dart side
-            // I wasn't able to figure out the bug to add
-            // it to the Rust side so I'm removing the duplicates
-            // here
-            let mut seen = HashSet::new();
-            changes[index].retain(|x| seen.insert(serde_json::to_string(x).unwrap()));
-        }
+        // remove empty changes
         changes.retain(|x| !x.is_empty());
         Yokai2pGame {
             state: self.state.clone(),
@@ -85,7 +82,7 @@ impl Yokai2pDartFormat {
 fn verify_against_dart() -> io::Result<()> {
     let mut game: Yokai2pGame = Yokai2pGame::new();
 
-    let file = File::open("data/yokai2p.singlegame.json")?;
+    let file = File::open("data/yokai2p.multiplegame.json")?;
     let reader = BufReader::new(file);
     let mut test_count: i32 = 0;
 
@@ -102,23 +99,21 @@ fn verify_against_dart() -> io::Result<()> {
         {
             // Can't easily test this case since we don't have the intermediate step where
             // the shuffle occurred
-            println!("shuffled");
             game = test_case.game_state.to_rust().clone();
             continue;
         }
         if test_case.action.is_none() {
-            println!("no action");
             game = test_case.game_state.to_rust().clone();
             continue;
         } else {
-            //println!("rust: {}", serde_json::to_string(&game).unwrap());
-            //println!("move: {}", &test_case.action.unwrap());
             game.no_changes = false;
             game.apply_move(&test_case.action.unwrap());
-            //println!("rust: {}", serde_json::to_string(&game).unwrap());
-            if game != test_case.game_state.to_rust() {
-                //println!("test_count: {}", &test_count);
-                //println!("move: {}", &test_case.action.unwrap());
+            game = remove_empty_changes(game);
+            if serde_json::to_string(&game).unwrap()
+                != serde_json::to_string(&test_case.game_state.to_rust()).unwrap()
+            {
+                println!("test_count: {}", &test_count);
+                println!("move: {}", &test_case.action.unwrap());
                 println!("rust: {}", serde_json::to_string(&game).unwrap());
                 println!(
                     "dart: {}",

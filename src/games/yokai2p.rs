@@ -287,8 +287,13 @@ impl Yokai2pGame {
             self.changes = vec![vec![]];
         }
         let change_index = self.changes.len() - 1;
+        println!("show playable called");
         if self.current_player == 0 {
-            for id in self.get_moves() {
+            println!("show playable called an player 0 turn");
+            let mut moves = self.get_moves();
+            moves.sort();
+            for id in moves {
+                println!("show playable adding change: {}", id);
                 self.add_change(
                     change_index,
                     Change {
@@ -313,6 +318,7 @@ impl Yokai2pGame {
         let mut cards = self.hands[0].clone();
         cards.extend(self.exposed_straw_bottoms(0));
         cards.extend(self.straw_top[0].iter().flatten());
+        cards.sort_by_key(|c| c.id);
         for card in cards {
             self.add_change(
                 change_index,
@@ -398,7 +404,9 @@ impl Yokai2pGame {
         }
         let index = self.changes.len() - 1;
         let exposed_straw_bottoms = self.exposed_straw_bottoms(player);
-        self.changes[index].extend(exposed_straw_bottoms.iter().map(|c| Change {
+        let mut sorted_straw_bottoms: Vec<Card> = exposed_straw_bottoms.iter().cloned().collect();
+        sorted_straw_bottoms.sort_by_key(|c| c.id);
+        self.changes[index].extend(sorted_straw_bottoms.iter().map(|c| Change {
             change_type: ChangeType::RevealCard,
             dest: Location::Hand,
             object_id: c.id,
@@ -562,37 +570,36 @@ impl Yokai2pGame {
 
                     let seven_changes_index = self.changes.len() - 2;
                     let trick_to_team_index = self.changes.len() - 1;
-                    for player in 0..2 {
-                        for card in self.hands[player].clone().iter() {
-                            if card.value == 7 {
-                                self.captured_sevens[trick_winner].push(*card);
-                                self.add_change(
-                                    seven_changes_index,
-                                    Change {
-                                        change_type: ChangeType::CaptureSeven,
-                                        object_id: card.id,
-                                        dest: Location::SevensPile,
-                                        hand_offset: self.captured_sevens[trick_winner]
-                                            .iter()
-                                            .position(|c| c.id == card.id)
-                                            .unwrap(),
-                                        player: trick_winner,
-                                        ..Default::default()
-                                    },
-                                );
-                            } else {
-                                self.add_change(
-                                    trick_to_team_index,
-                                    Change {
-                                        change_type: ChangeType::TricksToWinner,
-                                        object_id: card.id,
-                                        dest: Location::TricksTaken,
-                                        player: trick_winner,
-                                        tricks_taken: self.tricks_taken[trick_winner],
-                                        ..Default::default()
-                                    },
-                                );
-                            }
+
+                    for card in self.current_trick.clone().iter().flatten() {
+                        if card.value == 7 {
+                            self.captured_sevens[trick_winner].push(*card);
+                            self.add_change(
+                                seven_changes_index,
+                                Change {
+                                    change_type: ChangeType::CaptureSeven,
+                                    object_id: card.id,
+                                    dest: Location::SevensPile,
+                                    hand_offset: self.captured_sevens[trick_winner]
+                                        .iter()
+                                        .position(|c| c.id == card.id)
+                                        .unwrap(),
+                                    player: trick_winner,
+                                    ..Default::default()
+                                },
+                            );
+                        } else {
+                            self.add_change(
+                                trick_to_team_index,
+                                Change {
+                                    change_type: ChangeType::TricksToWinner,
+                                    object_id: card.id,
+                                    dest: Location::TricksTaken,
+                                    player: trick_winner,
+                                    tricks_taken: self.tricks_taken[trick_winner],
+                                    ..Default::default()
+                                },
+                            );
                         }
                     }
 
@@ -609,7 +616,7 @@ impl Yokai2pGame {
                         }
                     }
 
-                    // player with >= 7 tricks loses
+                    // player with >= 13 tricks loses
 
                     if hand_winning_player.is_none() {
                         let mut overall_hands: [Vec<Card>; 2] = [vec![], vec![]];
@@ -623,15 +630,18 @@ impl Yokai2pGame {
                         if overall_hands.iter().all(|h| h.is_empty()) {
                             // player that played last wins if there are no cards left
                             // and the other win conditions are not met
+                            println!("no cards left!");
                             hand_winning_player = Some(self.current_player);
                         }
                         for player in 0..2 {
-                            if (self.tricks_taken[player] >= 13) {
+                            if self.tricks_taken[player] >= 13 {
                                 // the other player won
+                                println!("13 tricks taken by {}", player);
                                 hand_winning_player = Some((player + 1) % 2);
                             }
                         }
                         if let Some(hand_winning_player) = hand_winning_player {
+                            println!("someone won");
                             let mut sevens: Vec<Card> = vec![];
                             for hand in self.hands.iter() {
                                 sevens.extend(hand.iter().filter(|c| c.value == 7));
@@ -727,10 +737,10 @@ impl Yokai2pGame {
                             return;
                         }
                     }
-
-                    self.show_playable();
-                    return;
                 }
+
+                self.show_playable();
+                return;
             }
         }
     }
