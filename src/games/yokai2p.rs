@@ -432,8 +432,6 @@ impl Yokai2pGame {
     pub fn apply_move(&mut self, action: &i32) {
         // reset per-hand scores after a move is made
         self.hand_scores = [0, 0];
-        println!("in apply move");
-        println!("rust: {}", serde_json::to_string(&self).unwrap());
         if !self.get_moves().contains(action) {
             for card in self.hands[self.current_player].iter() {
                 println!("card: {:?}", card)

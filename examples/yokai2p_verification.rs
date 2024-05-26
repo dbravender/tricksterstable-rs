@@ -42,6 +42,15 @@ impl Yokai2pDartFormat {
         let trick1: Option<Card> = self.current_trick.get(&0).cloned();
         let trick2: Option<Card> = self.current_trick.get(&1).cloned();
         let mut changes = self.changes.clone();
+        for (index, _change) in self.changes.iter().enumerate() {
+            // There is a bug where duplicate HidePlayable
+            // entries are added on the Dart side
+            // I wasn't able to figure out the bug to add
+            // it to the Rust side so I'm removing the duplicates
+            // here
+            let mut seen = HashSet::new();
+            changes[index].retain(|x| seen.insert(serde_json::to_string(x).unwrap()));
+        }
         changes.retain(|x| !x.is_empty());
         Yokai2pGame {
             state: self.state.clone(),
