@@ -138,33 +138,35 @@ pub enum State {
     PlayCard,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Yokai2pGame {
-    state: State,
-    trump_card: Option<Card>,
-    hands: [Vec<Card>; 2],
-    changes: Vec<Vec<Change>>,
-    current_trick: [Option<Card>; 2],
-    tricks_taken: [i32; 2],
-    lead_suit: Option<Suit>,
-    scores: [i32; 2],
-    hand_scores: [i32; 2],
-    overall_scores: [i32; 2],
+    pub state: State,
+    pub trump_card: Option<Card>,
+    pub hands: [Vec<Card>; 2],
+    pub changes: Vec<Vec<Change>>,
+    pub current_trick: [Option<Card>; 2],
+    pub tricks_taken: [i32; 2],
+    pub lead_suit: Option<Suit>,
+    pub scores: [i32; 2],
+    pub hand_scores: [i32; 2],
+    #[serde(skip)]
     pub voids: [HashSet<Suit>; 2],
-    captured_sevens: [Vec<Card>; 2],
-    straw_bottom: [Vec<Option<Card>>; 2],
-    straw_top: [Vec<Option<Card>>; 2],
-    current_player: usize,
+    pub captured_sevens: [Vec<Card>; 2],
+    pub straw_bottom: [Vec<Option<Card>>; 2],
+    pub straw_top: [Vec<Option<Card>>; 2],
+    pub current_player: usize,
     pub winner: Option<usize>,
-    overall_winner: Option<usize>,
-    lead_player: usize,
-    round: i32,
+    pub overall_winner: Option<usize>,
+    pub lead_player: usize,
+    pub round: i32,
     pub no_changes: bool, // save time when running simulations by skipping animation metadata
 }
 
 impl Yokai2pGame {
     pub fn new() -> Self {
         let mut game = Self {
+            no_changes: false,
             ..Default::default()
         };
         game.deal();
@@ -310,12 +312,7 @@ impl Yokai2pGame {
         let change_index = self.changes.len() - 1;
         let mut cards = self.hands[0].clone();
         cards.extend(self.exposed_straw_bottoms(0));
-        cards.extend(
-            self.straw_top[0]
-                .iter()
-                .filter_map(|x| *x)
-                .collect::<Vec<_>>(),
-        );
+        cards.extend(self.straw_top[0].iter().flatten());
         for card in cards {
             self.add_change(
                 change_index,
@@ -409,12 +406,18 @@ impl Yokai2pGame {
         }));
     }
 
-    pub fn reorder_hand(&self, player: usize) -> Vec<Change> {
+    #[inline]
+    pub fn reorder_hand(&mut self, player: usize) {
+        if self.no_changes {
+            return;
+        }
+        if self.changes.is_empty() {
+            self.new_change();
+        }
         let length = self.hands[self.current_player].len();
-        self.hands[self.current_player]
-            .iter()
-            .enumerate()
-            .map(|(hand_offset, card)| Change {
+        let index = self.changes.len() - 1;
+        self.changes[index].extend(self.hands[self.current_player].iter().enumerate().map(
+            |(hand_offset, card)| Change {
                 change_type: ChangeType::Reorder,
                 dest: Location::ReorderHand,
                 object_id: card.id,
@@ -422,14 +425,25 @@ impl Yokai2pGame {
                 hand_offset,
                 length,
                 ..Default::default()
-            })
-            .collect()
+            },
+        ));
     }
 
     pub fn apply_move(&mut self, action: &i32) {
         // reset per-hand scores after a move is made
         self.hand_scores = [0, 0];
+        println!("in apply move");
+        println!("rust: {}", serde_json::to_string(&self).unwrap());
         if !self.get_moves().contains(action) {
+            for card in self.hands[self.current_player].iter() {
+                println!("card: {:?}", card)
+            }
+            for card in self.hands[(self.current_player + 1) % 2].iter() {
+                println!("card p2: {:?}", card)
+            }
+            println!("currentPlayer: {:?}", self.current_player);
+            println!("moves: {:?}", self.get_moves());
+            println!("move: {:?}", action);
             panic!("illegal move");
         }
         self.changes = vec![vec![]]; // card from player to table
@@ -776,7 +790,7 @@ impl ismcts::Game for Yokai2pGame {
             }
         }
 
-        //assert!(remaining_cards.is_empty());
+        assert!(remaining_cards.is_empty());
     }
 
     fn current_player(&self) -> Self::PlayerTag {
@@ -795,10 +809,10 @@ impl ismcts::Game for Yokai2pGame {
         self.apply_move(mov);
     }
 
-    fn result(&self, _player: Self::PlayerTag) -> Option<f64> {
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
         if let Some(winner) = self.winner {
             // someone won the game
-            if winner == self.current_player {
+            if winner == player {
                 Some(1.0)
             } else {
                 Some(0.0)
@@ -808,8 +822,8 @@ impl ismcts::Game for Yokai2pGame {
                 // the hand is not over
                 None
             } else {
-                let current_player_score = self.hand_scores[self.current_player] as f64;
-                let other_player_score = self.hand_scores[(self.current_player + 1) % 2] as f64;
+                let current_player_score = self.hand_scores[player] as f64;
+                let other_player_score = self.hand_scores[(player + 1) % 2] as f64;
                 if current_player_score > other_player_score {
                     Some(0.2 + ((current_player_score / 7.0) * 0.8))
                 } else {
