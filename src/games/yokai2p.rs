@@ -776,7 +776,7 @@ impl ismcts::Game for Yokai2pGame {
                     let card = pc.cards.pop().unwrap();
                     self.hands[player].push(card);
                 }
-                remaining_cards.extend(pc.leftovers);
+                remaining_cards = pc.leftovers;
                 remaining_cards.extend(pc.cards);
             }
             assert!(original_hand_length == self.hands[player].len());
@@ -791,8 +791,7 @@ impl ismcts::Game for Yokai2pGame {
                 }
             }
         }
-        // FIXME: something isn't right
-        //assert!(remaining_cards.is_empty());
+        assert!(remaining_cards.is_empty());
     }
 
     fn current_player(&self) -> Self::PlayerTag {
