@@ -186,6 +186,7 @@ impl Yokai2pGame {
         let mut cards = deck();
         self.trump_card = cards.pop();
         let deal_index = self.new_change();
+        let straw_top_index = self.new_change();
         self.add_change(
             deal_index,
             Change {
@@ -223,7 +224,7 @@ impl Yokai2pGame {
             for player in 0..2 {
                 let card = cards.pop().unwrap();
                 self.add_change(
-                    deal_index,
+                    straw_top_index,
                     Change {
                         change_type: ChangeType::Deal,
                         object_id: card.id,
