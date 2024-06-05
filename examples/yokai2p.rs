@@ -7,9 +7,9 @@ fn main() {
         //println!("{:?}", &game);
         while game.scores == [0, 0] {
             let action = if game.current_player == 0 {
-                get_mcts_move(&game, 1000)
+                get_mcts_move(&game, 500)
             } else {
-                get_mcts_move(&game, 10)
+                get_mcts_move(&game, 1000)
             };
 
             game.apply_move(&action);
