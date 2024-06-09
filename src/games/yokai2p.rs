@@ -12,7 +12,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
+    cmp::{min, Ordering},
     collections::{HashMap, HashSet},
 };
 
@@ -141,6 +141,7 @@ pub enum State {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Yokai2pGame {
+    pub experiment: bool,
     pub state: State,
     pub trump_card: Option<Card>,
     pub hands: [Vec<Card>; 2],
@@ -166,6 +167,7 @@ pub struct Yokai2pGame {
 impl Yokai2pGame {
     pub fn new() -> Self {
         let mut game = Self {
+            experiment: false,
             no_changes: false,
             ..Default::default()
         };
@@ -747,6 +749,7 @@ impl ismcts::Game for Yokai2pGame {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        let original_game = self.clone();
         let rng = &mut thread_rng();
         let mut remaining_cards: Vec<Card> = vec![];
         let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
@@ -812,25 +815,32 @@ impl ismcts::Game for Yokai2pGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        if let Some(winner) = self.winner {
-            // someone won the game
-            if winner == player {
-                Some(1.0)
-            } else {
-                Some(0.0)
-            }
+        if self.hand_scores == [0, 0] {
+            // the hand is not over
+            None
         } else {
-            if self.hand_scores == [0, 0] {
-                // the hand is not over
-                None
+            let current_player_score = self.hand_scores[player] as f64;
+            let other_player = (player + 1) % 2;
+            let other_player_score = self.hand_scores[other_player] as f64;
+            if current_player_score > other_player_score {
+                let current_player_score = f64::min(7.0, current_player_score);
+                Some(0.5 + ((current_player_score / 7.0) * 0.5))
             } else {
-                let current_player_score = self.hand_scores[player] as f64;
-                let other_player_score = self.hand_scores[(player + 1) % 2] as f64;
-                if current_player_score > other_player_score {
-                    Some(0.2 + ((current_player_score / 7.0) * 0.8))
-                } else {
-                    Some((1.0 - (other_player_score / 7.0)) * 0.2)
-                }
+                let mut remaining_card_count = self.hands[other_player].len();
+                remaining_card_count += self.straw_bottom[other_player]
+                    .iter()
+                    .filter_map(|c| *c)
+                    .count();
+                remaining_card_count += self.straw_top[other_player]
+                    .iter()
+                    .filter_map(|c| *c)
+                    .count();
+
+                let other_player_score = f64::min(7.0, other_player_score);
+                Some(
+                    -0.5 - (((other_player_score / 7.0) - (remaining_card_count as f64 / 27.0))
+                        * 0.5),
+                )
             }
         }
     }
@@ -956,6 +966,7 @@ impl Yokai2pDartFormat {
         // remove empty changes
         changes.retain(|x| !x.is_empty());
         Yokai2pGame {
+            experiment: false,
             state: self.state.clone(),
             trump_card: self.trump_card.clone(),
             hands: self.hands.clone(),
