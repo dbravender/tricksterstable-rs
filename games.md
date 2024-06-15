@@ -10,8 +10,8 @@
 | Short Zoot Suit       | ✅                                  | ✅                                         | ✅ (not yet used)                   | ✅ never pass on a draw when losing, pass when winning (heuristic not used in pure ISMCTS Rust implementation)                                                    |
 | Dealer's Dilemma      | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
 
-Version of SIMPLE used to train AIs: https://github.com/davidADSP/SIMPLE/pull/34
-Dart ISMCTS library: https://github.com/dbravender/dartmcts
-Rust ISMCTS library: https://github.com/Deliquescence/ismcts
+* Version of SIMPLE used to train AIs: https://github.com/davidADSP/SIMPLE/pull/34
+* Dart ISMCTS library: https://github.com/dbravender/dartmcts
+* Rust ISMCTS library: https://github.com/Deliquescence/ismcts
 
 Going forward, I plan to write the game engines in Rust. Rust is much more efficent than Dart (especially the way my library is written) so more simulations can be run in the same amount of time. The overhead of getting inferences from the neural network makes it so only ~200 simulations can be run and the neural networks have a lot of bias. The results for pure ISMCTS appear to be on par or better with a tree search where 500-1000 iterations are run and training neural networks takes a lot of time and experimentation to get similar (or worse) results.
