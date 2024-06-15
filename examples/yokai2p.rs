@@ -11,7 +11,9 @@ fn main() {
                 newgame.experiment = true;
                 get_mcts_move(&newgame, 500)
             } else {
-                get_mcts_move(&game, 500)
+                let mut newgame = game.clone();
+                newgame.experiment = false;
+                get_mcts_move(&newgame, 500)
             };
 
             game.apply_move(&action);
