@@ -4,3 +4,5 @@
 /.pijul
 /.aider.*
 .aider*
+.DS_Store
+/.vscode
