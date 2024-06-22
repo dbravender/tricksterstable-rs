@@ -23,8 +23,12 @@ enum Ranking {
 impl Bid {
     fn requiredTricks(&self) -> i32 {
         match self {
+            // If both players passed on picking the toppings (i.e., there was no Picker),
+            // whichever player wins 9 tricks or more earns 1 game point.
             Bid::NoPicker => 9,
+            // The Picker must capture at least 9 tricks.
             Bid::Ketchup | Bid::Mustard | Bid::TheWorks => 9,
+            // (Footlong option) The Picker must capture at least 12 tricks.
             Bid::KetchupFootlong | Bid::MustardFootlong | Bid::TheWorksFootlong => 12,
         }
     }
