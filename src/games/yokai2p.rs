@@ -6,13 +6,12 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/251433/yokai-septet
 */
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
-use log::debug;
 use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::{min, Ordering},
+    cmp::Ordering,
     collections::{HashMap, HashSet},
 };
 
@@ -153,8 +152,7 @@ pub struct Yokai2pGame {
     pub hand_scores: [i32; 2],
     pub previous_trick: [Option<Card>; 2],
     pub previous_trick_winner: usize,
-    #[serde(skip)]
-    pub voids: [HashSet<Suit>; 2],
+    pub voids: [Vec<Suit>; 2],
     pub captured_sevens: [Vec<Card>; 2],
     pub straw_bottom: [Vec<Option<Card>>; 2],
     pub straw_top: [Vec<Option<Card>>; 2],
@@ -186,7 +184,7 @@ impl Yokai2pGame {
         self.current_player = self.lead_player;
         self.lead_player = (self.lead_player + 1) % 2;
         self.captured_sevens = [vec![], vec![]];
-        self.voids = [HashSet::new(), HashSet::new()];
+        self.voids = [vec![], vec![]];
         let mut cards = deck();
         self.trump_card = cards.pop();
         let deal_index = self.new_change();
@@ -523,9 +521,11 @@ impl Yokai2pGame {
                 self.previous_trick[self.current_player] = Some(*card);
 
                 if let Some(lead_suit) = self.lead_suit {
-                    if card.suit != lead_suit {
+                    if card.suit != lead_suit
+                        && !self.voids[self.current_player].contains(&lead_suit)
+                    {
                         // Player has revealed a void
-                        self.voids[self.current_player].insert(lead_suit);
+                        self.voids[self.current_player].push(lead_suit);
                     }
                 }
 
@@ -905,10 +905,7 @@ pub struct PossibleCards {
     leftovers: Vec<Card>,
 }
 
-pub fn extract_short_suited_cards(
-    remaining_cards: &Vec<Card>,
-    voids: &HashSet<Suit>,
-) -> PossibleCards {
+pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>) -> PossibleCards {
     let mut leftovers: Vec<Card> = vec![];
 
     let mut possible_cards = remaining_cards.clone();
@@ -989,7 +986,7 @@ impl Yokai2pDartFormat {
             ],
             hand_scores: [0, 0],
             previous_trick: [None; 2],
-            voids: [HashSet::new(), HashSet::new()],
+            voids: [vec![], vec![]],
             captured_sevens: self.captured_sevens.clone(),
             straw_bottom: self.straw_bottom.clone(),
             straw_top: self.straw_top.clone(),
