@@ -4,26 +4,33 @@ Designer: Sean Ross
 BoardGameGeek: https://boardgamegeek.com/boardgame/365349/hotdog
 */
 
+use std::collections::{BTreeMap, HashMap};
+
 use enum_iterator::{all, Sequence};
+use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 
 const CARD_NONE: std::option::Option<Card> = None;
+const NO_RELISH: i32 = 0;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+/// All the possible bids in the game
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Sequence, Copy)]
 #[serde(rename_all = "camelCase")]
-enum Bid {
+pub enum Bid {
     #[default]
-    NoPicker,
-    Ketchup,
-    Mustard,
-    TheWorks,
-    KetchupFootlong,
-    MustardFootlong,
-    TheWorksFootlong,
+    Pass = 0,
+    Ketchup = 1,
+    Mustard = 2,
+    TheWorks = 3,
+    KetchupFootlong = 4,
+    MustardFootlong = 5,
+    TheWorksFootlong = 6,
+    NoPicker = 7,
 }
 
+/// Reader-friendly ranking of cards (Mustard -> LowStrong, Ketchup -> HighStrong, Works -> Alternating)
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 enum Ranking {
@@ -43,6 +50,7 @@ impl Bid {
             Bid::Ketchup | Bid::Mustard | Bid::TheWorks => 9,
             // (Footlong option) The Picker must capture at least 12 tricks.
             Bid::KetchupFootlong | Bid::MustardFootlong | Bid::TheWorksFootlong => 12,
+            Bid::Pass => unreachable!(),
         }
     }
 
@@ -52,18 +60,59 @@ impl Bid {
             Bid::Ketchup | Bid::KetchupFootlong => Ranking::HighStrong,
             Bid::Mustard | Bid::MustardFootlong => Ranking::LowStrong,
             Bid::TheWorks | Bid::TheWorksFootlong => Ranking::Alternating,
+            Bid::Pass => unreachable!(),
         }
     }
 
-    fn order(&self) -> i32 {
+    /// Higher bids can be made on top of lower bids
+    fn next_bids(&self) -> Vec<Bid> {
         match self {
-            Bid::NoPicker => -1,
-            Bid::Ketchup => 0,
-            Bid::Mustard => 1,
-            Bid::TheWorks => 2,
-            Bid::KetchupFootlong => 3,
-            Bid::MustardFootlong => 4,
-            Bid::TheWorksFootlong => 5,
+            Bid::NoPicker => unreachable!(),
+            Bid::Pass => vec![
+                Bid::Pass,
+                Bid::Ketchup,
+                Bid::Mustard,
+                Bid::TheWorks,
+                Bid::KetchupFootlong,
+                Bid::MustardFootlong,
+                Bid::TheWorksFootlong,
+            ],
+            Bid::Ketchup => vec![
+                Bid::Pass,
+                Bid::TheWorks,
+                Bid::KetchupFootlong,
+                Bid::MustardFootlong,
+                Bid::TheWorksFootlong,
+            ],
+            Bid::Mustard => vec![
+                Bid::Pass,
+                Bid::TheWorks,
+                Bid::KetchupFootlong,
+                Bid::MustardFootlong,
+                Bid::TheWorksFootlong,
+            ],
+            Bid::TheWorks => vec![
+                Bid::Pass,
+                Bid::KetchupFootlong,
+                Bid::MustardFootlong,
+                Bid::TheWorksFootlong,
+            ],
+            Bid::KetchupFootlong => vec![Bid::Pass, Bid::TheWorksFootlong],
+            Bid::MustardFootlong => vec![Bid::Pass, Bid::TheWorksFootlong],
+            Bid::TheWorksFootlong => vec![],
+        }
+    }
+
+    fn next_state(&self) -> State {
+        match self {
+            Bid::Ketchup => State::NameTrump,
+            Bid::Mustard => State::NameTrump,
+            Bid::TheWorks => State::Bid,
+            Bid::KetchupFootlong => State::NameTrump,
+            Bid::MustardFootlong => State::NameTrump,
+            Bid::TheWorksFootlong => State::Bid,
+            Bid::Pass => State::Bid,
+            Bid::NoPicker => unreachable!(),
         }
     }
 
@@ -105,19 +154,39 @@ impl Bid {
     }
 }
 
+static ID_TO_BID: Lazy<HashMap<i32, Bid>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    for bid in all::<Bid>() {
+        m.insert(bid as i32, bid);
+    }
+    m
+});
+
+static ID_TO_SUIT: Lazy<HashMap<i32, Suit>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    for suit in all::<Suit>() {
+        m.insert(suit as i32, suit);
+    }
+    m
+});
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-enum State {
+pub enum State {
     #[default]
     // Players are bidding to name rank, trump, and a special rank
     Bid,
+    // Players select trump for the current bid (Mustard and Ketchup only)
+    NameTrump,
+    // Select a special rank which wins if both cards played in a trick are different suits
+    NameRelish,
     // Trick play
     Play,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Sequence, Deserialize, PartialEq, Eq, Copy)]
 #[serde(rename_all = "camelCase")]
-enum Suit {
+pub enum Suit {
     #[default]
     Red,
     Green,
@@ -186,11 +255,11 @@ pub struct Change {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct HotdogGame {
+pub struct HotdogGame {
     // What current actions are allowed - see State
-    state: State,
+    pub state: State,
     // Which player is making a move now
-    current_player: usize, // 0 - 1
+    pub current_player: usize, // 0 - 1
     // Cards each player has played in the current trick
     current_trick: [Option<Card>; 2],
     // Cards in each player's hand
@@ -206,11 +275,21 @@ struct HotdogGame {
     // Total number of tricks taken for the current hand
     tricks_taken: [i32; 2],
     // Player who starts the next hand
-    lead_player: usize,
+    pub dealer: usize,
     // List of list of animations to run after a move is made to get from the current state to the next state
     changes: Vec<Vec<Change>>,
     // When running simulations we save time by not creating vecs and structs to be added to the change animation list
     no_changes: bool,
+    // Each player's latest bid
+    pub bids: [Option<Bid>; 2],
+    // The bid the round is played with
+    pub winning_bid: Bid,
+    // The player who secured the bid
+    pub picker: usize,
+    // The special suit rank
+    pub relish: i32,
+    // Current trump suit
+    pub trump: Option<Suit>,
 }
 
 impl HotdogGame {
@@ -229,13 +308,18 @@ impl HotdogGame {
         self.tricks_taken = [0, 0];
         self.hands = [vec![], vec![]];
         self.state = State::Bid;
-        self.current_player = self.lead_player;
-        self.lead_player = (self.lead_player + 1) % 2;
+        self.current_player = self.dealer;
+        self.dealer = (self.dealer + 1) % 2;
         self.voids = [vec![], vec![]];
         let mut cards = self.deck();
         let deal_index = self.new_change();
         let straw_top_index = self.new_change();
         self.straw_bottom = [[CARD_NONE; 5], [CARD_NONE; 5]];
+        self.winning_bid = Bid::NoPicker;
+        self.picker = self.dealer;
+        self.bids = [None, None];
+        self.relish = 0;
+        self.trump = None;
         for straw_index in 0..5 {
             for player in 0..2 as usize {
                 let card = cards.pop().unwrap();
@@ -300,8 +384,125 @@ impl HotdogGame {
 
     fn trick_winner() {
         // In general, the highest-ranking card in the trump suit wins the trick
-        // or, if no trumps were played, the highest-ranking card in the suit that was led. However, if the trick includes two different suits, and one of the cards has the special rank, the card with the special rank wins.
+        // or, if no trumps were played, the highest-ranking card in the suit that was led.
+        // If the trick includes two different suits, and one of the cards has the special rank, the card with the special rank wins.
         // If two special rank cards are played, the second card wins.
+    }
+
+    pub fn moves_to_string(&self) -> BTreeMap<i32, String> {
+        let mut moves_strings = BTreeMap::new();
+
+        match self.state {
+            State::NameRelish => {
+                for i in 0..=9 {
+                    let relish = if i == 0 {
+                        "no relish".to_string()
+                    } else {
+                        format!("{} as relish", i)
+                    };
+                    moves_strings.insert(i, format!("Select {}", relish));
+                }
+            }
+            State::NameTrump => {
+                for i in 0..=3 {
+                    moves_strings
+                        .insert(i, format!("Name Trump {:?}", ID_TO_SUIT.get(&i).unwrap()));
+                }
+            }
+            State::Bid => {
+                let other_player_bid = match self.bids[(self.current_player + 1) % 2] {
+                    None => Bid::Pass,
+                    Some(x) => x,
+                };
+
+                for bid in other_player_bid.next_bids() {
+                    let bid_value = bid as i32;
+                    moves_strings.insert(bid_value, format!("{:?}", bid));
+                }
+            }
+            State::Play => {
+                // TODO: add moves
+            }
+        }
+        moves_strings
+    }
+
+    pub fn get_moves(self: &HotdogGame) -> Vec<i32> {
+        match self.state {
+            State::NameRelish => (0..=9).collect(), // NO_RELISH is 0, 1-9 are card values
+            State::NameTrump => (0..=3).collect(),  // 0-3 correspond to ID_TO_SUIT
+            State::Bid => {
+                let other_player_bid = match self.bids[(self.current_player + 1) % 2] {
+                    None => Bid::Pass, // Pass in next_bids maps to opening bids
+                    Some(x) => x,
+                };
+
+                return other_player_bid
+                    .next_bids()
+                    .iter()
+                    .map(|f| *f as i32)
+                    .collect();
+            }
+            State::Play => {
+                unreachable!();
+            }
+        }
+    }
+
+    pub fn apply_move(self: &mut HotdogGame, action: i32) {
+        match self.state {
+            State::NameTrump => {
+                let suit = ID_TO_SUIT[&action];
+                self.trump = Some(suit);
+                self.current_player = (self.current_player + 1) % 2;
+                // Whenever State::NameTrump is an option there's always
+                // another bidding round - trump isn't named for the
+                // TheWorksFootlong terminal bid state
+                self.state = State::Bid;
+            }
+            State::Bid => {
+                let other_player_bid = self.bids[(self.current_player + 1) % 2];
+                let bid = ID_TO_BID[&action];
+                self.bids[self.current_player] = Some(bid);
+                if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
+                    // If both players pass, there is no Picker.
+                    // The round is still played with The Works.
+                    self.winning_bid = Bid::TheWorks;
+                    self.picker = self.dealer;
+                    // The dealer may select some Relish
+                    self.current_player = self.dealer;
+                    self.state = State::NameRelish;
+                    return;
+                }
+                if other_player_bid.is_some() && bid == Bid::Pass {
+                    // Other player bid, current player passed
+                    // Bidding is over, non-picker can name relish
+                    self.state = State::NameRelish;
+                    return;
+                }
+                self.state = bid.next_state();
+                if self.state != State::NameTrump {
+                    self.current_player = (self.current_player + 1) % 2;
+                }
+            }
+            State::NameRelish => {
+                self.picker = (self.current_player + 1) % 2;
+                self.winning_bid = self.bids[self.picker].unwrap();
+                self.relish = action;
+                // After relish is selected trick play starts
+                self.state = State::Play;
+                // Check to see if we are in the state where there both players passed
+                if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
+                    // The dealer may select some Relish (just did)
+                    // and the non-dealer leads to the first trick.
+                    self.current_player = (self.dealer + 1) % 2;
+                    return;
+                }
+            }
+            State::Play => {
+                unreachable!()
+            }
+        }
     }
 
     #[inline]
