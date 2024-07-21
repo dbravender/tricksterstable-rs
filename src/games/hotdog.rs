@@ -180,6 +180,8 @@ pub enum State {
     NameTrump,
     // Select a special rank which wins if both cards played in a trick are different suits
     NameRelish,
+    // TODO: When playing with the works, the player who leads the first trick decides whether it is played with Ketchup or Mustard. From there, card ranking alternates with each trick.
+    WorksSelectFirstTrickType,
     // Trick play
     Play,
 }
@@ -211,9 +213,9 @@ enum Location {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct Card {
-    id: usize,
+    id: i32,
     suit: Suit,
-    value: usize,
+    value: i32,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -260,6 +262,8 @@ pub struct HotdogGame {
     pub state: State,
     // Which player is making a move now
     pub current_player: usize, // 0 - 1
+    // Player who led the current trick
+    pub lead_player: usize,
     // Cards each player has played in the current trick
     current_trick: [Option<Card>; 2],
     // Cards in each player's hand
@@ -268,7 +272,6 @@ pub struct HotdogGame {
     straw_top: [[Option<Card>; 5]; 2],
     // 5 cards that are face down covered by the straw top at the start of a hand
     straw_bottom: [[Option<Card>; 5]; 2],
-    lead_suit: Option<Card>,
     // Voids revealed when a player couldn't follow a lead card - only applies
     // to hand - not to straw piles - used to determine possible hands
     voids: [Vec<Suit>; 2],
@@ -290,6 +293,8 @@ pub struct HotdogGame {
     pub relish: i32,
     // Current trump suit
     pub trump: Option<Suit>,
+    // Whether or not high wins the current trick
+    pub high_wins: bool,
 }
 
 impl HotdogGame {
@@ -304,7 +309,6 @@ impl HotdogGame {
 
     // Called at the start of a game and when a new hand is dealt
     pub fn deal(&mut self) {
-        self.lead_suit = None;
         self.tricks_taken = [0, 0];
         self.hands = [vec![], vec![]];
         self.state = State::Bid;
@@ -327,7 +331,7 @@ impl HotdogGame {
                     deal_index,
                     Change {
                         change_type: ChangeType::Deal,
-                        object_id: card.id,
+                        object_id: card.id as usize,
                         dest: Location::StrawBottom,
                         player,
                         offset: straw_index,
@@ -347,7 +351,7 @@ impl HotdogGame {
                     straw_top_index,
                     Change {
                         change_type: ChangeType::Deal,
-                        object_id: card.id,
+                        object_id: card.id as usize,
                         dest: Location::StrawTop,
                         player,
                         offset: straw_index,
@@ -382,11 +386,42 @@ impl HotdogGame {
         // If both players pass, the non-dealer leads the first trick.
     }
 
-    fn trick_winner() {
+    pub fn trick_winner(&self) -> usize {
+        assert!(self.current_trick[0].is_some());
+        assert!(self.current_trick[1].is_some());
+        let cards = (
+            self.current_trick[0].clone().unwrap(),
+            self.current_trick[1].clone().unwrap(),
+        );
+        if cards.0.suit != cards.1.suit
+            && (cards.0.value == self.relish || cards.1.value == self.relish)
+        {
+            if cards.0.value == self.relish && cards.1.value == self.relish {
+                // If two special rank cards are played, the second card wins.
+                return (self.lead_player + 1) % 2;
+            }
+            // If the trick includes two different suits, and one of the cards has the special rank,
+            // the card with the special rank wins.
+            return if cards.0.value == self.relish { 0 } else { 1 };
+        }
         // In general, the highest-ranking card in the trump suit wins the trick
         // or, if no trumps were played, the highest-ranking card in the suit that was led.
-        // If the trick includes two different suits, and one of the cards has the special rank, the card with the special rank wins.
-        // If two special rank cards are played, the second card wins.
+        return if self.card_value(cards.0) > self.card_value(cards.1) {
+            0
+        } else {
+            1
+        };
+    }
+
+    fn card_value(&self, card: Card) -> i32 {
+        let multiplier = if self.high_wins { 1 } else { -1 };
+        if card.suit == self.current_trick[self.lead_player].as_ref().unwrap().suit {
+            return (card.value + 50) * multiplier;
+        }
+        if card.suit == self.trump.unwrap() {
+            return (card.value + 100) * multiplier;
+        }
+        return card.value * multiplier;
     }
 
     pub fn moves_to_string(&self) -> BTreeMap<i32, String> {
@@ -420,6 +455,10 @@ impl HotdogGame {
                     moves_strings.insert(bid_value, format!("{:?}", bid));
                 }
             }
+            State::WorksSelectFirstTrickType => {
+                moves_strings.insert(0, format!("Ketchup (high card wins)"));
+                moves_strings.insert(1, format!("Mustard (low card wins)"));
+            }
             State::Play => {
                 // TODO: add moves
             }
@@ -443,6 +482,7 @@ impl HotdogGame {
                     .map(|f| *f as i32)
                     .collect();
             }
+            State::WorksSelectFirstTrickType => (0..=2).collect(), // 0 - Ketchup, 1 - Mustard
             State::Play => {
                 unreachable!();
             }
@@ -492,6 +532,7 @@ impl HotdogGame {
             }
             State::NameRelish => {
                 self.picker = (self.current_player + 1) % 2;
+                self.lead_player = self.picker;
                 self.winning_bid = self.bids[self.picker].unwrap();
                 self.relish = action;
                 // After relish is selected trick play starts
@@ -503,6 +544,11 @@ impl HotdogGame {
                     self.current_player = (self.dealer + 1) % 2;
                     return;
                 }
+            }
+            State::WorksSelectFirstTrickType => {
+                // 0 - Ketchup
+                // 1 - Mustard
+                self.high_wins = action == 0;
             }
             State::Play => {
                 unreachable!()
@@ -534,5 +580,63 @@ mod tests {
         let d = g.deck();
         println!("{:?}", d);
         assert_eq!(d.len(), 36);
+    }
+
+    struct TrickWinnerTestCase {
+        relish: i32,
+        current_trick: [Option<Card>; 2],
+        lead_player: usize,
+        expected_winner: usize,
+        high_wins: bool,
+    }
+
+    #[test]
+    fn test_trick_winner() {
+        let test_cases = [
+            TrickWinnerTestCase {
+                relish: 1,
+                lead_player: 0,
+                current_trick: [
+                    Some(Card {
+                        id: 0,
+                        value: 1,
+                        suit: Suit::Red,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 2,
+                        suit: Suit::Red,
+                    }),
+                ],
+                expected_winner: 1,
+                high_wins: true,
+            },
+            TrickWinnerTestCase {
+                relish: 1,
+                lead_player: 0,
+                current_trick: [
+                    Some(Card {
+                        id: 0,
+                        value: 1,
+                        suit: Suit::Red,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 2,
+                        suit: Suit::Red,
+                    }),
+                ],
+                high_wins: true,
+                expected_winner: 1,
+            },
+        ];
+        for test_case in test_cases {
+            let mut game = HotdogGame::new();
+            game.relish = test_case.relish;
+            game.lead_player = test_case.lead_player;
+            game.current_trick = test_case.current_trick;
+            game.high_wins = test_case.high_wins;
+            assert_eq!(game.trick_winner(), test_case.expected_winner);
+        }
     }
 }
