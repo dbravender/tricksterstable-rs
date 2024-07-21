@@ -464,6 +464,11 @@ impl HotdogGame {
                 let other_player_bid = self.bids[(self.current_player + 1) % 2];
                 let bid = ID_TO_BID[&action];
                 self.bids[self.current_player] = Some(bid);
+                if bid == Bid::TheWorksFootlong {
+                    self.current_player = (self.current_player + 1) % 2;
+                    self.state = State::NameRelish;
+                    return;
+                }
                 if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
                     // If both players pass, there is no Picker.
                     // The round is still played with The Works.
