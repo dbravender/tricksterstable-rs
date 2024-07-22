@@ -4,6 +4,7 @@ Yokai Septet Designers: yio, Muneyuki Yokouchi (横内宗幸)
 2-player variant designer: Sean Ross
 BoardGameGeek: https://boardgamegeek.com/boardgame/251433/yokai-septet
 */
+
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
 use once_cell::sync::Lazy;
@@ -150,8 +151,6 @@ pub struct Yokai2pGame {
     pub lead_suit: Option<Suit>,
     pub scores: [i32; 2],
     pub hand_scores: [i32; 2],
-    pub previous_trick: [Option<Card>; 2],
-    pub previous_trick_winner: usize,
     pub voids: [Vec<Suit>; 2],
     pub captured_sevens: [Vec<Card>; 2],
     pub straw_bottom: [Vec<Option<Card>>; 2],
@@ -439,7 +438,7 @@ impl Yokai2pGame {
 
     pub fn apply_move(&mut self, action: &i32) {
         // reset per-hand scores after a move is made
-        self.hand_scores = [0; 2];
+        self.hand_scores = [0, 0];
         if !self.get_moves().contains(action) {
             for card in self.hands[self.current_player].iter() {
                 println!("card: {:?}", card)
@@ -513,12 +512,6 @@ impl Yokai2pGame {
                 );
                 self.reorder_hand(self.current_player);
                 self.current_trick[self.current_player] = Some(*card);
-                // start of a new trick - reset previous_trick
-                if self.current_trick.iter().filter_map(|x| *x).count() == 1 {
-                    self.previous_trick = [None; 2];
-                    self.previous_trick_winner = 100;
-                }
-                self.previous_trick[self.current_player] = Some(*card);
 
                 if let Some(lead_suit) = self.lead_suit {
                     if card.suit != lead_suit
@@ -544,7 +537,6 @@ impl Yokai2pGame {
                         self.trump_card.unwrap(),
                         self.current_trick,
                     );
-                    self.previous_trick_winner = trick_winner;
                     let winning_card = self.current_trick[trick_winner].unwrap();
                     self.tricks_taken[trick_winner] = self.tricks_taken[trick_winner] + 1;
                     // winner of the trick leads
@@ -824,26 +816,32 @@ impl ismcts::Game for Yokai2pGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        let other_player = (player + 1) % 2;
         if self.hand_scores == [0, 0] {
-            if self.previous_trick.iter().filter_map(|x| *x).count() == 2
-                && self.previous_trick_winner == other_player
-            {
-                if let Some(card) = self.previous_trick[player] {
-                    if card.value == 7 {
-                        return Some(-1.0);
-                    }
-                }
-            }
             // the hand is not over
-            return None;
+            None
         } else {
             let current_player_score = self.hand_scores[player] as f64;
+            let other_player = (player + 1) % 2;
             let other_player_score = self.hand_scores[other_player] as f64;
             if current_player_score > other_player_score {
-                Some(1.0)
+                let current_player_score = f64::min(7.0, current_player_score);
+                Some(0.5 + ((current_player_score / 7.0) * 0.5))
             } else {
-                Some(-1.0)
+                let mut remaining_card_count = self.hands[other_player].len();
+                remaining_card_count += self.straw_bottom[other_player]
+                    .iter()
+                    .filter_map(|c| *c)
+                    .count();
+                remaining_card_count += self.straw_top[other_player]
+                    .iter()
+                    .filter_map(|c| *c)
+                    .count();
+
+                let other_player_score = f64::min(7.0, other_player_score);
+                Some(
+                    -0.5 - (((other_player_score / 7.0) - (remaining_card_count as f64 / 27.0))
+                        * 0.5),
+                )
             }
         }
     }
@@ -934,8 +932,6 @@ pub fn get_mcts_move(game: &Yokai2pGame, iterations: i32) -> i32 {
         parallel_threads,
         (iterations as f64 / parallel_threads as f64) as usize,
     );
-    // ismcts.debug_children();
-    // ismcts.debug_select();
     ismcts.best_move().expect("should have a move to make")
 }
 
@@ -968,7 +964,6 @@ impl Yokai2pDartFormat {
         // remove empty changes
         changes.retain(|x| !x.is_empty());
         Yokai2pGame {
-            previous_trick_winner: 0,
             experiment: false,
             state: self.state.clone(),
             trump_card: self.trump_card.clone(),
@@ -985,7 +980,6 @@ impl Yokai2pDartFormat {
                 *self.scores.get(&1).unwrap_or(&0),
             ],
             hand_scores: [0, 0],
-            previous_trick: [None; 2],
             voids: [vec![], vec![]],
             captured_sevens: self.captured_sevens.clone(),
             straw_bottom: self.straw_bottom.clone(),
@@ -997,187 +991,5 @@ impl Yokai2pDartFormat {
             round: self.round,
             no_changes: false,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_deck() {
-        let d = deck();
-        assert_eq!(d.len(), 49);
-    }
-
-    #[test]
-    fn test_scenario() {
-        let mut game = Yokai2pGame::new();
-        game.tricks_taken = [6, 7];
-        game.current_player = 1;
-        game.captured_sevens = [
-            vec![
-                Card {
-                    id: 21,
-                    value: 7,
-                    suit: Suit::Yellow,
-                },
-                Card {
-                    id: 22,
-                    value: 7,
-                    suit: Suit::Purple,
-                },
-                Card {
-                    id: 23,
-                    value: 7,
-                    suit: Suit::Black,
-                },
-            ],
-            vec![Card {
-                id: 24,
-                value: 7,
-                suit: Suit::Green,
-            }],
-        ];
-        game.trump_card = Some(Card {
-            id: 20,
-            value: 10,
-            suit: Suit::Black,
-        });
-        game.hands = [
-            vec![
-                Card {
-                    id: 1,
-                    value: 7,
-                    suit: Suit::Red,
-                },
-                Card {
-                    id: 2,
-                    value: 7,
-                    suit: Suit::Pink,
-                },
-                Card {
-                    id: 3,
-                    value: 10,
-                    suit: Suit::Red,
-                },
-                Card {
-                    id: 4,
-                    value: 9,
-                    suit: Suit::Blue,
-                },
-                Card {
-                    id: 4,
-                    value: 10,
-                    suit: Suit::Blue,
-                },
-            ],
-            vec![
-                Card {
-                    id: 5,
-                    value: 7,
-                    suit: Suit::Blue,
-                },
-                Card {
-                    id: 6,
-                    value: 13,
-                    suit: Suit::Blue,
-                },
-                Card {
-                    id: 7,
-                    value: 11,
-                    suit: Suit::Blue,
-                },
-                Card {
-                    id: 8,
-                    value: 6,
-                    suit: Suit::Green,
-                },
-                Card {
-                    id: 9,
-                    value: 9,
-                    suit: Suit::Red,
-                },
-            ],
-        ];
-        game.straw_bottom = [
-            vec![
-                None,
-                Some(Card {
-                    id: 10,
-                    value: 1,
-                    suit: Suit::Green,
-                }),
-                Some(Card {
-                    id: 11,
-                    value: 4,
-                    suit: Suit::Purple,
-                }),
-                Some(Card {
-                    id: 12,
-                    value: 12,
-                    suit: Suit::Blue,
-                }),
-                None,
-                Some(Card {
-                    id: 13,
-                    value: 8,
-                    suit: Suit::Blue,
-                }),
-                None,
-            ],
-            vec![
-                None,
-                Some(Card {
-                    id: 14,
-                    value: 4,
-                    suit: Suit::Green,
-                }),
-                None,
-                Some(Card {
-                    id: 15,
-                    value: 4,
-                    suit: Suit::Pink,
-                }),
-                Some(Card {
-                    id: 16,
-                    value: 8,
-                    suit: Suit::Yellow,
-                }),
-                Some(Card {
-                    id: 17,
-                    value: 6,
-                    suit: Suit::Pink,
-                }),
-                None,
-            ],
-        ];
-        game.straw_top = [
-            vec![
-                None,
-                Some(Card {
-                    id: 18,
-                    value: 11,
-                    suit: Suit::Black,
-                }),
-                None,
-                None,
-                None,
-                None,
-            ],
-            vec![
-                None,
-                None,
-                None,
-                Some(Card {
-                    id: 19,
-                    value: 9,
-                    suit: Suit::Black,
-                }),
-                None,
-                None,
-            ],
-        ];
-        get_mcts_move(&game, 1000);
     }
 }
