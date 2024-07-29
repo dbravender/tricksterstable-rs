@@ -4,7 +4,7 @@ Designer: Sean Ross
 BoardGameGeek: https://boardgamegeek.com/boardgame/365349/hotdog
 */
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use enum_iterator::{all, Sequence};
 use once_cell::sync::Lazy;
@@ -162,6 +162,14 @@ static ID_TO_BID: Lazy<HashMap<i32, Bid>> = Lazy::new(|| {
     m
 });
 
+static ID_TO_CARD: Lazy<HashMap<i32, Card>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    for card in HotdogGame::deck() {
+        m.insert(card.id as i32, card);
+    }
+    m
+});
+
 static ID_TO_SUIT: Lazy<HashMap<i32, Suit>> = Lazy::new(|| {
     let mut m = HashMap::new();
     for suit in all::<Suit>() {
@@ -186,7 +194,7 @@ pub enum State {
     Play,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Sequence, Deserialize, PartialEq, Eq, Copy)]
+#[derive(Debug, Clone, Default, Serialize, Sequence, Deserialize, PartialEq, Eq, Copy, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum Suit {
     #[default]
@@ -210,7 +218,7 @@ enum Location {
     ReorderHand,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 struct Card {
     id: i32,
@@ -315,7 +323,7 @@ impl HotdogGame {
         self.current_player = self.dealer;
         self.dealer = (self.dealer + 1) % 2;
         self.voids = [vec![], vec![]];
-        let mut cards = self.deck();
+        let mut cards = HotdogGame::deck();
         let deal_index = self.new_change();
         let straw_top_index = self.new_change();
         self.straw_bottom = [[CARD_NONE; 5], [CARD_NONE; 5]];
@@ -364,7 +372,7 @@ impl HotdogGame {
         }
     }
 
-    pub fn deck(&self) -> Vec<Card> {
+    pub fn deck() -> Vec<Card> {
         let mut deck: Vec<Card> = vec![];
         let mut id = 0;
         for suit in all::<Suit>() {
@@ -418,7 +426,7 @@ impl HotdogGame {
         if card.suit == self.current_trick[self.lead_player].as_ref().unwrap().suit {
             return (card.value + 50) * multiplier;
         }
-        if card.suit == self.trump.unwrap() {
+        if self.trump.is_some() && card.suit == self.trump.unwrap() {
             return (card.value + 100) * multiplier;
         }
         return card.value * multiplier;
@@ -456,11 +464,14 @@ impl HotdogGame {
                 }
             }
             State::WorksSelectFirstTrickType => {
-                moves_strings.insert(0, format!("Ketchup (high card wins)"));
-                moves_strings.insert(1, format!("Mustard (low card wins)"));
+                moves_strings.insert(0, "Ketchup (high card wins)".to_string());
+                moves_strings.insert(1, "Mustard (low card wins)".to_string());
             }
             State::Play => {
-                // TODO: add moves
+                let moves = self.get_moves();
+                for action in moves {
+                    moves_strings.insert(action, format!("{:?}", ID_TO_CARD[&action]));
+                }
             }
         }
         moves_strings
@@ -483,13 +494,49 @@ impl HotdogGame {
                     .collect();
             }
             State::WorksSelectFirstTrickType => (0..=2).collect(), // 0 - Ketchup, 1 - Mustard
-            State::Play => {
-                unreachable!();
-            }
+            State::Play => self.playable_card_ids(),
         }
     }
 
-    pub fn apply_move(self: &mut HotdogGame, action: i32) {
+    fn exposed_straw_bottoms(&self, player: usize) -> HashSet<Card> {
+        let mut exposed_cards: HashSet<Card> = HashSet::new();
+        for (i, card) in self.straw_bottom[player].iter().enumerate() {
+            if card.is_none() {
+                continue;
+            }
+            if self.straw_top[player][i].is_none() {
+                exposed_cards.insert(card.clone().unwrap());
+            }
+        }
+        return exposed_cards;
+    }
+
+    fn visible_straw(&self, player: usize) -> Vec<Card> {
+        let mut visible: Vec<Card> = self.straw_top[player].iter().filter_map(|x| *x).collect();
+        visible.extend(self.exposed_straw_bottoms(player));
+        return visible;
+    }
+
+    pub fn playable_card_ids(&self) -> Vec<i32> {
+        // Must follow
+        let mut playable_cards = self.visible_straw(self.current_player);
+        playable_cards.extend(self.hands[self.current_player].clone());
+
+        if self.current_trick[self.lead_player].is_some() {
+            let lead_suit = self.current_trick[self.lead_player].clone().unwrap().suit;
+            let moves: Vec<i32> = playable_cards
+                .iter()
+                .filter(|c| c.suit == lead_suit)
+                .map(|c| c.id)
+                .collect();
+            if !moves.is_empty() {
+                return moves;
+            }
+        }
+        return playable_cards.iter().map(|c| c.id).collect();
+    }
+
+    pub fn apply_move(&mut self, action: i32) {
         match self.state {
             State::NameTrump => {
                 let suit = ID_TO_SUIT[&action];
@@ -505,6 +552,7 @@ impl HotdogGame {
                 let bid = ID_TO_BID[&action];
                 self.bids[self.current_player] = Some(bid);
                 if bid == Bid::TheWorksFootlong {
+                    self.trump = None;
                     self.current_player = (self.current_player + 1) % 2;
                     self.state = State::NameRelish;
                     return;
@@ -513,9 +561,9 @@ impl HotdogGame {
                     // If both players pass, there is no Picker.
                     // The round is still played with The Works.
                     self.winning_bid = Bid::TheWorks;
-                    self.picker = self.dealer;
+                    self.picker = (self.current_player + 1) % 2;
                     // The dealer may select some Relish
-                    self.current_player = self.dealer;
+                    self.current_player = self.picker;
                     self.state = State::NameRelish;
                     return;
                 }
@@ -526,32 +574,110 @@ impl HotdogGame {
                     return;
                 }
                 self.state = bid.next_state();
-                if self.state != State::NameTrump {
+                if self.state == State::Bid {
+                    // Next player doesn't get to name trump (works)
+                    // Works has no trump
+                    self.trump = None;
+                    // Relish selection goes to the non-picker
                     self.current_player = (self.current_player + 1) % 2;
                 }
             }
             State::NameRelish => {
                 self.picker = (self.current_player + 1) % 2;
-                self.lead_player = self.picker;
-                self.winning_bid = self.bids[self.picker].unwrap();
-                self.relish = action;
-                // After relish is selected trick play starts
-                self.state = State::Play;
+                let next_player = self.picker;
+                self.current_player = next_player;
+                self.lead_player = next_player;
+
                 // Check to see if we are in the state where there both players passed
                 if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
-                    // The dealer may select some Relish (just did)
-                    // and the non-dealer leads to the first trick.
-                    self.current_player = (self.dealer + 1) % 2;
-                    return;
+                    self.winning_bid = Bid::TheWorks;
+                } else {
+                    self.winning_bid = self.bids[self.picker].unwrap();
+                }
+                self.relish = action;
+                if self.winning_bid.ranking() == Ranking::Alternating {
+                    self.state = State::WorksSelectFirstTrickType;
+                } else {
+                    // After relish is selected trick play starts
+                    self.state = State::Play;
                 }
             }
             State::WorksSelectFirstTrickType => {
                 // 0 - Ketchup
                 // 1 - Mustard
                 self.high_wins = action == 0;
+                self.state = State::Play;
             }
             State::Play => {
-                unreachable!()
+                let card = ID_TO_CARD[&action];
+                let lead_suit = match self.current_trick[self.lead_player] {
+                    Some(lead_card) => Some(lead_card.suit),
+                    None => None,
+                };
+                if let Some(index) =
+                    self.straw_bottom[self.current_player]
+                        .iter()
+                        .position(|c| match c {
+                            Some(c_inner) => c_inner.id == card.id,
+                            None => false,
+                        })
+                {
+                    // Card played was from straw_bottom
+                    self.straw_bottom[self.current_player][index] = None;
+                } else if let Some(index) =
+                    self.straw_top[self.current_player]
+                        .iter()
+                        .position(|c| match c {
+                            Some(c_inner) => c_inner.id == card.id,
+                            None => false,
+                        })
+                {
+                    // Card played was from straw_top
+                    self.straw_top[self.current_player][index] = None;
+                } else {
+                    // Card played was from hand
+                    self.hands[self.current_player].retain(|c| c.id != card.id);
+                }
+                self.add_change(
+                    0,
+                    Change {
+                        change_type: ChangeType::Play,
+                        object_id: action as usize,
+                        dest: Location::Play,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+                // TODO self.reorder_hand(self.current_player);
+                self.current_trick[self.current_player] = Some(card);
+
+                if lead_suit.is_some() {
+                    if Some(card.suit) != lead_suit
+                        && !self.voids[self.current_player].contains(&lead_suit.unwrap())
+                    {
+                        // Player has revealed a void
+                        self.voids[self.current_player].push(lead_suit.unwrap());
+                    }
+                }
+
+                self.current_player = (self.current_player + 1) % 2;
+                // TODO self.hide_playable();
+
+                if self.current_trick.iter().flatten().count() == 2 {
+                    // end trick
+
+                    let trick_winner = self.trick_winner();
+                    self.lead_player = trick_winner;
+                    self.current_player = trick_winner;
+
+                    if self.winning_bid.ranking() == Ranking::Alternating {
+                        self.high_wins = !self.high_wins;
+                    }
+                    // TODO animate tricks to winner
+
+                    // TODO check if hand is over
+                    // TODO check if game is over
+                }
             }
         }
     }
@@ -576,8 +702,7 @@ mod tests {
 
     #[test]
     fn test_deck() {
-        let g = HotdogGame::new();
-        let d = g.deck();
+        let d = HotdogGame::deck();
         println!("{:?}", d);
         assert_eq!(d.len(), 36);
     }
