@@ -5,13 +5,11 @@ fn main() {
     for _ in 0..1000 {
         let mut game = Yokai2pGame::new();
         //println!("{:?}", &game);
-        while game.hand_scores == [0, 0] {
+        while game.scores == [0, 0] {
             let action = if game.current_player == 0 {
-                let mut newgame = game.clone();
-                newgame.experiment = true;
-                get_mcts_move(&newgame, 500)
-            } else {
                 get_mcts_move(&game, 500)
+            } else {
+                get_mcts_move(&game, 1000)
             };
 
             game.apply_move(&action);
