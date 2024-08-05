@@ -188,7 +188,7 @@ pub enum State {
     NameTrump,
     // Select a special rank which wins if both cards played in a trick are different suits
     NameRelish,
-    // TODO: When playing with the works, the player who leads the first trick decides whether it is played with Ketchup or Mustard. From there, card ranking alternates with each trick.
+    // When playing with the works, the player who leads the first trick decides whether it is played with Ketchup or Mustard. From there, card ranking alternates with each trick.
     WorksSelectFirstTrickType,
     // Trick play
     Play,
@@ -679,7 +679,9 @@ impl HotdogGame {
                         ..Default::default()
                     },
                 );
-                // TODO self.reorder_hand(self.current_player);
+
+                self.reorder_hand(self.current_player);
+
                 self.current_trick[self.current_player] = Some(card);
 
                 if lead_suit.is_some() {
@@ -692,7 +694,7 @@ impl HotdogGame {
                 }
 
                 self.current_player = (self.current_player + 1) % 2;
-                // TODO self.hide_playable();
+                self.hide_playable();
 
                 if self.current_trick.iter().flatten().count() == 2 {
                     // End trick
@@ -792,6 +794,8 @@ impl HotdogGame {
                         self.deal();
                     }
                 }
+                self.show_playable();
+                return;
             }
         }
     }
@@ -806,6 +810,75 @@ impl HotdogGame {
     fn add_change(&mut self, index: usize, change: Change) {
         if !self.no_changes {
             self.changes[index].push(change);
+        }
+    }
+
+    #[inline]
+    pub fn reorder_hand(&mut self, player: usize) {
+        if self.no_changes {
+            return;
+        }
+        if self.changes.is_empty() {
+            self.new_change();
+        }
+        let length = self.hands[self.current_player].len();
+        let index = self.changes.len() - 1;
+        self.changes[index].extend(self.hands[self.current_player].iter().enumerate().map(
+            |(offset, card)| Change {
+                change_type: ChangeType::Reorder,
+                dest: Location::ReorderHand,
+                object_id: card.id as usize,
+                player,
+                offset,
+                length,
+                ..Default::default()
+            },
+        ));
+    }
+
+    fn show_playable(&mut self) {
+        if self.changes.is_empty() {
+            self.changes = vec![vec![]];
+        }
+        let change_index = self.changes.len() - 1;
+        if self.current_player == 0 {
+            let moves = self.get_moves();
+            for id in moves {
+                self.add_change(
+                    change_index,
+                    Change {
+                        object_id: id as usize,
+                        change_type: ChangeType::ShowPlayable,
+                        dest: Location::Hand,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+            }
+        } else {
+            self.hide_playable();
+        }
+    }
+
+    fn hide_playable(&mut self) {
+        if self.changes.is_empty() {
+            self.changes = vec![vec![]];
+        }
+        let change_index = self.changes.len() - 1;
+        let mut cards = self.hands[0].clone();
+        cards.extend(self.exposed_straw_bottoms(0));
+        cards.extend(self.straw_top[0].iter().flatten());
+        for card in cards {
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: card.id as usize,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    player: self.current_player,
+                    ..Default::default()
+                },
+            );
         }
     }
 }
