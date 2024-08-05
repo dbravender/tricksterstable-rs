@@ -7,6 +7,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/365349/hotdog
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use enum_iterator::{all, Sequence};
+use ismcts::IsmctsHandler;
 use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -27,7 +28,6 @@ pub enum Bid {
     KetchupFootlong = 4,
     MustardFootlong = 5,
     TheWorksFootlong = 6,
-    NoPicker = 7,
 }
 
 /// Reader-friendly ranking of cards (Mustard -> LowStrong, Ketchup -> HighStrong, Works -> Alternating)
@@ -43,9 +43,6 @@ enum Ranking {
 impl Bid {
     fn required_tricks(&self) -> i32 {
         match self {
-            // If both players passed on picking the toppings (i.e., there was no Picker),
-            // whichever player wins 9 tricks or more earns 1 game point.
-            Bid::NoPicker => 9,
             // The Picker must capture at least 9 tricks.
             Bid::Ketchup | Bid::Mustard | Bid::TheWorks => 9,
             // (Footlong option) The Picker must capture at least 12 tricks.
@@ -56,7 +53,6 @@ impl Bid {
 
     fn ranking(&self) -> Ranking {
         match self {
-            Bid::NoPicker => Ranking::Alternating,
             Bid::Ketchup | Bid::KetchupFootlong => Ranking::HighStrong,
             Bid::Mustard | Bid::MustardFootlong => Ranking::LowStrong,
             Bid::TheWorks | Bid::TheWorksFootlong => Ranking::Alternating,
@@ -67,7 +63,6 @@ impl Bid {
     /// Higher bids can be made on top of lower bids
     fn next_bids(&self) -> Vec<Bid> {
         match self {
-            Bid::NoPicker => unreachable!(),
             Bid::Pass => vec![
                 Bid::Pass,
                 Bid::Ketchup,
@@ -112,7 +107,6 @@ impl Bid {
             Bid::MustardFootlong => State::NameTrump,
             Bid::TheWorksFootlong => State::Bid,
             Bid::Pass => State::Bid,
-            Bid::NoPicker => unreachable!(),
         }
     }
 
@@ -131,7 +125,6 @@ impl Bid {
         }
     }
 
-    ///
     fn points_for_picker_success(&self, tricks_taken: i32) -> i32 {
         match self {
             Bid::KetchupFootlong | Bid::MustardFootlong | Bid::TheWorksFootlong => {
@@ -335,7 +328,7 @@ impl HotdogGame {
         let deal_index = self.new_change();
         let straw_top_index = self.new_change();
         self.straw_bottom = [[CARD_NONE; 5], [CARD_NONE; 5]];
-        self.winning_bid = Bid::NoPicker;
+        self.winning_bid = Bid::Pass;
         self.picker = None;
         self.bids = [None, None];
         self.relish = 0;
@@ -729,10 +722,18 @@ impl HotdogGame {
 
                     if self.hands.iter().all(|x| x.is_empty()) {
                         // The hand is over
+
+                        if !self.no_changes {
+                            println!(
+                                "tricks taken: {:?} bid: {:?}",
+                                self.tricks_taken, self.winning_bid
+                            );
+                        }
+
                         let mut picker: usize = 0;
 
                         if self.picker.is_none() {
-                            picker = if self.scores[0] > self.scores[1] {
+                            picker = if self.tricks_taken[0] > self.tricks_taken[1] {
                                 0
                             } else {
                                 1
@@ -883,6 +884,137 @@ impl HotdogGame {
     }
 }
 
+impl ismcts::Game for HotdogGame {
+    type Move = i32;
+    type PlayerTag = usize;
+    type MoveList = Vec<i32>;
+
+    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        let rng = &mut thread_rng();
+        let mut remaining_cards: Vec<Card> = vec![];
+        let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
+
+        for player in 0..2 {
+            if player != self.current_player {
+                remaining_cards.extend(self.hands[player].iter());
+            }
+
+            hidden_straw_bottoms[player] =
+                HashSet::from_iter(self.straw_bottom[player].iter().filter_map(|&x| x))
+                    .difference(&self.exposed_straw_bottoms(player))
+                    .cloned()
+                    .collect();
+
+            remaining_cards.extend(hidden_straw_bottoms[player].iter());
+        }
+
+        remaining_cards.shuffle(rng);
+
+        for player in 0..2 {
+            let original_hand_length: usize = self.hands[player].len();
+            if player != self.current_player {
+                let mut pc = extract_short_suited_cards(&remaining_cards, &self.voids[player]);
+                self.hands[player] = vec![];
+                pc.cards.shuffle(rng);
+                for _ in 0..original_hand_length {
+                    let card = pc.cards.pop().unwrap();
+                    self.hands[player].push(card);
+                }
+                remaining_cards = pc.leftovers;
+                remaining_cards.extend(pc.cards);
+            }
+            assert!(original_hand_length == self.hands[player].len());
+        }
+
+        remaining_cards.shuffle(rng);
+        for player in 0..2 {
+            for i in 0..self.straw_bottom[player].len() {
+                let card = self.straw_bottom[player][i];
+                if !card.is_none() && hidden_straw_bottoms[player].contains(&card.unwrap()) {
+                    self.straw_bottom[player][i] = remaining_cards.pop();
+                }
+            }
+        }
+        assert!(remaining_cards.is_empty());
+    }
+
+    fn current_player(&self) -> Self::PlayerTag {
+        self.current_player
+    }
+
+    fn next_player(&self) -> Self::PlayerTag {
+        (self.current_player + 1) % 2
+    }
+
+    fn available_moves(&self) -> Self::MoveList {
+        self.get_moves()
+    }
+
+    fn make_move(&mut self, mov: &Self::Move) {
+        self.apply_move(*mov);
+    }
+
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        if let Some(winner) = self.winner {
+            // someone won the game
+            if winner == player {
+                Some(5.0)
+            } else {
+                Some(-5.0)
+            }
+        } else {
+            if self.scores == [0, 0] {
+                // the hand is not over
+                None
+            } else {
+                let current_player_score = self.scores[player] as f64;
+                let other_player_score = self.scores[(player + 1) % 2] as f64;
+                if current_player_score > other_player_score {
+                    Some(current_player_score)
+                } else {
+                    Some(-other_player_score)
+                }
+            }
+        }
+    }
+}
+pub struct PossibleCards {
+    cards: Vec<Card>,
+    leftovers: Vec<Card>,
+}
+
+pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>) -> PossibleCards {
+    let mut leftovers: Vec<Card> = vec![];
+
+    let mut possible_cards = remaining_cards.clone();
+
+    for suit in voids {
+        possible_cards.retain(|card| {
+            let belongs_to_suit = card.suit == *suit;
+            if belongs_to_suit {
+                leftovers.push(*card);
+            }
+            !belongs_to_suit
+        });
+    }
+    return PossibleCards {
+        cards: possible_cards,
+        leftovers,
+    };
+}
+
+pub fn get_mcts_move(game: &HotdogGame, iterations: i32) -> i32 {
+    let mut new_game = game.clone();
+    new_game.no_changes = true;
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 8;
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
+    ismcts.best_move().expect("should have a move to make")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -890,7 +1022,6 @@ mod tests {
     #[test]
     fn test_deck() {
         let d = HotdogGame::deck();
-        println!("{:?}", d);
         assert_eq!(d.len(), 36);
     }
 
