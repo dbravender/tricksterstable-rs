@@ -220,7 +220,7 @@ enum Location {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
-struct Card {
+pub struct Card {
     id: i32,
     suit: Suit,
     value: i32,
@@ -275,16 +275,16 @@ pub struct HotdogGame {
     // Cards each player has played in the current trick
     current_trick: [Option<Card>; 2],
     // Cards in each player's hand
-    hands: [Vec<Card>; 2],
+    pub hands: [Vec<Card>; 2],
     // 5 cards that are face up covering the straw bottom at the start of a hand
-    straw_top: [[Option<Card>; 5]; 2],
+    pub straw_top: [[Option<Card>; 5]; 2],
     // 5 cards that are face down covered by the straw top at the start of a hand
-    straw_bottom: [[Option<Card>; 5]; 2],
+    pub straw_bottom: [[Option<Card>; 5]; 2],
     // Voids revealed when a player couldn't follow a lead card - only applies
     // to hand - not to straw piles - used to determine possible hands
-    voids: [Vec<Suit>; 2],
+    pub voids: [Vec<Suit>; 2],
     // Total number of tricks taken for the current hand
-    tricks_taken: [i32; 2],
+    pub tricks_taken: [i32; 2],
     // Player who starts the next hand
     pub dealer: usize,
     // List of list of animations to run after a move is made to get from the current state to the next state
@@ -303,6 +303,8 @@ pub struct HotdogGame {
     pub trump: Option<Suit>,
     // Whether or not high wins the current trick
     pub high_wins: bool,
+    // Current score of the game
+    pub scores: [i32; 2],
 }
 
 impl HotdogGame {
@@ -321,6 +323,7 @@ impl HotdogGame {
         self.hands = [vec![], vec![]];
         self.state = State::Bid;
         self.current_player = self.dealer;
+        self.current_trick = [None; 2];
         self.dealer = (self.dealer + 1) % 2;
         self.voids = [vec![], vec![]];
         let mut cards = HotdogGame::deck();
@@ -370,6 +373,14 @@ impl HotdogGame {
                 self.straw_top[player][straw_index] = Some(card);
             }
         }
+        for hand_index in 0..7 {
+            for player in 0..2 {
+                let card = cards.pop().unwrap();
+                //TODO: animate
+                self.hands[player].push(card);
+            }
+        }
+        // TODO: animate remaining cards off the screen
     }
 
     pub fn deck() -> Vec<Card> {
@@ -673,9 +684,26 @@ impl HotdogGame {
                     if self.winning_bid.ranking() == Ranking::Alternating {
                         self.high_wins = !self.high_wins;
                     }
+
+                    // Clear trick
+                    self.current_trick = [None; 2];
                     // TODO animate tricks to winner
 
-                    // TODO check if hand is over
+                    if self.hands.iter().all(|x| x.is_empty()) {
+                        // The hand is over
+                        let tricks_taken_by_picker = self.tricks_taken[self.picker];
+                        if tricks_taken_by_picker >= self.winning_bid.required_tricks() {
+                            self.scores[self.picker] += self
+                                .winning_bid
+                                .points_for_picker_success(tricks_taken_by_picker);
+                        } else {
+                            let setter = (self.picker + 1) % 2;
+                            self.scores[setter] += self
+                                .winning_bid
+                                .points_for_setter(self.tricks_taken[setter]);
+                        }
+                    }
+
                     // TODO check if game is over
                 }
             }
