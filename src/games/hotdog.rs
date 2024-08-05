@@ -216,6 +216,8 @@ enum Location {
     StrawTop,
     StrawBottom,
     ReorderHand,
+    // Throw card offscreen
+    Burn,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -356,7 +358,6 @@ impl HotdogGame {
                 self.straw_bottom[player][straw_index] = Some(card);
             }
         }
-        // End dealing with sevens
         self.straw_top = [[CARD_NONE; 5], [CARD_NONE; 5]];
         for straw_index in 0..5 {
             for player in 0..2 {
@@ -379,11 +380,32 @@ impl HotdogGame {
         for hand_index in 0..7 {
             for player in 0..2 {
                 let card = cards.pop().unwrap();
-                //TODO: animate
+                self.add_change(
+                    straw_top_index,
+                    Change {
+                        change_type: ChangeType::Deal,
+                        object_id: card.id as usize,
+                        dest: Location::Hand,
+                        player,
+                        offset: hand_index,
+                        length: 7,
+                        ..Default::default()
+                    },
+                );
                 self.hands[player].push(card);
             }
         }
-        // TODO: animate remaining cards off the screen
+        for card in cards {
+            self.add_change(
+                straw_top_index,
+                Change {
+                    change_type: ChangeType::Deal,
+                    object_id: card.id as usize,
+                    dest: Location::Burn,
+                    ..Default::default()
+                },
+            );
+        }
     }
 
     pub fn deck() -> Vec<Card> {
@@ -401,11 +423,6 @@ impl HotdogGame {
         }
         deck.shuffle(&mut thread_rng());
         deck
-    }
-
-    fn start_hand() {
-        // The Picker leads to the first trick.
-        // If both players pass, the non-dealer leads the first trick.
     }
 
     pub fn trick_winner(&self) -> usize {
@@ -678,19 +695,35 @@ impl HotdogGame {
                 // TODO self.hide_playable();
 
                 if self.current_trick.iter().flatten().count() == 2 {
-                    // end trick
+                    // End trick
 
                     let trick_winner = self.trick_winner();
                     self.lead_player = trick_winner;
                     self.current_player = trick_winner;
+                    self.tricks_taken[trick_winner] += 1;
 
                     if self.winning_bid.ranking() == Ranking::Alternating {
                         self.high_wins = !self.high_wins;
                     }
 
+                    // Animate tricks to winner
+                    let change_index = self.new_change();
+                    for card in self.current_trick {
+                        self.add_change(
+                            change_index,
+                            Change {
+                                change_type: ChangeType::TricksToWinner,
+                                object_id: card.unwrap().id as usize,
+                                dest: Location::TricksTaken,
+                                player: trick_winner,
+                                tricks_taken: self.tricks_taken[trick_winner],
+                                ..Default::default()
+                            },
+                        );
+                    }
+
                     // Clear trick
                     self.current_trick = [None; 2];
-                    // TODO animate tricks to winner
 
                     if self.hands.iter().all(|x| x.is_empty()) {
                         // The hand is over
@@ -709,20 +742,50 @@ impl HotdogGame {
                             self.scores[picker] += self
                                 .winning_bid
                                 .points_for_picker_success(tricks_taken_by_picker);
-                            // TODO: animate score
+
+                            let change_index = self.new_change();
+                            self.add_change(
+                                change_index,
+                                Change {
+                                    change_type: ChangeType::Score,
+                                    dest: Location::Score,
+                                    player: picker,
+                                    end_score: self.scores[picker],
+                                    ..Default::default()
+                                },
+                            );
                         } else {
                             let setter = (picker + 1) % 2;
                             self.scores[setter] += self
                                 .winning_bid
                                 .points_for_setter(self.tricks_taken[setter]);
-                            // TODO: animate score
+                            let change_index = self.new_change();
+                            self.add_change(
+                                change_index,
+                                Change {
+                                    change_type: ChangeType::Score,
+                                    dest: Location::Score,
+                                    player: setter,
+                                    end_score: self.scores[setter],
+                                    ..Default::default()
+                                },
+                            );
                         }
 
                         // Check if the game is over
                         for player in 0..2 {
                             if self.scores[player] >= 5 {
                                 self.winner = Some(player);
-                                // TODO: emit change for winner
+                                let change_index = self.new_change();
+                                self.add_change(
+                                    change_index,
+                                    Change {
+                                        change_type: ChangeType::GameOver,
+                                        object_id: 0,
+                                        dest: Location::Deck,
+                                        ..Default::default()
+                                    },
+                                );
                                 return;
                             }
                         }
