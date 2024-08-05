@@ -296,7 +296,7 @@ pub struct HotdogGame {
     // The bid the round is played with
     pub winning_bid: Bid,
     // The player who secured the bid
-    pub picker: usize,
+    pub picker: Option<usize>,
     // The special suit rank
     pub relish: i32,
     // Current trump suit
@@ -305,6 +305,8 @@ pub struct HotdogGame {
     pub high_wins: bool,
     // Current score of the game
     pub scores: [i32; 2],
+    // Game winner
+    pub winner: Option<usize>,
 }
 
 impl HotdogGame {
@@ -319,6 +321,7 @@ impl HotdogGame {
 
     // Called at the start of a game and when a new hand is dealt
     pub fn deal(&mut self) {
+        self.picker = None;
         self.tricks_taken = [0, 0];
         self.hands = [vec![], vec![]];
         self.state = State::Bid;
@@ -331,7 +334,7 @@ impl HotdogGame {
         let straw_top_index = self.new_change();
         self.straw_bottom = [[CARD_NONE; 5], [CARD_NONE; 5]];
         self.winning_bid = Bid::NoPicker;
-        self.picker = self.dealer;
+        self.picker = None;
         self.bids = [None, None];
         self.relish = 0;
         self.trump = None;
@@ -548,6 +551,7 @@ impl HotdogGame {
     }
 
     pub fn apply_move(&mut self, action: i32) {
+        self.changes = vec![vec![]]; // card from player to table
         match self.state {
             State::NameTrump => {
                 let suit = ID_TO_SUIT[&action];
@@ -572,9 +576,8 @@ impl HotdogGame {
                     // If both players pass, there is no Picker.
                     // The round is still played with The Works.
                     self.winning_bid = Bid::TheWorks;
-                    self.picker = (self.current_player + 1) % 2;
                     // The dealer may select some Relish
-                    self.current_player = self.picker;
+                    self.current_player = self.dealer;
                     self.state = State::NameRelish;
                     return;
                 }
@@ -594,8 +597,8 @@ impl HotdogGame {
                 }
             }
             State::NameRelish => {
-                self.picker = (self.current_player + 1) % 2;
-                let next_player = self.picker;
+                let next_player = (self.current_player + 1) % 2;
+                self.picker = Some(next_player);
                 self.current_player = next_player;
                 self.lead_player = next_player;
 
@@ -603,7 +606,7 @@ impl HotdogGame {
                 if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
                     self.winning_bid = Bid::TheWorks;
                 } else {
-                    self.winning_bid = self.bids[self.picker].unwrap();
+                    self.winning_bid = self.bids[self.picker.unwrap()].unwrap();
                 }
                 self.relish = action;
                 if self.winning_bid.ranking() == Ranking::Alternating {
@@ -691,20 +694,40 @@ impl HotdogGame {
 
                     if self.hands.iter().all(|x| x.is_empty()) {
                         // The hand is over
-                        let tricks_taken_by_picker = self.tricks_taken[self.picker];
+                        let mut picker: usize = 0;
+
+                        if self.picker.is_none() {
+                            picker = if self.scores[0] > self.scores[1] {
+                                0
+                            } else {
+                                1
+                            }
+                        }
+
+                        let tricks_taken_by_picker = self.tricks_taken[picker];
                         if tricks_taken_by_picker >= self.winning_bid.required_tricks() {
-                            self.scores[self.picker] += self
+                            self.scores[picker] += self
                                 .winning_bid
                                 .points_for_picker_success(tricks_taken_by_picker);
+                            // TODO: animate score
                         } else {
-                            let setter = (self.picker + 1) % 2;
+                            let setter = (picker + 1) % 2;
                             self.scores[setter] += self
                                 .winning_bid
                                 .points_for_setter(self.tricks_taken[setter]);
+                            // TODO: animate score
                         }
-                    }
 
-                    // TODO check if game is over
+                        // Check if the game is over
+                        for player in 0..2 {
+                            if self.scores[player] >= 5 {
+                                self.winner = Some(player);
+                                // TODO: emit change for winner
+                                return;
+                            }
+                        }
+                        self.deal();
+                    }
                 }
             }
         }
