@@ -4,6 +4,7 @@ Designer: Sean Ross
 BoardGameGeek: https://boardgamegeek.com/boardgame/365349/hotdog
 */
 
+use rand::Rng;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use enum_iterator::{all, Sequence};
@@ -511,13 +512,22 @@ impl HotdogGame {
                     Some(x) => x,
                 };
 
-                return other_player_bid
+                let mut bids: Vec<i32> = other_player_bid
                     .next_bids()
                     .iter()
                     .map(|f| *f as i32)
                     .collect();
+
+                if self.no_changes {
+                    let mut rnd = thread_rng();
+                    if rnd.gen_range(0..100) > 20 {
+                        bids.retain(|b| b < &4)
+                    }
+                }
+
+                bids
             }
-            State::WorksSelectFirstTrickType => (0..=2).collect(), // 0 - Ketchup, 1 - Mustard
+            State::WorksSelectFirstTrickType => (0..2).collect(), // 0 - Ketchup, 1 - Mustard
             State::Play => self.playable_card_ids(),
         }
     }
@@ -541,11 +551,19 @@ impl HotdogGame {
         return visible;
     }
 
+    pub fn playable_cards(&self) -> [Vec<Card>; 2] {
+        let mut cards = [self.visible_straw(0), self.visible_straw(1)];
+
+        for player in 0..2 {
+            cards[player].extend(self.hands[player].iter().cloned());
+        }
+
+        cards
+    }
+
     pub fn playable_card_ids(&self) -> Vec<i32> {
         // Must follow
-        let mut playable_cards = self.visible_straw(self.current_player);
-        playable_cards.extend(self.hands[self.current_player].clone());
-
+        let playable_cards = &self.playable_cards()[self.current_player];
         if self.current_trick[self.lead_player].is_some() {
             let lead_suit = self.current_trick[self.lead_player].clone().unwrap().suit;
             let moves: Vec<i32> = playable_cards
@@ -577,6 +595,12 @@ impl HotdogGame {
                 let bid = ID_TO_BID[&action];
                 self.bids[self.current_player] = Some(bid);
                 if bid == Bid::TheWorksFootlong {
+                    if !self.no_changes {
+                        // println!(
+                        //     ">> Bid::TheWorksFootlong << player: {}",
+                        //     self.current_player
+                        // );
+                    }
                     self.trump = None;
                     self.current_player = (self.current_player + 1) % 2;
                     self.state = State::NameRelish;
@@ -616,6 +640,9 @@ impl HotdogGame {
                 if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
                     self.winning_bid = Bid::TheWorks;
                 } else {
+                    if !self.no_changes {
+                        // println!("self.bids: {:?} self.picker: {:?}", self.bids, self.picker);
+                    }
                     self.winning_bid = self.bids[self.picker.unwrap()].unwrap();
                 }
                 self.relish = action;
@@ -720,15 +747,8 @@ impl HotdogGame {
                     // Clear trick
                     self.current_trick = [None; 2];
 
-                    if self.hands.iter().all(|x| x.is_empty()) {
+                    if self.playable_cards().iter().all(|x| x.is_empty()) {
                         // The hand is over
-
-                        if !self.no_changes {
-                            println!(
-                                "tricks taken: {:?} bid: {:?}",
-                                self.tricks_taken, self.winning_bid
-                            );
-                        }
 
                         let mut picker: usize = 0;
 
@@ -738,6 +758,13 @@ impl HotdogGame {
                             } else {
                                 1
                             }
+                        }
+
+                        if !self.no_changes {
+                            // println!(
+                            //     "tricks taken: {:?} bid: {:?} picker: {:?}",
+                            //     self.tricks_taken, self.winning_bid, picker,
+                            // );
                         }
 
                         let tricks_taken_by_picker = self.tricks_taken[picker];
@@ -958,9 +985,9 @@ impl ismcts::Game for HotdogGame {
         if let Some(winner) = self.winner {
             // someone won the game
             if winner == player {
-                Some(5.0)
+                Some(1.0)
             } else {
-                Some(-5.0)
+                Some(0.0)
             }
         } else {
             if self.scores == [0, 0] {
@@ -970,9 +997,11 @@ impl ismcts::Game for HotdogGame {
                 let current_player_score = self.scores[player] as f64;
                 let other_player_score = self.scores[(player + 1) % 2] as f64;
                 if current_player_score > other_player_score {
-                    Some(current_player_score)
+                    Some(1.0)
+                    //Some(current_player_score / 5.0)
                 } else {
-                    Some(-other_player_score)
+                    Some(0.0)
+                    //Some(-1.0 - (other_player_score / 5.0))
                 }
             }
         }
@@ -1003,7 +1032,7 @@ pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>
     };
 }
 
-pub fn get_mcts_move(game: &HotdogGame, iterations: i32) -> i32 {
+pub fn get_mcts_move(game: &HotdogGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     let mut ismcts = IsmctsHandler::new(new_game);
@@ -1012,6 +1041,11 @@ pub fn get_mcts_move(game: &HotdogGame, iterations: i32) -> i32 {
         parallel_threads,
         (iterations as f64 / parallel_threads as f64) as usize,
     );
+    if debug {
+        // println!("-------");
+        // ismcts.debug_children();
+        // println!("-------");
+    }
     ismcts.best_move().expect("should have a move to make")
 }
 
