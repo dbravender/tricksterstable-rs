@@ -303,6 +303,8 @@ pub struct HotdogGame {
     pub scores: [i32; 2],
     // Game winner
     pub winner: Option<usize>,
+    // Use experimental reward function for comparison
+    pub experiment: bool,
 }
 
 impl HotdogGame {
@@ -997,11 +999,17 @@ impl ismcts::Game for HotdogGame {
                 let current_player_score = self.scores[player] as f64;
                 let other_player_score = self.scores[(player + 1) % 2] as f64;
                 if current_player_score > other_player_score {
-                    Some(1.0)
-                    //Some(current_player_score / 5.0)
+                    if self.experiment {
+                        Some(0.8 + ((current_player_score / 5.0) * 0.2))
+                    } else {
+                        Some(1.0)
+                    }
                 } else {
-                    Some(0.0)
-                    //Some(-1.0 - (other_player_score / 5.0))
+                    if self.experiment {
+                        Some(0.2 - ((other_player_score / 5.0) * 0.2))
+                    } else {
+                        Some(0.0)
+                    }
                 }
             }
         }
