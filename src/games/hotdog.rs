@@ -243,6 +243,7 @@ pub enum ChangeType {
     RevealCard,
     Discard,
     Reorder,
+    BidOptions, // system sends bid options to be displayed in a dialog
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -259,6 +260,14 @@ pub struct Change {
     offset: usize,
     player: usize,
     length: usize,
+    bid_options: Option<Vec<BidOption>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Eq)]
+#[serde(rename_all = "camelCase")]
+struct BidOption {
+    id: i32,
+    description: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -912,6 +921,16 @@ impl HotdogGame {
                 },
             );
         }
+    }
+
+    fn bid_options(&self) -> Vec<BidOption> {
+        self.moves_to_string()
+            .into_iter()
+            .map(|bid_option| BidOption {
+                id: bid_option.0,
+                description: bid_option.1,
+            })
+            .collect()
     }
 }
 
