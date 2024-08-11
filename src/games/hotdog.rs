@@ -339,6 +339,7 @@ impl HotdogGame {
         self.dealer = (self.dealer + 1) % 2;
         self.voids = [vec![], vec![]];
         let mut cards = HotdogGame::deck();
+        let shuffle_index = self.new_change();
         let deal_index = self.new_change();
         let straw_top_index = self.new_change();
         self.straw_bottom = [[CARD_NONE; 5], [CARD_NONE; 5]];
@@ -347,6 +348,15 @@ impl HotdogGame {
         self.bids = [None, None];
         self.relish = 0;
         self.trump = None;
+        self.add_change(
+            shuffle_index,
+            Change {
+                change_type: ChangeType::Shuffle,
+                object_id: 0,
+                dest: Location::Deck,
+                ..Default::default()
+            },
+        );
         for straw_index in 0..5 {
             for player in 0..2 as usize {
                 let card = cards.pop().unwrap();
