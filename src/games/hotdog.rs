@@ -212,6 +212,8 @@ enum Location {
     ReorderHand,
     // Throw card offscreen
     Burn,
+    // Trump display
+    Trump,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -286,7 +288,7 @@ pub struct HotdogGame {
     // List of list of animations to run after a move is made to get from the current state to the next state
     changes: Vec<Vec<Change>>,
     // When running simulations we save time by not creating vecs and structs to be added to the change animation list
-    no_changes: bool,
+    pub no_changes: bool,
     // Each player's latest bid
     pub bids: [Option<Bid>; 2],
     // The bid the round is played with
