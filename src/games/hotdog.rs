@@ -5,7 +5,10 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/365349/hotdog
 */
 
 use rand::Rng;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap, HashSet},
+};
 
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
@@ -188,7 +191,20 @@ pub enum State {
     Play,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Sequence, Deserialize, PartialEq, Eq, Copy, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Sequence,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Copy,
+    Hash,
+    PartialOrd,
+    Ord,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum Suit {
     #[default]
@@ -423,6 +439,8 @@ impl HotdogGame {
                 },
             );
         }
+        self.hands[0].sort_by(card_sorter);
+        self.reorder_hand(0, true);
     }
 
     pub fn deck() -> Vec<Card> {
@@ -723,7 +741,7 @@ impl HotdogGame {
                     },
                 );
 
-                self.reorder_hand(self.current_player);
+                self.reorder_hand(self.current_player, false);
 
                 self.current_trick[self.current_player] = Some(card);
 
@@ -750,6 +768,29 @@ impl HotdogGame {
                     if self.winning_bid.ranking() == Ranking::Alternating {
                         self.high_wins = !self.high_wins;
                     }
+
+                    self.reveal_straw_bottoms(0);
+                    self.reveal_straw_bottoms(1);
+
+                    let index = self.new_change();
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::ShowWinningCard,
+                            object_id: self.current_trick[trick_winner].unwrap().id as usize,
+                            dest: Location::Play,
+                            ..Default::default()
+                        },
+                    );
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::OptionalPause,
+                            object_id: 0,
+                            dest: Location::Play,
+                            ..Default::default()
+                        },
+                    );
 
                     // Animate tricks to winner
                     let change_index = self.new_change();
@@ -843,6 +884,7 @@ impl HotdogGame {
                             }
                         }
                         self.deal();
+                        return;
                     }
                 }
                 self.show_playable();
@@ -865,17 +907,17 @@ impl HotdogGame {
     }
 
     #[inline]
-    pub fn reorder_hand(&mut self, player: usize) {
+    pub fn reorder_hand(&mut self, player: usize, force_new_animation: bool) {
         if self.no_changes {
             return;
         }
-        if self.changes.is_empty() {
+        if self.changes.is_empty() || force_new_animation {
             self.new_change();
         }
-        let length = self.hands[self.current_player].len();
+        let length = self.hands[player].len();
         let index = self.changes.len() - 1;
-        self.changes[index].extend(self.hands[self.current_player].iter().enumerate().map(
-            |(offset, card)| Change {
+        self.changes[index].extend(self.hands[player].iter().enumerate().map(|(offset, card)| {
+            Change {
                 change_type: ChangeType::Reorder,
                 dest: Location::ReorderHand,
                 object_id: card.id as usize,
@@ -883,15 +925,15 @@ impl HotdogGame {
                 offset,
                 length,
                 ..Default::default()
-            },
-        ));
+            }
+        }));
     }
 
     fn show_playable(&mut self) {
         if self.changes.is_empty() {
             self.changes = vec![vec![]];
         }
-        let change_index = self.changes.len() - 1;
+        let change_index = self.new_change();
         if self.current_player == 0 {
             let moves = self.get_moves();
             for id in moves {
@@ -931,6 +973,22 @@ impl HotdogGame {
                 },
             );
         }
+    }
+
+    pub fn reveal_straw_bottoms(&mut self, player: usize) {
+        if self.no_changes {
+            return;
+        }
+        let index = self.new_change();
+        let exposed_straw_bottoms = self.exposed_straw_bottoms(player);
+        let sorted_straw_bottoms: Vec<Card> = exposed_straw_bottoms.iter().cloned().collect();
+        //sorted_straw_bottoms.sort_by_key(|c| c.id); - needed to verify against Dart engine
+        self.changes[index].extend(sorted_straw_bottoms.iter().map(|c| Change {
+            change_type: ChangeType::RevealCard,
+            dest: Location::Hand,
+            object_id: c.id as usize,
+            ..Default::default()
+        }));
     }
 
     fn bid_options(&self) -> Vec<BidOption> {
@@ -1086,6 +1144,14 @@ pub fn get_mcts_move(game: &HotdogGame, iterations: i32, debug: bool) -> i32 {
         // println!("-------");
     }
     ismcts.best_move().expect("should have a move to make")
+}
+
+fn card_sorter(a: &Card, b: &Card) -> Ordering {
+    match a.suit.cmp(&b.suit) {
+        Ordering::Less => Ordering::Less,
+        Ordering::Greater => Ordering::Greater,
+        Ordering::Equal => a.value.cmp(&b.value),
+    }
 }
 
 #[cfg(test)]
