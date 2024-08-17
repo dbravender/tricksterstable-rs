@@ -617,9 +617,7 @@ impl HotdogGame {
     }
 
     pub fn bid_phase_changes(&mut self) {
-        if self.no_changes {
-            // Skip population during simulations
-            //|| self.current_player == 1 {
+        if self.no_changes || self.current_player == 1 {
             return;
         }
         let proceed: bool = match self.state {
