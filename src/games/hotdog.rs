@@ -311,7 +311,7 @@ pub struct HotdogGame {
     // Player who starts the next hand
     pub dealer: usize,
     // List of list of animations to run after a move is made to get from the current state to the next state
-    changes: Vec<Vec<Change>>,
+    pub changes: Vec<Vec<Change>>,
     // When running simulations we save time by not creating vecs and structs to be added to the change animation list
     pub no_changes: bool,
     // Each player's latest bid
@@ -441,6 +441,7 @@ impl HotdogGame {
         }
         self.hands[0].sort_by(card_sorter);
         self.reorder_hand(0, true);
+        self.bid_phase_changes();
     }
 
     pub fn deck() -> Vec<Card> {
@@ -519,14 +520,9 @@ impl HotdogGame {
                 }
             }
             State::Bid => {
-                let other_player_bid = match self.bids[(self.current_player + 1) % 2] {
-                    None => Bid::Pass,
-                    Some(x) => x,
-                };
-
-                for bid in other_player_bid.next_bids() {
-                    let bid_value = bid as i32;
-                    moves_strings.insert(bid_value, format!("{:?}", bid));
+                for move_id in self.get_moves() {
+                    let bid = ID_TO_BID[&move_id];
+                    moves_strings.insert(move_id, format!("{:?}", bid));
                 }
             }
             State::WorksSelectFirstTrickType => {
@@ -559,7 +555,8 @@ impl HotdogGame {
                     .map(|f| *f as i32)
                     .collect();
 
-                if self.no_changes {
+                if false {
+                    //self.no_changes {
                     let mut rnd = thread_rng();
                     if rnd.gen_range(0..100) > 20 {
                         bids.retain(|b| b < &4)
@@ -619,7 +616,35 @@ impl HotdogGame {
         return playable_cards.iter().map(|c| c.id).collect();
     }
 
-    pub fn apply_move(&mut self, action: i32) {
+    pub fn bid_phase_changes(&mut self) {
+        if self.no_changes {
+            // Skip population during simulations
+            //|| self.current_player == 1 {
+            return;
+        }
+        let proceed: bool = match self.state {
+            State::Bid
+            | State::WorksSelectFirstTrickType
+            | State::NameRelish
+            | State::NameTrump => true,
+            _ => false,
+        };
+        if !proceed {
+            return;
+        }
+        let index = self.new_change();
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::BidOptions,
+                player: self.current_player,
+                bid_options: Some(self.bid_options()),
+                ..Default::default()
+            },
+        );
+    }
+
+    fn apply_move_internal(&mut self, action: i32) {
         self.changes = vec![vec![]]; // card from player to table
         match self.state {
             State::NameTrump => {
@@ -645,6 +670,7 @@ impl HotdogGame {
                     self.trump = None;
                     self.current_player = (self.current_player + 1) % 2;
                     self.state = State::NameRelish;
+
                     return;
                 }
                 if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
@@ -654,12 +680,14 @@ impl HotdogGame {
                     // The dealer may select some Relish
                     self.current_player = self.dealer;
                     self.state = State::NameRelish;
+
                     return;
                 }
                 if other_player_bid.is_some() && bid == Bid::Pass {
                     // Other player bid, current player passed
                     // Bidding is over, non-picker can name relish
                     self.state = State::NameRelish;
+
                     return;
                 }
                 self.state = bid.next_state();
@@ -891,6 +919,11 @@ impl HotdogGame {
                 return;
             }
         }
+    }
+
+    pub fn apply_move(&mut self, action: i32) {
+        self.apply_move_internal(action);
+        self.bid_phase_changes();
     }
 
     #[inline]
