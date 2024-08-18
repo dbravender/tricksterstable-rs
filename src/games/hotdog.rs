@@ -208,10 +208,10 @@ pub enum State {
 #[serde(rename_all = "camelCase")]
 pub enum Suit {
     #[default]
-    Red,
-    Green,
-    Blue,
-    Yellow,
+    Red = 0,
+    Green = 1,
+    Blue = 2,
+    Yellow = 3,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -647,6 +647,15 @@ impl HotdogGame {
         match self.state {
             State::NameTrump => {
                 let suit = ID_TO_SUIT[&action];
+                let index = self.new_change();
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::Trump,
+                        object_id: (action + 1000) as usize,
+                        ..Default::default()
+                    },
+                );
                 self.trump = Some(suit);
                 self.current_player = (self.current_player + 1) % 2;
                 // Whenever State::NameTrump is an option there's always
@@ -666,6 +675,7 @@ impl HotdogGame {
                         // );
                     }
                     self.trump = None;
+                    self.hide_trump();
                     self.current_player = (self.current_player + 1) % 2;
                     self.state = State::NameRelish;
 
@@ -693,6 +703,7 @@ impl HotdogGame {
                     // Next player doesn't get to name trump (works)
                     // Works has no trump
                     self.trump = None;
+                    self.hide_trump();
                     // Relish selection goes to the non-picker
                     self.current_player = (self.current_player + 1) % 2;
                 }
@@ -958,6 +969,17 @@ impl HotdogGame {
                 ..Default::default()
             }
         }));
+    }
+
+    fn hide_trump(&mut self) {
+        let index = self.new_change();
+        self.add_change(
+            index,
+            Change {
+                object_id: 999 as usize,
+                ..Default::default()
+            },
+        )
     }
 
     fn show_playable(&mut self) {
