@@ -259,7 +259,9 @@ pub enum ChangeType {
     RevealCard,
     Discard,
     Reorder,
-    BidOptions, // system sends bid options to be displayed in a dialog
+    BidOptions,    // system sends bid options to be displayed in a dialog
+    HighOrLowWins, // display if high cards or low cards win this trick
+    BidSummary,    // display last bid or named relish for each player
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -277,6 +279,9 @@ pub struct Change {
     player: usize,
     length: usize,
     bid_options: Option<Vec<BidOption>>,
+    high_wins: bool,
+    bid_title: Option<String>,
+    bid_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Eq)]
