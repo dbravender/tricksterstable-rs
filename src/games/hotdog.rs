@@ -635,12 +635,20 @@ impl HotdogGame {
         if !proceed {
             return;
         }
+        let bid_title = Some(match self.state {
+            State::Bid => "Select a bid".to_string(),
+            State::WorksSelectFirstTrickType => "Select start ".to_string(),
+            State::NameRelish => "Select relish (special rank)".to_string(),
+            State::NameTrump => "Select trump".to_string(),
+            _ => unreachable!(),
+        });
         let index = self.new_change();
         self.add_change(
             index,
             Change {
                 change_type: ChangeType::BidOptions,
                 player: self.current_player,
+                bid_title,
                 bid_options: Some(self.bid_options()),
                 ..Default::default()
             },
