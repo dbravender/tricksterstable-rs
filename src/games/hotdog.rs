@@ -704,6 +704,7 @@ impl HotdogGame {
                 let other_player_bid = self.bids[(self.current_player + 1) % 2];
                 let bid = ID_TO_BID[&action];
                 self.bids[self.current_player] = Some(bid);
+                self.add_bid_summary(self.current_player, bid.description());
                 if bid == Bid::TheWorksFootlong {
                     if !self.no_changes {
                         // println!(
@@ -711,7 +712,6 @@ impl HotdogGame {
                         //     self.current_player
                         // );
                     }
-                    self.add_bid_summary(self.current_player, bid.description());
                     self.trump = None;
                     self.hide_trump();
                     self.current_player = (self.current_player + 1) % 2;
@@ -723,6 +723,8 @@ impl HotdogGame {
                     // If both players pass, there is no Picker.
                     // The round is still played with The Works.
                     self.winning_bid = Bid::TheWorks;
+                    self.add_bid_summary(0, "The Works (no picker)".to_string());
+                    self.add_bid_summary(1, "The Works (no picker)".to_string());
                     // The dealer may select some Relish
                     self.current_player = self.dealer;
                     self.state = State::NameRelish;
@@ -755,8 +757,6 @@ impl HotdogGame {
                 // Check to see if we are in the state where there both players passed
                 if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
                     self.winning_bid = Bid::TheWorks;
-                    self.add_bid_summary(0, "The Works (no picker)".to_string());
-                    self.add_bid_summary(1, "The Works (no picker)".to_string());
                 } else {
                     if !self.no_changes {
                         // println!("self.bids: {:?} self.picker: {:?}", self.bids, self.picker);
@@ -778,9 +778,12 @@ impl HotdogGame {
                 }
                 self.relish = action;
                 if self.relish == 0 {
-                    self.add_bid_summary(next_player, "No relish".to_string());
+                    self.add_bid_summary((self.current_player + 1) % 2, "No relish".to_string());
                 } else {
-                    self.add_bid_summary(next_player, format!("Named {} as relish", &action));
+                    self.add_bid_summary(
+                        (self.current_player + 1) % 2,
+                        format!("Named {} as relish", &action),
+                    );
                 }
                 if self.winning_bid.ranking() == Ranking::Alternating {
                     self.state = State::WorksSelectFirstTrickType;
@@ -1319,6 +1322,7 @@ mod tests {
         lead_player: usize,
         expected_winner: usize,
         high_wins: bool,
+        trump: Option<Suit>,
     }
 
     #[test]
@@ -1327,6 +1331,7 @@ mod tests {
             TrickWinnerTestCase {
                 relish: 1,
                 lead_player: 0,
+                trump: None,
                 current_trick: [
                     Some(Card {
                         id: 0,
@@ -1345,6 +1350,7 @@ mod tests {
             TrickWinnerTestCase {
                 relish: 1,
                 lead_player: 0,
+                trump: None,
                 current_trick: [
                     Some(Card {
                         id: 0,
@@ -1354,6 +1360,44 @@ mod tests {
                     Some(Card {
                         id: 1,
                         value: 2,
+                        suit: Suit::Red,
+                    }),
+                ],
+                high_wins: true,
+                expected_winner: 1,
+            },
+            // TrickWinnerTestCase {
+            //     relish: 4,
+            //     lead_player: 1,
+            //     trump: Some(Suit::Red),
+            //     current_trick: [
+            //         Some(Card {
+            //             id: 0,
+            //             value: 9,
+            //             suit: Suit::Green,
+            //         }),
+            //         Some(Card {
+            //             id: 1,
+            //             value: 3,
+            //             suit: Suit::Blue,
+            //         }),
+            //     ],
+            //     high_wins: false,
+            //     expected_winner: 1,
+            // },
+            TrickWinnerTestCase {
+                relish: 4,
+                lead_player: 0,
+                trump: Some(Suit::Red),
+                current_trick: [
+                    Some(Card {
+                        id: 0,
+                        value: 10,
+                        suit: Suit::Green,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 1,
                         suit: Suit::Red,
                     }),
                 ],
@@ -1367,6 +1411,7 @@ mod tests {
             game.lead_player = test_case.lead_player;
             game.current_trick = test_case.current_trick;
             game.high_wins = Some(test_case.high_wins);
+            game.trump = test_case.trump;
             assert_eq!(game.trick_winner(), test_case.expected_winner);
         }
     }
