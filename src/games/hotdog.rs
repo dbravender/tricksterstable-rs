@@ -864,18 +864,6 @@ impl HotdogGame {
                     self.current_player = trick_winner;
                     self.tricks_taken[trick_winner] += 1;
 
-                    if self.winning_bid.ranking() == Ranking::Alternating {
-                        self.high_wins = Some(!self.high_wins.unwrap());
-                        self.add_change(
-                            self.changes.len() - 1,
-                            Change {
-                                change_type: ChangeType::HighOrLowWins,
-                                high_wins: self.high_wins,
-                                ..Default::default()
-                            },
-                        );
-                    }
-
                     self.reveal_straw_bottoms(0);
                     self.reveal_straw_bottoms(1);
 
@@ -898,6 +886,18 @@ impl HotdogGame {
                             ..Default::default()
                         },
                     );
+
+                    if self.winning_bid.ranking() == Ranking::Alternating {
+                        self.high_wins = Some(!self.high_wins.unwrap());
+                        self.add_change(
+                            self.changes.len() - 1,
+                            Change {
+                                change_type: ChangeType::HighOrLowWins,
+                                high_wins: self.high_wins,
+                                ..Default::default()
+                            },
+                        );
+                    }
 
                     // Animate tricks to winner
                     let change_index = self.new_change();
