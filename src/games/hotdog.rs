@@ -656,7 +656,6 @@ impl HotdogGame {
     }
 
     fn apply_move_internal(&mut self, action: i32) {
-        self.changes = vec![vec![]]; // card from player to table
         match self.state {
             State::NameTrump => {
                 let suit = ID_TO_SUIT[&action];
@@ -944,6 +943,11 @@ impl HotdogGame {
     }
 
     pub fn apply_move(&mut self, action: i32) {
+        self.changes = vec![vec![]]; // card from player to table
+        if !self.get_moves().contains(&action) {
+            // return the same game with no animations when an invalid move is made
+            return;
+        }
         self.apply_move_internal(action);
         self.bid_phase_changes();
     }
