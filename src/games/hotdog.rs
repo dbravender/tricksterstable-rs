@@ -389,6 +389,7 @@ impl HotdogGame {
         self.add_change(
             shuffle_index,
             Change {
+                change_type: ChangeType::HighOrLowWins,
                 high_wins: None,
                 ..Default::default()
             },
@@ -769,6 +770,7 @@ impl HotdogGame {
                     self.add_change(
                         self.changes.len() - 1,
                         Change {
+                            change_type: ChangeType::HighOrLowWins,
                             high_wins: self.high_wins,
                             ..Default::default()
                         },
@@ -790,6 +792,7 @@ impl HotdogGame {
                 self.add_change(
                     self.changes.len() - 1,
                     Change {
+                        change_type: ChangeType::HighOrLowWins,
                         high_wins: self.high_wins,
                         ..Default::default()
                     },
@@ -866,6 +869,7 @@ impl HotdogGame {
                         self.add_change(
                             self.changes.len() - 1,
                             Change {
+                                change_type: ChangeType::HighOrLowWins,
                                 high_wins: self.high_wins,
                                 ..Default::default()
                             },
@@ -1028,6 +1032,7 @@ impl HotdogGame {
         self.add_change(
             self.changes.len() - 1,
             Change {
+                change_type: ChangeType::BidSummary,
                 player,
                 bid_summary: Some(bid_summary),
                 ..Default::default()
