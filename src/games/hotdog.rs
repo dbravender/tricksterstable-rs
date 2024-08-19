@@ -45,6 +45,19 @@ enum Ranking {
 }
 
 impl Bid {
+    fn description(&self) -> String {
+        match self {
+            Bid::Ketchup => "Ketchup (↑) (9/12)".to_string(),
+            Bid::Mustard => "Mustard (↓) (9/12)".to_string(),
+            Bid::TheWorks => "The Works (↓↑↓...) (9/12)".to_string(),
+
+            Bid::KetchupFootlong => "Ketchup Footlong (↑) (12)".to_string(),
+            Bid::MustardFootlong => "Mustard Footlong (↓) (12)".to_string(),
+            Bid::TheWorksFootlong => "The Works Footlong (↓↑↓...) (12)".to_string(),
+            Bid::Pass => "Pass".to_string(),
+        }
+    }
+
     fn required_tricks(&self) -> i32 {
         match self {
             // The Picker must capture at least 9 tricks.
@@ -279,7 +292,7 @@ pub struct Change {
     player: usize,
     length: usize,
     bid_options: Option<Vec<BidOption>>,
-    high_wins: bool,
+    high_wins: Option<bool>,
     bid_title: Option<String>,
     bid_summary: Option<String>,
 }
@@ -330,7 +343,7 @@ pub struct HotdogGame {
     // Current trump suit
     pub trump: Option<Suit>,
     // Whether or not high wins the current trick
-    pub high_wins: bool,
+    pub high_wins: Option<bool>,
     // Current score of the game
     pub scores: [i32; 2],
     // Game winner
@@ -353,6 +366,7 @@ impl HotdogGame {
     pub fn deal(&mut self) {
         self.picker = None;
         self.tricks_taken = [0, 0];
+        self.high_wins = None;
         self.hands = [vec![], vec![]];
         self.state = State::Bid;
         self.current_player = self.dealer;
@@ -369,6 +383,16 @@ impl HotdogGame {
         self.bids = [None, None];
         self.relish = 0;
         self.trump = None;
+        // Clear bid summaries
+        self.add_bid_summary(0, "".to_string());
+        self.add_bid_summary(1, "".to_string());
+        self.add_change(
+            shuffle_index,
+            Change {
+                high_wins: None,
+                ..Default::default()
+            },
+        );
         self.add_change(
             shuffle_index,
             Change {
@@ -494,7 +518,7 @@ impl HotdogGame {
     }
 
     fn card_value(&self, card: Card) -> i32 {
-        let multiplier = if self.high_wins { 1 } else { -1 };
+        let multiplier = if self.high_wins.unwrap() { 1 } else { -1 };
         if card.suit == self.current_trick[self.lead_player].as_ref().unwrap().suit {
             return (card.value + 50) * multiplier;
         }
@@ -526,7 +550,7 @@ impl HotdogGame {
             }
             State::Bid => {
                 for move_id in self.get_moves() {
-                    let bid = ID_TO_BID[&move_id];
+                    let bid: Bid = ID_TO_BID[&move_id];
                     moves_strings.insert(move_id, format!("{:?}", bid));
                 }
             }
@@ -686,6 +710,7 @@ impl HotdogGame {
                         //     self.current_player
                         // );
                     }
+                    self.add_bid_summary(self.current_player, bid.description());
                     self.trump = None;
                     self.hide_trump();
                     self.current_player = (self.current_player + 1) % 2;
@@ -729,13 +754,28 @@ impl HotdogGame {
                 // Check to see if we are in the state where there both players passed
                 if self.bids == [Some(Bid::Pass), Some(Bid::Pass)] {
                     self.winning_bid = Bid::TheWorks;
+                    self.add_bid_summary(0, "The Works (no picker)".to_string());
+                    self.add_bid_summary(1, "The Works (no picker)".to_string());
                 } else {
                     if !self.no_changes {
                         // println!("self.bids: {:?} self.picker: {:?}", self.bids, self.picker);
                     }
                     self.winning_bid = self.bids[self.picker.unwrap()].unwrap();
+                    self.high_wins = match self.winning_bid.ranking() {
+                        Ranking::HighStrong => Some(true),
+                        Ranking::LowStrong => Some(false),
+                        Ranking::Alternating => None,
+                    };
+                    self.add_change(
+                        self.changes.len() - 1,
+                        Change {
+                            high_wins: self.high_wins,
+                            ..Default::default()
+                        },
+                    );
                 }
                 self.relish = action;
+                self.add_bid_summary(self.current_player, format!("Named {} as relish", &action));
                 if self.winning_bid.ranking() == Ranking::Alternating {
                     self.state = State::WorksSelectFirstTrickType;
                 } else {
@@ -746,7 +786,14 @@ impl HotdogGame {
             State::WorksSelectFirstTrickType => {
                 // 0 - Ketchup
                 // 1 - Mustard
-                self.high_wins = action == 0;
+                self.high_wins = Some(action == 0);
+                self.add_change(
+                    self.changes.len() - 1,
+                    Change {
+                        high_wins: self.high_wins,
+                        ..Default::default()
+                    },
+                );
                 self.state = State::Play;
             }
             State::Play => {
@@ -815,7 +862,14 @@ impl HotdogGame {
                     self.tricks_taken[trick_winner] += 1;
 
                     if self.winning_bid.ranking() == Ranking::Alternating {
-                        self.high_wins = !self.high_wins;
+                        self.high_wins = Some(!self.high_wins.unwrap());
+                        self.add_change(
+                            self.changes.len() - 1,
+                            Change {
+                                high_wins: self.high_wins,
+                                ..Default::default()
+                            },
+                        );
                     }
 
                     self.reveal_straw_bottoms(0);
@@ -960,9 +1014,25 @@ impl HotdogGame {
 
     #[inline]
     fn add_change(&mut self, index: usize, change: Change) {
-        if !self.no_changes {
-            self.changes[index].push(change);
+        if self.no_changes {
+            return;
         }
+        self.changes[index].push(change);
+    }
+
+    #[inline]
+    fn add_bid_summary(&mut self, player: usize, bid_summary: String) {
+        if self.no_changes {
+            return;
+        }
+        self.add_change(
+            self.changes.len() - 1,
+            Change {
+                player,
+                bid_summary: Some(bid_summary),
+                ..Default::default()
+            },
+        );
     }
 
     #[inline]
@@ -1287,7 +1357,7 @@ mod tests {
             game.relish = test_case.relish;
             game.lead_player = test_case.lead_player;
             game.current_trick = test_case.current_trick;
-            game.high_wins = test_case.high_wins;
+            game.high_wins = Some(test_case.high_wins);
             assert_eq!(game.trick_winner(), test_case.expected_winner);
         }
     }
