@@ -777,7 +777,11 @@ impl HotdogGame {
                     );
                 }
                 self.relish = action;
-                self.add_bid_summary(self.current_player, format!("Named {} as relish", &action));
+                if self.relish == 0 {
+                    self.add_bid_summary(next_player, "No relish".to_string());
+                } else {
+                    self.add_bid_summary(next_player, format!("Named {} as relish", &action));
+                }
                 if self.winning_bid.ranking() == Ranking::Alternating {
                     self.state = State::WorksSelectFirstTrickType;
                 } else {
