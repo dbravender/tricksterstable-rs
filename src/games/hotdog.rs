@@ -928,15 +928,15 @@ impl HotdogGame {
                     if self.playable_cards().iter().all(|x| x.is_empty()) {
                         // The hand is over
 
-                        let mut picker: usize = 0;
-
-                        if self.picker.is_none() {
-                            picker = if self.tricks_taken[0] > self.tricks_taken[1] {
+                        let picker = if self.picker.is_some() {
+                            self.picker.unwrap()
+                        } else {
+                            if self.tricks_taken[0] > self.tricks_taken[1] {
                                 0
                             } else {
                                 1
                             }
-                        }
+                        };
 
                         if !self.no_changes {
                             // println!(
