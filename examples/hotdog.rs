@@ -21,7 +21,7 @@ fn main() {
                 get_mcts_move(&game, iterations, debug)
             } else {
                 let mut game = game.clone();
-                game.experiment = false;
+                game.experiment = true;
                 get_mcts_move(&game, iterations, debug)
             };
 

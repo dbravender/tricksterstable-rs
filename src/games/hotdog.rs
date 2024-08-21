@@ -1284,6 +1284,8 @@ pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>
 pub fn get_mcts_move(game: &HotdogGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
+    // reset scores for the simulation
+    new_game.scores = [0; 2];
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
     ismcts.run_iterations(
