@@ -517,7 +517,7 @@ impl HotdogGame {
             if self.high_wins.unwrap() {
                 return if cards.0.value > cards.1.value { 0 } else { 1 };
             }
-            return if cards.0.value < cards.1.value { 1 } else { 0 };
+            return if cards.0.value < cards.1.value { 0 } else { 1 };
         }
         // Only one player played trump - that player wins the trick
         if self.trump.is_some() {
@@ -1335,6 +1335,25 @@ mod tests {
     #[test]
     fn test_trick_winner() {
         let test_cases = [
+            TrickWinnerTestCase {
+                relish: 1,
+                lead_player: 0,
+                trump: None,
+                current_trick: [
+                    Some(Card {
+                        id: 0,
+                        value: 1,
+                        suit: Suit::Red,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 2,
+                        suit: Suit::Red,
+                    }),
+                ],
+                expected_winner: 0,
+                high_wins: false,
+            },
             TrickWinnerTestCase {
                 relish: 1,
                 lead_player: 0,
