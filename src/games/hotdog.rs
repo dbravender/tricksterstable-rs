@@ -511,22 +511,27 @@ impl HotdogGame {
         }
         // In general, the highest-ranking card in the trump suit wins the trick
         // or, if no trumps were played, the highest-ranking card in the suit that was led.
-        return if self.card_value(cards.0) > self.card_value(cards.1) {
-            0
-        } else {
-            1
-        };
-    }
 
-    fn card_value(&self, card: Card) -> i32 {
-        let multiplier = if self.high_wins.unwrap() { 1 } else { -1 };
-        if card.suit == self.current_trick[self.lead_player].as_ref().unwrap().suit {
-            return (card.value + 50) * multiplier;
+        // Both players played the same suit - player who played highest or lowest card wins
+        if cards.0.suit == cards.1.suit {
+            if self.high_wins.unwrap() {
+                return if cards.0.value > cards.1.value { 0 } else { 1 };
+            }
+            return if cards.0.value < cards.1.value { 1 } else { 0 };
         }
-        if self.trump.is_some() && card.suit == self.trump.unwrap() {
-            return (card.value + 100) * multiplier;
+        // Only one player played trump - that player wins the trick
+        if self.trump.is_some() {
+            let trump = self.trump.unwrap();
+            if cards.0.suit == trump {
+                return 0;
+            }
+            if cards.1.suit == trump {
+                return 1;
+            }
         }
-        return card.value * multiplier;
+        // Both players played a different suit, no one played trump or relish, lead player
+        // takes the trick
+        return self.lead_player;
     }
 
     pub fn moves_to_string(&self) -> BTreeMap<i32, String> {
@@ -1318,6 +1323,7 @@ mod tests {
         assert_eq!(d.len(), 36);
     }
 
+    #[derive(Debug)]
     struct TrickWinnerTestCase {
         relish: i32,
         current_trick: [Option<Card>; 2],
@@ -1368,25 +1374,44 @@ mod tests {
                 high_wins: true,
                 expected_winner: 1,
             },
-            // TrickWinnerTestCase {
-            //     relish: 4,
-            //     lead_player: 1,
-            //     trump: Some(Suit::Red),
-            //     current_trick: [
-            //         Some(Card {
-            //             id: 0,
-            //             value: 9,
-            //             suit: Suit::Green,
-            //         }),
-            //         Some(Card {
-            //             id: 1,
-            //             value: 3,
-            //             suit: Suit::Blue,
-            //         }),
-            //     ],
-            //     high_wins: false,
-            //     expected_winner: 1,
-            // },
+            TrickWinnerTestCase {
+                relish: 4,
+                lead_player: 1,
+                trump: Some(Suit::Red),
+                current_trick: [
+                    Some(Card {
+                        id: 0,
+                        value: 9,
+                        suit: Suit::Green,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        value: 3,
+                        suit: Suit::Blue,
+                    }),
+                ],
+                high_wins: false,
+                expected_winner: 1,
+            },
+            TrickWinnerTestCase {
+                high_wins: true,
+                relish: 7,
+                lead_player: 0,
+                trump: Some(Suit::Blue),
+                current_trick: [
+                    Some(Card {
+                        suit: Suit::Green,
+                        value: 3,
+                        id: 0,
+                    }),
+                    Some(Card {
+                        suit: Suit::Yellow,
+                        value: 10,
+                        id: 1,
+                    }),
+                ],
+                expected_winner: 0,
+            },
             TrickWinnerTestCase {
                 relish: 4,
                 lead_player: 0,
@@ -1414,7 +1439,12 @@ mod tests {
             game.current_trick = test_case.current_trick;
             game.high_wins = Some(test_case.high_wins);
             game.trump = test_case.trump;
-            assert_eq!(game.trick_winner(), test_case.expected_winner);
+            assert_eq!(
+                game.trick_winner(),
+                test_case.expected_winner,
+                "{:?}",
+                test_case
+            );
         }
     }
 }
