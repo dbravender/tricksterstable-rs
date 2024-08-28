@@ -1079,6 +1079,7 @@ impl HotdogGame {
         self.add_change(
             index,
             Change {
+                change_type: ChangeType::Trump,
                 object_id: 999 as usize,
                 ..Default::default()
             },
