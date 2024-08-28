@@ -1006,8 +1006,6 @@ impl HotdogGame {
                         return;
                     }
                 }
-                self.show_playable();
-                return;
             }
         }
     }
@@ -1020,6 +1018,7 @@ impl HotdogGame {
         }
         self.apply_move_internal(action);
         self.bid_phase_changes();
+        self.show_playable();
     }
 
     #[inline]
@@ -1091,7 +1090,7 @@ impl HotdogGame {
             self.changes = vec![vec![]];
         }
         let change_index = self.new_change();
-        if self.current_player == 0 {
+        if self.current_player == 0 && self.state == State::Play {
             let moves = self.get_moves();
             for id in moves {
                 self.add_change(
