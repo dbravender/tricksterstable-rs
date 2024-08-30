@@ -557,7 +557,7 @@ impl HotdogGame {
             State::Bid => {
                 for move_id in self.get_moves() {
                     let bid: Bid = ID_TO_BID[&move_id];
-                    moves_strings.insert(move_id, format!("{:?}", bid));
+                    moves_strings.insert(move_id, bid.description());
                 }
             }
             State::WorksSelectFirstTrickType => {
