@@ -9,6 +9,7 @@
 | Yokai Septet 4-player | ✅                                  | ✅                                         | ❌                                  | ✅ cards selected to pass are based on a heuristic which was informed by a survey of experienced players evaluating which cards they would pass from random hands |
 | Short Zoot Suit       | ✅                                  | ✅                                         | ✅ (not yet used)                   | ✅ never pass on a draw when losing, pass when winning (heuristic not used in pure ISMCTS Rust implementation)                                                    |
 | Dealer's Dilemma      | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
+| Hotdog                | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
 
 * Magic Trick implementation (in Dart): https://github.com/dbravender/magictrick
 * Version of SIMPLE used to train AIs: https://github.com/davidADSP/SIMPLE/pull/34
