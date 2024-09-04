@@ -8,16 +8,17 @@ fn main() {
         game.dealer = if rnd.gen_range(0..100) > 50 { 0 } else { 1 };
         game.current_player = game.dealer;
         //println!("{:?}", &game);
-        while game.scores == [0, 0] {
+        while game.winner.is_none() {
             let debug = match game.state {
                 State::Bid => true,
                 _ => false,
             };
 
             let mut iterations = 1000;
-            let action = if game.current_player != 0 {
+            let action = if game.current_player == 0 {
                 let mut game = game.clone();
                 game.experiment = false;
+                iterations = 2000;
                 get_mcts_move(&game, iterations, debug)
             } else {
                 let mut game = game.clone();

@@ -1246,15 +1246,15 @@ impl ismcts::Game for HotdogGame {
                 let other_player_score = self.scores[(player + 1) % 2] as f64;
                 if current_player_score > other_player_score {
                     if self.experiment {
-                        Some(1.0)
-                    } else {
                         Some(0.8 + ((current_player_score / 5.0) * 0.2))
+                    } else {
+                        Some(1.0)
                     }
                 } else {
                     if self.experiment {
-                        Some(0.0)
-                    } else {
                         Some(0.2 - ((other_player_score / 5.0) * 0.2))
+                    } else {
+                        Some(0.0)
                     }
                 }
             }
@@ -1290,7 +1290,9 @@ pub fn get_mcts_move(game: &HotdogGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation
-    new_game.scores = [0; 2];
+    if game.experiment {
+        new_game.scores = [0; 2];
+    }
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
     ismcts.run_iterations(
