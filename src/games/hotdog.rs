@@ -1245,17 +1245,9 @@ impl ismcts::Game for HotdogGame {
                 let current_player_score = self.scores[player] as f64;
                 let other_player_score = self.scores[(player + 1) % 2] as f64;
                 if current_player_score > other_player_score {
-                    if self.experiment {
-                        Some(0.8 + ((current_player_score / 5.0) * 0.2))
-                    } else {
-                        Some(1.0)
-                    }
+                    Some(0.8 + ((current_player_score / 5.0) * 0.2))
                 } else {
-                    if self.experiment {
-                        Some(0.2 - ((other_player_score / 5.0) * 0.2))
-                    } else {
-                        Some(0.0)
-                    }
+                    Some(0.2 - ((other_player_score / 5.0) * 0.2))
                 }
             }
         }
