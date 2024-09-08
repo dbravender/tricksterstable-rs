@@ -8,7 +8,7 @@ fn main() {
         game.dealer = if rnd.gen_range(0..100) > 50 { 0 } else { 1 };
         game.current_player = game.dealer;
         //println!("{:?}", &game);
-        while game.winner.is_none() {
+        while game.scores == [0, 0] {
             let debug = match game.state {
                 State::Bid => true,
                 _ => false,

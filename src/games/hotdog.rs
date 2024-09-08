@@ -6,7 +6,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/365349/hotdog
 
 use rand::Rng;
 use std::{
-    cmp::Ordering,
+    cmp::{max, Ordering},
     collections::{BTreeMap, HashMap, HashSet},
 };
 
@@ -350,6 +350,8 @@ pub struct HotdogGame {
     pub winner: Option<usize>,
     // Use experimental reward function for comparison
     pub experiment: bool,
+    // Undealt cards
+    pub cards: Vec<Card>,
 }
 
 impl HotdogGame {
@@ -458,7 +460,7 @@ impl HotdogGame {
                 self.hands[player].push(card);
             }
         }
-        for card in cards {
+        for card in cards.iter_mut() {
             self.add_change(
                 straw_top_index,
                 Change {
@@ -472,6 +474,7 @@ impl HotdogGame {
         self.hands[0].sort_by(card_sorter);
         self.reorder_hand(0, true);
         self.bid_phase_changes();
+        self.cards = cards;
     }
 
     pub fn deck() -> Vec<Card> {
@@ -1166,7 +1169,7 @@ impl ismcts::Game for HotdogGame {
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
-        let mut remaining_cards: Vec<Card> = vec![];
+        let mut remaining_cards: Vec<Card> = self.cards.clone();
         let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
 
         for player in 0..2 {
@@ -1210,7 +1213,7 @@ impl ismcts::Game for HotdogGame {
                 }
             }
         }
-        assert!(remaining_cards.is_empty());
+        assert!(remaining_cards.len() == 2);
     }
 
     fn current_player(&self) -> Self::PlayerTag {
@@ -1282,9 +1285,7 @@ pub fn get_mcts_move(game: &HotdogGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation
-    if game.experiment {
-        new_game.scores = [0; 2];
-    }
+    new_game.scores = [0; 2];
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
     ismcts.run_iterations(
