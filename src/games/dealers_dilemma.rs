@@ -191,28 +191,6 @@ struct BidOption {
     description: String,
 }
 
-fn bid_options(bid_cards: [Option<Card>; 2]) -> Vec<BidOption> {
-    let mut bid_options: Vec<BidOption> = [
-        BidType::Easy,
-        BidType::Top,
-        BidType::Difference,
-        BidType::Zero,
-    ]
-    .into_iter()
-    .map(|bid_option| BidOption {
-        id: bid_type_to_offset(bid_option),
-        description: bid_option.bid_display_detailed(bid_cards),
-    })
-    .collect();
-
-    bid_options.push(BidOption {
-        id: -1,
-        description: "Undo".to_string(),
-    });
-
-    return bid_options;
-}
-
 #[derive(
     Debug,
     PartialOrd,
@@ -282,16 +260,6 @@ fn offset_to_bid_type(bid_id: i32) -> BidType {
     }
 }
 
-fn bid_type_to_offset(bid_type: BidType) -> i32 {
-    match bid_type {
-        BidType::Easy => BID_TYPE_EASY,
-        BidType::Top => BID_TYPE_TOP,
-        BidType::Zero => BID_TYPE_ZERO,
-        BidType::Difference => BID_TYPE_DIFFERENCE,
-        _ => unreachable!(),
-    }
-}
-
 pub fn deck() -> Vec<Card> {
     let mut deck: Vec<Card> = vec![];
     let mut id = 0;
@@ -329,6 +297,7 @@ pub enum ChangeType {
     Bid,          // player bids a card
     BidDisplay,   // system sends bid string
     BidOptions,   // system sends bid options to be displayed in a dialog
+    Message,      // message to display to the user
 }
 
 #[derive(Debug, Clone, Copy, Sequence, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -346,12 +315,14 @@ enum Location {
     Reorder,      // reordering a hand
     BidDisplay,   // display of bid e.g. / 3 or ?
     BidOptions,   // display a dialog for bid options
+    Message,      // message to display to the user
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub change_type: ChangeType,
+    message: Option<String>,
     player: i32,
     object_id: i32,
     source_offset: i32,
@@ -417,7 +388,7 @@ impl Game {
         self.no_changes = true;
     }
 
-    fn deal(self: Game) -> Self {
+    pub fn deal(self: Game) -> Self {
         let mut new_game = self.clone();
         new_game.trump_card = None;
         new_game.state = State::DealerSelect;
@@ -638,6 +609,19 @@ impl Game {
 
                 if !new_game.no_changes && !new_game.human_player[new_game.current_player as usize]
                 {
+                    // Add a label which mentions which player picked trump
+                    let player_name = match new_game.current_player {
+                        1 => "West",
+                        2 => "East",
+                        _ => "South",
+                    };
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Message,
+                        message: Some(format!("{} selected a card", player_name)),
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    });
                     // highlight card CPU player selected to move to their hand and wait for input
                     new_game.changes[0].push(Change {
                         change_type: ChangeType::ShowWinningCard,
@@ -651,9 +635,25 @@ impl Game {
                         dest: Location::Play,
                         ..Default::default()
                     });
+                    // clear message
+                    new_game.changes[0].push(Change {
+                        message: None,
+                        change_type: ChangeType::Message,
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    });
                 }
 
                 if !new_game.no_changes && new_game.human_player[new_game.current_player as usize] {
+                    // clear message
+                    new_game.changes[0].push(Change {
+                        change_type: ChangeType::Message,
+                        message: None,
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    });
                     new_game.hands[0].sort_by(card_sorter);
                     new_game.changes[0].append(
                         reorder_hand(
@@ -778,6 +778,15 @@ impl Game {
                     new_game.state = State::BidType;
                     // If the current player is human, add a change with bid options
                     if new_game.human_player[new_game.current_player as usize] {
+                        // clear message
+                        new_game.changes[0].push(Change {
+                            message: None,
+                            change_type: ChangeType::Message,
+                            object_id: -1,
+                            dest: Location::Message,
+                            ..Default::default()
+                        });
+                        let moves = new_game.get_moves();
                         new_game.changes[0].push(Change {
                             change_type: ChangeType::BidOptions,
                             object_id: -1, // No specific card associated with this change
@@ -785,9 +794,20 @@ impl Game {
                             dest: Location::BidOptions,
                             bid_options: Some(bid_options(
                                 new_game.bid_cards[new_game.current_player as usize],
+                                moves,
                             )),
                             ..Default::default()
                         });
+                    }
+                } else {
+                    if new_game.human_player[new_game.current_player as usize] {
+                        new_game.changes.push(vec![Change {
+                            message: Some(format!("Select your secondary bid card")),
+                            change_type: ChangeType::Message,
+                            object_id: -1,
+                            dest: Location::Message,
+                            ..Default::default()
+                        }]);
                     }
                 }
 
@@ -835,18 +855,6 @@ impl Game {
                 new_game.current_player = (new_game.current_player + 1) % 3;
                 // end trick
                 if new_game.current_trick.iter().flatten().count() == 3 {
-                    if !new_game.no_changes {
-                        println!(
-                            "trick finished: {}",
-                            new_game
-                                .current_trick
-                                .iter()
-                                .flatten()
-                                .map(|c| print_card(*c, false))
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        );
-                    }
                     let trick_winner = get_winner(
                         new_game.lead_suit,
                         new_game.trump_suit,
@@ -1006,38 +1014,75 @@ impl Game {
     }
 
     pub fn get_moves(self: &Game) -> Vec<i32> {
-        if self.state == State::TrumpSelect {
-            return vec![TRUMP, NO_TRUMP];
-        }
-        if self.state == State::BidType {
-            return (0..4).map(|x| x + BID_TYPE_OFFSET).collect();
-        }
-        if self.state == State::BidCard {
-            return self.hands[self.current_player as usize]
+        match self.state {
+            State::TrumpSelect => {
+                vec![TRUMP, NO_TRUMP]
+            }
+            State::BidType => {
+                if self.bid_cards[self.current_player as usize][0]
+                    .unwrap()
+                    .value
+                    == self.bid_cards[self.current_player as usize][1]
+                        .unwrap()
+                        .value
+                {
+                    // difference bids with the same value (e.g. 4 - 4 = 0) is not allowed
+                    // zero bids are always categorized as zero bids and are worth 6 points when made
+                    vec![BID_TYPE_EASY, BID_TYPE_TOP, BID_TYPE_ZERO]
+                } else {
+                    vec![
+                        BID_TYPE_EASY,
+                        BID_TYPE_TOP,
+                        BID_TYPE_DIFFERENCE,
+                        BID_TYPE_ZERO,
+                    ]
+                }
+            }
+            State::BidCard => self.hands[self.current_player as usize]
                 .iter()
                 .map(|c| move_offset(self.state, c))
-                .collect();
-        }
-        if self.state == State::DealerSelect {
-            return vec![DEALER_SELECT_CARD, DEALER_SELECT_CARD + 1];
-        }
-        let actions: Vec<i32>;
-        if self.lead_suit.is_some() {
-            actions = self.hands[self.current_player as usize]
-                .iter()
-                .filter(|c| Some(c.suit) == self.lead_suit)
-                .map(|c| move_offset(self.state, c))
-                .collect();
-            if !actions.is_empty() {
-                return actions;
+                .collect(),
+            State::DealerSelect => {
+                vec![DEALER_SELECT_CARD, DEALER_SELECT_CARD + 1]
+            }
+            _ => {
+                let actions: Vec<i32>;
+                if self.lead_suit.is_some() {
+                    actions = self.hands[self.current_player as usize]
+                        .iter()
+                        .filter(|c| Some(c.suit) == self.lead_suit)
+                        .map(|c| move_offset(self.state, c))
+                        .collect();
+                    if !actions.is_empty() {
+                        return actions;
+                    }
+                }
+                self.hands[self.current_player as usize]
+                    .iter()
+                    .map(|c| move_offset(self.state, c))
+                    .collect()
             }
         }
-        self.hands[self.current_player as usize]
-            .iter()
-            .map(|c| move_offset(self.state, c))
-            .collect()
     }
 }
+
+fn bid_options(bid_cards: [Option<Card>; 2], moves: Vec<i32>) -> Vec<BidOption> {
+    let mut bid_options: Vec<BidOption> = moves
+        .into_iter()
+        .map(|bid_option| BidOption {
+            id: bid_option,
+            description: offset_to_bid_type(bid_option).bid_display_detailed(bid_cards),
+        })
+        .collect();
+
+    bid_options.push(BidOption {
+        id: -1,
+        description: "Undo".to_string(),
+    });
+
+    bid_options
+}
+
 fn card_sorter(a: &Card, b: &Card) -> Ordering {
     match a.suit.cmp(&b.suit) {
         Ordering::Less => Ordering::Less,
@@ -1101,7 +1146,28 @@ fn show_playable(new_game: &Game) -> Vec<Change> {
     let mut changes: Vec<Change> = vec![];
 
     if new_game.current_player == 0 {
+        if new_game.state == State::BidCard && new_game.bid_cards[0][0].is_none() {
+            changes.push(Change {
+                message: Some(format!("Select your primary bid card")),
+                change_type: ChangeType::Message,
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            });
+        }
         if new_game.state == State::DealerSelect {
+            let message = if new_game.dealer_select[0].suit != new_game.dealer_select[1].suit {
+                "\nand name trump as its suit"
+            } else {
+                "\nand optionally name trump\nas its suit"
+            };
+            changes.push(Change {
+                change_type: ChangeType::Message,
+                message: Some(format!("Select a card to take{}", message)),
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            });
             for card in new_game.dealer_select.clone().into_iter() {
                 changes.push(Change {
                     object_id: card.id,
@@ -1147,7 +1213,9 @@ fn hide_playable(new_game: &Game) -> Vec<Change> {
     changes
 }
 
-impl ismcts::Game for Game {
+use duplicate::duplicate_item;
+#[duplicate_item(name; [ismcts::Game]; [ismctsbaseline::Game])]
+impl name for Game {
     type Move = i32;
     type PlayerTag = i32;
     type MoveList = Vec<i32>;

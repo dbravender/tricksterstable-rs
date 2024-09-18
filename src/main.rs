@@ -29,7 +29,7 @@ struct TestCase {
 fn verify_against_dart() -> io::Result<()> {
     let mut game: Game = games::szs::Game::new();
 
-    let file = File::open("data/testrun.json.all")?;
+    let file = File::open("data/szs.multiplegames.json")?;
     let reader = BufReader::new(file);
     let mut test_count: i32 = 0;
 
