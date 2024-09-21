@@ -295,16 +295,6 @@ dependencies = [
 [[package]]
 name = "ismcts"
 version = "0.1.0"
-source = "git+https://github.com/Deliquescence/ismcts?rev=50494a7#50494a7ce48a280b5e9c6d0bf6af07b2c1282f6d"
-dependencies = [
- "crossbeam",
- "ordered-float",
- "rand 0.7.3",
-]
-
-[[package]]
-name = "ismcts"
-version = "0.1.0"
 source = "git+https://github.com/Deliquescence/ismcts?rev=d5cd5ad#d5cd5adb79acd5141d152c7b7ec3759e93bdc3bf"
 dependencies = [
  "crossbeam",
@@ -741,7 +731,6 @@ dependencies = [
  "duplicate",
  "enum-iterator",
  "ismcts 0.1.0",
- "ismcts 0.1.0 (git+https://github.com/Deliquescence/ismcts?rev=50494a7)",
  "ismcts 0.1.0 (git+https://github.com/Deliquescence/ismcts?rev=d5cd5ad)",
  "memoize",
  "once_cell",

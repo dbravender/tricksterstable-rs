@@ -1162,7 +1162,9 @@ impl HotdogGame {
     }
 }
 
-impl ismcts::Game for HotdogGame {
+use duplicate::duplicate_item;
+#[duplicate_item(name; [ismcts::Game]; [ismctsbaseline::Game])]
+impl name for HotdogGame {
     type Move = i32;
     type PlayerTag = usize;
     type MoveList = Vec<i32>;
