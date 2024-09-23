@@ -294,8 +294,7 @@ impl Game {
                 // Allows undo
                 new_game.draw_decks[new_game.current_player as usize].retain(|c| c != card);
                 new_game.hands[new_game.current_player as usize].push(*card);
-            }
-            if new_game.hands[new_game.current_player as usize].contains(card) {
+            } else {
                 new_game.hands[new_game.current_player as usize].retain(|c| c != card);
                 new_game.draw_decks[new_game.current_player as usize].push(*card);
             }
