@@ -52,7 +52,7 @@ fn verify_against_dart() -> io::Result<()> {
         if test_case.action.is_none() {
             game = test_case.game_state.clone();
         } else {
-            game = game.clone_and_apply_move(test_case.action.unwrap());
+            game.apply_move(test_case.action.unwrap());
             game.dealer = test_case.game_state.dealer.clone();
             game.voids = vec![HashSet::new(), HashSet::new(), HashSet::new()];
             game.draw_decks = test_case.game_state.draw_decks.clone();
@@ -82,7 +82,7 @@ fn random_play() {
         while game.winner.is_none() {
             let mut actions = game.get_moves();
             actions.shuffle(&mut thread_rng());
-            game = game.clone_and_apply_move(*actions.first().expect("should have a move to make"));
+            game.apply_move(*actions.first().expect("should have a move to make"));
         }
         // print!(".");
         // io::stdout().flush().unwrap();
@@ -166,7 +166,7 @@ pub fn ismcts_play() {
                             .to_owned(),
                     )
                     .or_insert(0) += duration.as_millis();
-                game = game.clone_and_apply_move(mov);
+                game.apply_move(mov);
             }
 
             let high_score = game.scores.iter().reduce(|x, y| if x > y { x } else { y });

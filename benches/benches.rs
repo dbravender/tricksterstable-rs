@@ -16,7 +16,7 @@ fn szs_playthrough(no_changes: bool) {
     game.round = 4;
     while game.winner.is_none() {
         let action = *game.get_moves().first().unwrap();
-        game = game.clone_and_apply_move(action);
+        game = game.apply_move(action);
     }
 }
 

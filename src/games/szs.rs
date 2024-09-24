@@ -4,15 +4,14 @@ Designer: Taylor Reiner
 BoardGameGeek: https://boardgamegeek.com/boardgame/366458/short-zoot-suit
 */
 
+use crate::utils::shuffle_and_divide_matching_cards;
 use enum_iterator::{all, Sequence};
+use ismcts::IsmctsHandler;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::{min, Ordering};
 use std::collections::{HashMap, HashSet};
-use std::mem;
-
-use crate::utils::shuffle_and_divide_matching_cards;
 
 const DRAW: i32 = 0;
 const PASS: i32 = 1;
@@ -149,17 +148,17 @@ pub struct Change {
 pub struct Game {
     undo_players: HashSet<i32>,
     action_size: i32,
-    hands: Vec<Vec<Card>>,
-    pub draw_decks: Vec<Vec<Card>>,
-    shorts_piles: Vec<Vec<Card>>,
+    hands: [Vec<Card>; 3],
+    pub draw_decks: [Vec<Card>; 3],
+    shorts_piles: [Vec<Card>; 3],
     pub changes: Vec<Vec<Change>>,
-    tricks_taken: Vec<i32>,
-    current_trick: Vec<Option<Card>>,
+    tricks_taken: [i32; 3],
+    current_trick: [Option<Card>; 3],
     lead_suit: Option<Suit>,
     pub round: i32,
     pub scores: Vec<i32>,
     pub voids: Vec<HashSet<Suit>>,
-    current_player: i32,
+    pub current_player: i32,
     pub winner: Option<i32>,
     pub dealer: i32,
     state: State,
@@ -172,10 +171,9 @@ pub struct Game {
 impl Game {
     /// Factory to create a default game
     pub fn new() -> Game {
-        let game = Game::default();
-        let mut game = game.deal();
+        let mut game = Game::default();
+        game.deal();
         game.scores = vec![0, 0, 0];
-        game.changes.push(show_playable(&game));
         game
     }
 
@@ -192,28 +190,27 @@ impl Game {
         self.no_changes = true;
     }
 
-    fn deal(self: Game) -> Self {
-        let mut new_game = self.clone();
-        new_game.state = State::Discard;
-        new_game.current_trick = vec![None, None, None];
-        new_game.draw_players_remaining = (0..3).collect();
-        new_game.tricks_taken = vec![0, 0, 0];
-        new_game.hands = vec![vec![], vec![], vec![]];
-        new_game.draw_decks = vec![vec![], vec![], vec![]];
-        new_game.shorts_piles = vec![vec![], vec![], vec![]];
-        new_game.dealer = (new_game.dealer + 1) % 3;
-        new_game.current_player = new_game.dealer;
-        new_game.voids = vec![HashSet::new(), HashSet::new(), HashSet::new()];
+    fn deal(self: &mut Game) {
+        self.state = State::Discard;
+        self.current_trick = [None, None, None];
+        self.draw_players_remaining = (0..3).collect();
+        self.tricks_taken = [0, 0, 0];
+        self.hands = [vec![], vec![], vec![]];
+        self.draw_decks = [vec![], vec![], vec![]];
+        self.shorts_piles = [vec![], vec![], vec![]];
+        self.dealer = (self.dealer + 1) % 3;
+        self.current_player = self.dealer;
+        self.voids = vec![HashSet::new(), HashSet::new(), HashSet::new()];
         let mut cards = deck();
-        let deal_index: usize = new_game.changes.len();
+        let deal_index: usize = self.changes.len();
         let reorder_index = deal_index + 1;
-        new_game.changes.push(vec![]); // deal_index
-        new_game.changes.push(vec![]); // reorder_index
-        new_game.hands = vec![vec![], vec![], vec![]];
+        self.changes.push(vec![]); // deal_index
+        self.changes.push(vec![]); // reorder_index
+        self.hands = [vec![], vec![], vec![]];
         for y in 0..16 {
             for player in 0..3 {
                 let card = cards.pop().expect("cards should be available here");
-                new_game.changes[deal_index].push(Change {
+                self.changes[deal_index].push(Change {
                     change_type: ChangeType::Deal,
                     object_id: card.id,
                     dest: Location::Hand,
@@ -223,123 +220,122 @@ impl Game {
                     length: 16,
                     ..Default::default()
                 });
-                new_game.hands[player as usize].push(card);
+                self.hands[player as usize].push(card);
             }
         }
-        new_game.hands[0].sort_by(card_sorter);
-        new_game.changes[reorder_index].append(&mut reorder_hand(0, &new_game.hands[0]));
-        new_game
+        self.hands[0].sort_by(card_sorter);
+        self.changes[reorder_index].append(&mut reorder_hand(0, &self.hands[0]));
+        let playable_changes = self.show_playable();
+        self.changes.push(playable_changes);
     }
 
-    pub fn clone_and_apply_move(self: Game, action: i32) -> Self {
-        let mut new_game: Game = self.clone();
-        new_game.changes = vec![vec![]]; // card from player to table or discard to draw deck
-        if new_game.state == State::OptionalDraw {
+    pub fn apply_move(self: &mut Game, action: i32) {
+        self.changes = vec![vec![]]; // card from player to table or discard to draw deck
+        if !self.get_moves().contains(&action) {
+            panic!("illegal move");
+        }
+        if self.state == State::OptionalDraw {
             if action == DRAW {
                 // Once a player draws a card we don't know what their voids are
-                new_game.voids[new_game.current_player as usize] = HashSet::new();
-                let new_card: Card =
-                    new_game.draw_decks[new_game.current_player as usize].remove(0);
-                new_game.hands[new_game.current_player as usize].push(new_card);
-                new_game.hands[new_game.current_player as usize].sort_by(card_sorter);
-                new_game.changes[0].append(
+                self.voids[self.current_player as usize] = HashSet::new();
+                let new_card: Card = self.draw_decks[self.current_player as usize].remove(0);
+                self.hands[self.current_player as usize].push(new_card);
+                self.hands[self.current_player as usize].sort_by(card_sorter);
+                self.changes[0].append(
                     reorder_hand(
-                        new_game.current_player,
-                        &new_game.hands[new_game.current_player as usize].to_vec(),
+                        self.current_player,
+                        &self.hands[self.current_player as usize].to_vec(),
                     )
                     .as_mut(),
                 );
-                for card in &new_game.draw_decks[new_game.current_player as usize] {
-                    new_game.changes[0].push(Change {
+                for card in &self.draw_decks[self.current_player as usize] {
+                    self.changes[0].push(Change {
                         change_type: ChangeType::Discard,
                         object_id: card.id,
-                        source_offset: new_game.current_player,
+                        source_offset: self.current_player,
                         dest: Location::DrawDeck,
-                        player: new_game.current_player,
-                        cards_remaining: new_game.draw_decks[new_game.current_player as usize].len()
-                            as i32,
+                        player: self.current_player,
+                        cards_remaining: self.draw_decks[self.current_player as usize].len() as i32,
                         ..Default::default()
                     });
                 }
             }
-            let mut new_players_remaining = new_game.draw_players_remaining.clone();
-            new_players_remaining.retain(|&x| x != new_game.current_player);
-            new_game.draw_players_remaining = new_players_remaining;
-            if new_game.draw_players_remaining.is_empty() {
-                if let Some(finished_game) = check_hand_end(&new_game) {
-                    return finished_game;
+            let mut new_players_remaining = self.draw_players_remaining.clone();
+            new_players_remaining.retain(|&x| x != self.current_player);
+            self.draw_players_remaining = new_players_remaining;
+            if self.draw_players_remaining.is_empty() {
+                if self.check_hand_end() {
+                    return;
                 }
-                new_game.current_player = new_game.lead_player;
-                new_game.state = State::Play;
+                self.current_player = self.lead_player;
+                self.state = State::Play;
             } else {
-                new_game.current_player = *new_game
+                self.current_player = *self
                     .draw_players_remaining
                     .first()
                     .expect("draw_players_remaining cannot be empty here");
             }
-            let change_offset = &new_game.changes.len() - 1;
-            let mut new_changes = show_playable(&new_game);
-            new_game.changes[change_offset].append(&mut new_changes);
-            return new_game;
+            let change_offset = &self.changes.len() - 1;
+            let mut new_changes = self.show_playable();
+            self.changes[change_offset].append(&mut new_changes);
+            return;
         }
-        if new_game.state == State::Discard {
-            let mut all_cards = new_game.hands[new_game.current_player as usize].clone();
-            all_cards.append(&mut new_game.draw_decks[new_game.current_player as usize].clone());
+        if self.state == State::Discard {
+            let mut all_cards = self.hands[self.current_player as usize].clone();
+            all_cards.append(&mut self.draw_decks[self.current_player as usize].clone());
             let card_id = action - DISCARD_OFFSET;
             let card = all_cards
                 .iter()
                 .find(|c| c.id == card_id)
                 .expect("player played a card that should exist");
-            if new_game.draw_decks[new_game.current_player as usize].contains(card) {
+            if self.draw_decks[self.current_player as usize].contains(card) {
                 // Allows undo
-                new_game.draw_decks[new_game.current_player as usize].retain(|c| c != card);
-                new_game.hands[new_game.current_player as usize].push(*card);
+                self.draw_decks[self.current_player as usize].retain(|c| c != card);
+                self.hands[self.current_player as usize].push(*card);
             } else {
-                new_game.hands[new_game.current_player as usize].retain(|c| c != card);
-                new_game.draw_decks[new_game.current_player as usize].push(*card);
+                self.hands[self.current_player as usize].retain(|c| c != card);
+                self.draw_decks[self.current_player as usize].push(*card);
             }
             let mut offset: i32 = 0;
-            if new_game.current_player == 0 {
-                for card in &new_game.draw_decks[new_game.current_player as usize] {
-                    new_game.changes[0].push(Change {
+            if self.current_player == 0 {
+                for card in &self.draw_decks[self.current_player as usize] {
+                    self.changes[0].push(Change {
                         change_type: ChangeType::Discard,
                         object_id: card.id,
-                        source_offset: new_game.current_player,
+                        source_offset: self.current_player,
                         dest: Location::StageDrawDeck,
                         dest_offset: offset,
-                        player: new_game.current_player,
-                        cards_remaining: new_game.draw_decks[new_game.current_player as usize].len()
-                            as i32,
+                        player: self.current_player,
+                        cards_remaining: self.draw_decks[self.current_player as usize].len() as i32,
                         ..Default::default()
                     });
                     offset += 1;
                 }
             } else {
-                new_game.changes[0].push(Change {
+                self.changes[0].push(Change {
                     change_type: ChangeType::Discard,
                     object_id: card.id,
-                    source_offset: new_game.current_player,
+                    source_offset: self.current_player,
                     dest: Location::DrawDeck,
                     dest_offset: offset,
-                    player: new_game.current_player,
-                    cards_remaining: new_game.draw_decks[new_game.current_player as usize].len()
-                        as i32,
+                    player: self.current_player,
+                    cards_remaining: self.draw_decks[self.current_player as usize].len() as i32,
                     ..Default::default()
                 });
             }
-            new_game.hands[new_game.current_player as usize].sort_by(card_sorter);
-            new_game.changes[0].append(
+            self.hands[self.current_player as usize].sort_by(card_sorter);
+            self.changes[0].append(
                 reorder_hand(
-                    new_game.current_player,
-                    &new_game.hands[new_game.current_player as usize],
+                    self.current_player,
+                    &self.hands[self.current_player as usize],
                 )
                 .as_mut(),
             );
-            if new_game.draw_decks[new_game.current_player as usize].len() == 5 {
+            if self.draw_decks[self.current_player as usize].len() == 5 {
                 if !self.no_changes {
-                    if new_game.current_player == 0 {
+                    if self.current_player == 0 {
                         let mut cards_remaining_changes: Vec<Change> = vec![];
-                        for card in &new_game.draw_decks[0] {
+                        for card in &self.draw_decks[0] {
                             cards_remaining_changes.push(Change {
                                 object_id: card.id,
                                 change_type: ChangeType::Discard,
@@ -348,71 +344,71 @@ impl Game {
                                 ..Default::default()
                             });
                         }
-                        new_game.changes.push(cards_remaining_changes);
+                        self.changes.push(cards_remaining_changes);
                     }
                 }
-                new_game.current_player = (new_game.current_player + 1) % 3;
+                self.current_player = (self.current_player + 1) % 3;
             }
-            if new_game.draw_decks[new_game.current_player as usize].len() == 5 {
+            if self.draw_decks[self.current_player as usize].len() == 5 {
                 for player in 0..3 {
-                    new_game.draw_decks[player].shuffle(&mut thread_rng());
+                    self.draw_decks[player].shuffle(&mut thread_rng());
                 }
-                new_game.state = State::OptionalDraw;
+                self.state = State::OptionalDraw;
             }
-            let change_offset = &new_game.changes.len() - 1;
-            let mut new_changes = show_playable(&new_game);
-            new_game.changes[change_offset].append(&mut new_changes);
-            return new_game;
+            let change_offset = &self.changes.len() - 1;
+            let mut new_changes = self.show_playable();
+            self.changes[change_offset].append(&mut new_changes);
+            return;
         }
         let card_id = action - PLAY_OFFSET;
-        let card = &new_game.hands[new_game.current_player as usize]
+        let card = &self.hands[self.current_player as usize]
             .iter()
             .find(|c| c.id == card_id)
             .expect("this card has to be in the player's hand")
             .clone();
-        new_game.hands[new_game.current_player as usize].retain(|c| c.id != card_id);
+        self.hands[self.current_player as usize].retain(|c| c.id != card_id);
         if !self.no_changes {
-            new_game.changes[0].push(Change {
+            self.changes[0].push(Change {
                 change_type: ChangeType::Play,
                 object_id: card_id,
-                source_offset: new_game.current_player,
+                source_offset: self.current_player,
                 dest: Location::Play,
-                dest_offset: new_game.current_player,
-                player: new_game.current_player,
+                dest_offset: self.current_player,
+                player: self.current_player,
                 ..Default::default()
             });
-            new_game.changes[0].append(
+            self.changes[0].append(
                 reorder_hand(
-                    new_game.current_player,
-                    &new_game.hands[new_game.current_player as usize],
+                    self.current_player,
+                    &self.hands[self.current_player as usize],
                 )
                 .as_mut(),
             );
         }
-        let last_change = new_game.changes.len() - 1;
-        let mut changes = hide_playable(&new_game);
-        new_game.changes[last_change].append(&mut changes);
-        new_game.current_trick[new_game.current_player as usize] = Some(*card);
-        if new_game.lead_suit.is_none() {
-            new_game.lead_suit = Some(card.suit);
+        let last_change = self.changes.len() - 1;
+        let mut changes = self.hide_playable();
+        self.changes[last_change].append(&mut changes);
+        self.current_trick[self.current_player as usize] = Some(*card);
+        if self.lead_suit.is_none() {
+            self.lead_suit = Some(card.suit);
         } else {
-            if Some(card.suit) != new_game.lead_suit {
+            if Some(card.suit) != self.lead_suit {
                 // Player has revealed a void
-                new_game.voids[new_game.current_player as usize].insert(card.suit);
+                self.voids[self.current_player as usize].insert(card.suit);
             }
         }
-        new_game.current_player = (new_game.current_player + 1) % 3;
+        self.current_player = (self.current_player + 1) % 3;
         // end trick
-        if new_game.current_trick.iter().flatten().count() == 3 {
-            let trick_winner = get_winner(new_game.lead_suit, &new_game.current_trick);
-            let winning_card = new_game.current_trick[trick_winner as usize]
+        if self.current_trick.iter().flatten().count() == 3 {
+            let trick_winner = get_winner(self.lead_suit, self.current_trick);
+            let winning_card = self.current_trick[trick_winner as usize]
                 .expect("there has to be a trick_winner card");
-            new_game.tricks_taken[trick_winner as usize] += 1;
+            self.tricks_taken[trick_winner as usize] += 1;
             // winner of the trick leads
-            new_game.current_player = trick_winner;
-            new_game.lead_player = trick_winner;
+            self.current_player = trick_winner;
+            self.lead_player = trick_winner;
             if !self.no_changes {
-                new_game.changes.push(vec![
+                self.changes.push(vec![
                     Change {
                         change_type: ChangeType::ShowWinningCard,
                         object_id: winning_card.id,
@@ -429,68 +425,67 @@ impl Game {
                         object_id: winning_card.id,
                         change_type: ChangeType::HidePlayable,
                         dest: Location::Hand,
-                        dest_offset: new_game.current_player,
+                        dest_offset: self.current_player,
                         ..Default::default()
                     },
                 ]);
             }
-            new_game.changes.push(vec![]); // trick back to player
-            let offset: usize = new_game.changes.len() - 1;
+            self.changes.push(vec![]); // trick back to player
+            let offset: usize = self.changes.len() - 1;
             for player in 0..3 {
                 let card =
-                    new_game.current_trick[player].expect("each player should have played a card");
-                if Some(card.suit) == new_game.lead_suit {
-                    new_game.changes[offset].push(Change {
+                    self.current_trick[player].expect("each player should have played a card");
+                if Some(card.suit) == self.lead_suit {
+                    self.changes[offset].push(Change {
                         change_type: ChangeType::TricksToWinner,
                         object_id: card.id,
                         source_offset: player as i32,
                         dest: Location::TricksTaken,
                         player: trick_winner,
-                        tricks_taken: new_game.tricks_taken[trick_winner as usize],
+                        tricks_taken: self.tricks_taken[trick_winner as usize],
                         ..Default::default()
                     });
                 } else {
-                    new_game.shorts_piles[player].push(card);
-                    new_game.changes[offset].push(Change {
+                    self.shorts_piles[player].push(card);
+                    self.changes[offset].push(Change {
                         change_type: ChangeType::TrickToShortsPile,
                         object_id: card.id,
                         source_offset: player as i32,
                         dest: Location::ShortsPile,
                         player: player as i32,
                         dest_offset: trick_winner,
-                        tricks_taken: new_game.shorts_piles[player].len() as i32,
+                        tricks_taken: self.shorts_piles[player].len() as i32,
                         ..Default::default()
                     });
                 }
             }
-            new_game.draw_players_remaining = vec![];
+            self.draw_players_remaining = vec![];
             for player_offset in 0..3 {
-                let player = (player_offset + new_game.lead_player) % 3;
-                if !new_game.draw_decks[player as usize].is_empty() {
-                    new_game.draw_players_remaining.push(player);
+                let player = (player_offset + self.lead_player) % 3;
+                if !self.draw_decks[player as usize].is_empty() {
+                    self.draw_players_remaining.push(player);
                 }
             }
-            if !new_game.draw_players_remaining.is_empty() {
-                new_game.current_player = *new_game
+            if !self.draw_players_remaining.is_empty() {
+                self.current_player = *self
                     .draw_players_remaining
                     .first()
                     .expect("draw_players_remaining unexpectedly empty");
-                new_game.state = State::OptionalDraw;
+                self.state = State::OptionalDraw;
             } else {
-                if let Some(finished_game) = check_hand_end(&new_game) {
-                    return finished_game;
+                if self.check_hand_end() {
+                    return;
                 }
 
-                new_game.current_player = new_game.lead_player;
-                new_game.state = State::Play;
+                self.current_player = self.lead_player;
+                self.state = State::Play;
             }
-            new_game.current_trick = vec![None, None, None];
-            new_game.lead_suit = None;
+            self.current_trick = [None, None, None];
+            self.lead_suit = None;
         }
-        let change_offset = &new_game.changes.len() - 1;
-        let mut new_changes = show_playable(&new_game);
-        new_game.changes[change_offset].append(&mut new_changes);
-        new_game
+        let change_offset = &self.changes.len() - 1;
+        let mut new_changes = self.show_playable();
+        self.changes[change_offset].append(&mut new_changes);
     }
 
     pub fn get_moves(self: &Game) -> Vec<i32> {
@@ -532,6 +527,162 @@ impl Game {
             .map(|c| move_offset(self.state, c))
             .collect();
     }
+
+    fn check_hand_end(self: &mut Game) -> bool {
+        if !self.hands.iter().any(|x| x.is_empty()) {
+            return false;
+        }
+
+        let original_scores: Vec<i32> = self.scores.clone();
+        let last_change = self.changes.len() - 1;
+        let mut changes = self.hide_playable();
+        self.changes[last_change].append(&mut changes);
+        self.scores = score_game(
+            self.scores.clone(),
+            &self.tricks_taken,
+            self.shorts_piles.iter().map(|sp| sp.len() as i32).collect(),
+        );
+        let mut max_score = 0;
+        for player in 0..3 {
+            if self.scores[player] > max_score {
+                max_score = self.scores[player];
+            }
+        }
+        if !self.no_changes {
+            for player in 0..3 {
+                self.changes.push(vec![Change {
+                    change_type: ChangeType::Score,
+                    object_id: player,
+                    player,
+                    dest: Location::Score,
+                    start_score: original_scores[player as usize],
+                    end_score: self.scores[player as usize],
+                    ..Default::default()
+                }]);
+            }
+        }
+        let mut high_score: i32 = 0;
+        let mut winners: Vec<i32> = vec![];
+        for player in 0..3 {
+            let score = self.scores[player];
+            if score > high_score {
+                high_score = score;
+            }
+        }
+        for player in 0..3 {
+            let score = self.scores[player];
+            if score == high_score {
+                winners.push(player as i32);
+            }
+        }
+        if self.round >= 3 {
+            self.winner = Some(winners[0]);
+            self.changes.push(vec![Change {
+                change_type: ChangeType::GameOver,
+                dest: Location::Deck,
+                ..Default::default()
+            }]);
+            return true;
+        } else {
+            self.round += 1;
+            self.changes.push(vec![Change {
+                change_type: ChangeType::Shuffle,
+                object_id: 0,
+                source_offset: 0,
+                dest: Location::Deck,
+                dest_offset: 0,
+                ..Default::default()
+            }]);
+            self.deal();
+        }
+        return true;
+    }
+
+    fn show_playable(self: &mut Game) -> Vec<Change> {
+        if self.no_changes {
+            return vec![];
+        }
+        let mut changes: Vec<Change> = vec![];
+
+        if self.current_player == 0 {
+            if self.state == State::OptionalDraw {
+                changes.push(Change {
+                    object_id: -1,
+                    change_type: ChangeType::ShowPlayable,
+                    dest: Location::Hand,
+                    dest_offset: self.current_player,
+                    ..Default::default()
+                });
+                changes.push(Change {
+                    object_id: -2,
+                    change_type: ChangeType::ShowPlayable,
+                    dest: Location::Hand,
+                    dest_offset: self.current_player,
+                    ..Default::default()
+                });
+            } else {
+                changes.push(Change {
+                    object_id: -1,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    dest_offset: self.current_player,
+                    ..Default::default()
+                });
+                changes.push(Change {
+                    object_id: -2,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    dest_offset: self.current_player,
+                    ..Default::default()
+                });
+                for action in self.get_moves() {
+                    changes.push(Change {
+                        object_id: card_offset(self.state, action),
+                        change_type: ChangeType::ShowPlayable,
+                        dest: Location::Hand,
+                        dest_offset: self.current_player,
+                        ..Default::default()
+                    });
+                }
+            }
+            changes
+        } else {
+            let mut hide_changes = self.hide_playable();
+            changes.append(&mut hide_changes);
+            changes
+        }
+    }
+
+    fn hide_playable(self: &Game) -> Vec<Change> {
+        if self.no_changes {
+            return vec![];
+        }
+        let mut changes: Vec<Change> = vec![];
+        for card in &self.hands[0] {
+            changes.push(Change {
+                object_id: card.id,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                dest_offset: self.current_player,
+                ..Default::default()
+            });
+        }
+        changes.push(Change {
+            object_id: -1,
+            change_type: ChangeType::HidePlayable,
+            dest: Location::Hand,
+            dest_offset: self.current_player,
+            ..Default::default()
+        });
+        changes.push(Change {
+            object_id: -2,
+            change_type: ChangeType::HidePlayable,
+            dest: Location::Hand,
+            dest_offset: self.current_player,
+            ..Default::default()
+        });
+        changes
+    }
 }
 
 fn card_sorter(a: &Card, b: &Card) -> Ordering {
@@ -542,7 +693,7 @@ fn card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-pub fn get_winner(lead_suit: Option<Suit>, trick: &Vec<Option<Card>>) -> i32 {
+pub fn get_winner(lead_suit: Option<Suit>, trick: [Option<Card>; 3]) -> i32 {
     let mut card_id_to_player: HashMap<i32, i32> = HashMap::new();
     for (player, card) in trick.iter().enumerate() {
         if let Some(card) = card {
@@ -567,85 +718,9 @@ pub fn value_for_card(lead_suit: Option<Suit>, card: &Card) -> i32 {
     card.value + lead_bonus
 }
 
-fn check_hand_end(new_game: &Game) -> Option<Game> {
-    if !new_game.hands.iter().any(|x| x.is_empty()) {
-        return None;
-    }
-
-    let mut new_game = new_game.clone();
-
-    let original_scores: Vec<i32> = new_game.scores.clone();
-    let last_change = new_game.changes.len() - 1;
-    let mut changes = hide_playable(&new_game);
-    new_game.changes[last_change].append(&mut changes);
-    new_game.scores = score_game(
-        new_game.scores,
-        &new_game.tricks_taken,
-        new_game
-            .shorts_piles
-            .iter()
-            .map(|sp| sp.len() as i32)
-            .collect(),
-    );
-    let mut max_score = 0;
-    for player in 0..3 {
-        if new_game.scores[player] > max_score {
-            max_score = new_game.scores[player];
-        }
-    }
-    if !new_game.no_changes {
-        for player in 0..3 {
-            new_game.changes.push(vec![Change {
-                change_type: ChangeType::Score,
-                object_id: player,
-                player,
-                dest: Location::Score,
-                start_score: original_scores[player as usize],
-                end_score: new_game.scores[player as usize],
-                ..Default::default()
-            }]);
-        }
-    }
-    let mut high_score: i32 = 0;
-    let mut winners: Vec<i32> = vec![];
-    for player in 0..3 {
-        let score = new_game.scores[player];
-        if score > high_score {
-            high_score = score;
-        }
-    }
-    for player in 0..3 {
-        let score = new_game.scores[player];
-        if score == high_score {
-            winners.push(player as i32);
-        }
-    }
-    if new_game.round >= 3 {
-        new_game.winner = Some(winners[0]);
-        new_game.changes.push(vec![Change {
-            change_type: ChangeType::GameOver,
-            dest: Location::Deck,
-            ..Default::default()
-        }]);
-        return Some(new_game);
-    } else {
-        new_game.round += 1;
-        new_game.changes.push(vec![Change {
-            change_type: ChangeType::Shuffle,
-            object_id: 0,
-            source_offset: 0,
-            dest: Location::Deck,
-            dest_offset: 0,
-            ..Default::default()
-        }]);
-        new_game = new_game.deal();
-    }
-    Some(new_game)
-}
-
 pub fn score_game(
     original_scores: Vec<i32>,
-    tricks_taken: &Vec<i32>,
+    tricks_taken: &[i32; 3],
     shorts_pile_lengths: Vec<i32>,
 ) -> Vec<i32> {
     let mut scores = original_scores.clone();
@@ -674,92 +749,6 @@ pub fn reorder_hand(player: i32, hand: &Vec<Card>) -> Vec<Change> {
             ..Default::default()
         });
     }
-    changes
-}
-
-fn show_playable(new_game: &Game) -> Vec<Change> {
-    if new_game.no_changes {
-        return vec![];
-    }
-    let mut changes: Vec<Change> = vec![];
-
-    if new_game.current_player == 0 {
-        if new_game.state == State::OptionalDraw {
-            changes.push(Change {
-                object_id: -1,
-                change_type: ChangeType::ShowPlayable,
-                dest: Location::Hand,
-                dest_offset: new_game.current_player,
-                ..Default::default()
-            });
-            changes.push(Change {
-                object_id: -2,
-                change_type: ChangeType::ShowPlayable,
-                dest: Location::Hand,
-                dest_offset: new_game.current_player,
-                ..Default::default()
-            });
-        } else {
-            changes.push(Change {
-                object_id: -1,
-                change_type: ChangeType::HidePlayable,
-                dest: Location::Hand,
-                dest_offset: new_game.current_player,
-                ..Default::default()
-            });
-            changes.push(Change {
-                object_id: -2,
-                change_type: ChangeType::HidePlayable,
-                dest: Location::Hand,
-                dest_offset: new_game.current_player,
-                ..Default::default()
-            });
-            for action in new_game.get_moves() {
-                changes.push(Change {
-                    object_id: card_offset(new_game.state, action),
-                    change_type: ChangeType::ShowPlayable,
-                    dest: Location::Hand,
-                    dest_offset: new_game.current_player,
-                    ..Default::default()
-                });
-            }
-        }
-        changes
-    } else {
-        let mut hide_changes = hide_playable(&new_game);
-        changes.append(&mut hide_changes);
-        changes
-    }
-}
-
-fn hide_playable(new_game: &Game) -> Vec<Change> {
-    if new_game.no_changes {
-        return vec![];
-    }
-    let mut changes: Vec<Change> = vec![];
-    for card in &new_game.hands[0] {
-        changes.push(Change {
-            object_id: card.id,
-            change_type: ChangeType::HidePlayable,
-            dest: Location::Hand,
-            dest_offset: new_game.current_player,
-            ..Default::default()
-        });
-    }
-    changes.push(Change {
-        object_id: -1,
-        change_type: ChangeType::HidePlayable,
-        dest: Location::Hand,
-        dest_offset: new_game.current_player,
-        ..Default::default()
-    });
-    changes.push(Change {
-        object_id: -2,
-        change_type: ChangeType::HidePlayable,
-        dest: Location::Hand,
-        dest_offset: new_game.current_player,
-        ..Default::default()
-    });
     changes
 }
 
@@ -829,8 +818,7 @@ impl ismcts::Game for Game {
     }
 
     fn make_move(&mut self, mov: &Self::Move) {
-        // FIXME - updating in place would be much faster
-        let _ = mem::replace(self, self.clone().clone_and_apply_move(*mov));
+        self.apply_move(*mov);
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
@@ -862,6 +850,19 @@ impl ismcts::Game for Game {
     }
 }
 
+pub fn get_mcts_move(game: &Game, iterations: i32) -> i32 {
+    let mut new_game = game.clone();
+    new_game.no_changes = true;
+    new_game.scores = vec![0, 0, 0];
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 8;
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
+    ismcts.best_move().expect("should have a move to make")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,14 +886,14 @@ mod tests {
         for _ in 0..15 {
             assert_eq!(game.state, State::Discard);
             let action = *game.get_moves().first().unwrap();
-            game = game.clone_and_apply_move(action);
+            game.apply_move(action);
         }
         assert_eq!(game.state, State::OptionalDraw);
         assert!(game.draw_decks.iter().all(|dd| dd.len() == 5));
         assert!(game.hands.iter().all(|h| h.len() == 11));
         for _ in 0..3 {
             assert_eq!(game.state, State::OptionalDraw);
-            game = game.clone_and_apply_move(DRAW);
+            game.apply_move(DRAW);
         }
         // each player drew a card so we should have 4 left in
         // each draw deck
@@ -901,7 +902,7 @@ mod tests {
         assert_eq!(game.state, State::Play);
         for _ in 0..3 {
             let action = *game.get_moves().first().unwrap();
-            game = game.clone_and_apply_move(action);
+            game.apply_move(action);
         }
         assert_eq!(game.tricks_taken.iter().sum::<i32>(), 1);
 
@@ -913,7 +914,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
-                &vec![
+                [
                     Some(Card {
                         id: 0,
                         value: 7,
@@ -929,11 +930,6 @@ mod tests {
                         value: 9,
                         suit: Suit::Blue
                     }),
-                    Some(Card {
-                        id: 3,
-                        value: 1,
-                        suit: Suit::Yellow
-                    }),
                 ]
             ),
             2
@@ -941,7 +937,7 @@ mod tests {
         assert_eq!(
             get_winner(
                 Some(Suit::Blue),
-                &vec![
+                [
                     Some(Card {
                         id: 0,
                         value: 9,
@@ -957,11 +953,6 @@ mod tests {
                         value: 1,
                         suit: Suit::Red
                     }),
-                    Some(Card {
-                        id: 3,
-                        value: 7,
-                        suit: Suit::Blue
-                    }),
                 ]
             ),
             0
@@ -974,12 +965,12 @@ mod tests {
         game.round = 4;
         while game.winner.is_none() {
             let action = *game.get_moves().first().unwrap();
-            game = game.clone_and_apply_move(action);
+            game.apply_move(action);
         }
     }
 
     struct ScoreCase {
-        tricks_taken: Vec<i32>,
+        tricks_taken: [i32; 3],
         shorts: Vec<i32>,
         expected_scores: Vec<i32>,
     }
@@ -994,14 +985,14 @@ mod tests {
             // 2: Ditka won 3 tricks and has 2 shorts: 3 points for 3 won tricks
             //    and 6 points for the 2 unequal pairs: 9 total.
             ScoreCase {
-                tricks_taken: vec![1, 3, 3],
+                tricks_taken: [1, 3, 3],
                 shorts: vec![1, 3, 2],
                 expected_scores: vec![6, 18, 9],
             },
             // 0: Smokey won 1 trick and shorted 6 times: 1 point for 1 won trick
             //    and 3 points for the 1 pair: 4 total
             ScoreCase {
-                tricks_taken: vec![1, 0, 0],
+                tricks_taken: [1, 0, 0],
                 shorts: vec![6, 0, 0],
                 expected_scores: vec![4, 0, 0],
             },
