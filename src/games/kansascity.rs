@@ -655,49 +655,25 @@ impl ismcts::Game for KansasCityGame {
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
         if self.experiment {
-            // Check if there's a winner
             if let Some(winner) = self.winner {
                 return Some(if winner == player { 1.0 } else { -1.0 });
             }
 
-            // Hand is not over yet, return None
             if self.winner.is_none() {
                 return None;
             }
 
-            let current_player_score = self.scores[player] as f64;
+            let player_score = self.scores[player] as f64; // The overall score for the player
 
-            // If the current player's score is 0, return -1.0 (loss)
-            if current_player_score == 0.0 {
-                return Some(-1.0);
-            }
+            // Define expected minimum and maximum scores
+            let min_score = 0.0; // Minimum possible score (if no tricks or 4s are captured)
+            let max_score = 30.0; // Maximum possible score (for 3 tricks and several 4s captured)
 
-            let other_player_score = self
-                .scores
-                .iter()
-                .enumerate()
-                .filter(|(p, _)| *p != self.current_player)
-                .map(|(_, &score)| score as f64)
-                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
+            // Scale the player's score to the range [-1.0, 1.0]
+            let normalized_score = (player_score - min_score) / (max_score - min_score);
 
-            // Calculate the score difference
-            let score_difference = (current_player_score - other_player_score).abs();
-
-            // Scale the score difference (e.g., divide by 10 to keep values manageable)
-            let scaled_difference = (score_difference / 10.0).min(1.0);
-
-            // If current player's score is higher, calculate a result based on the win margin
-            if current_player_score > other_player_score {
-                return Some(1.0 - scaled_difference); // closer to 1.0 for small differences, smaller for larger differences
-            }
-            // If scores are the same, return 0.0 (draw)
-            else if current_player_score == other_player_score {
-                return Some(0.0);
-            }
-            // If the other player's score is higher, calculate a result based on the loss margin
-            else {
-                return Some(-1.0 + scaled_difference); // closer to -1.0 for large differences, closer to 0.0 for small differences
-            }
+            // Return the scaled result
+            return Some(2.0 * normalized_score - 1.0); // Scale to range [-1.0, 1.0]
         }
         if let Some(winner) = self.winner {
             // someone won the game
