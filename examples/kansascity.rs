@@ -10,18 +10,14 @@ fn main() {
         //println!("{:?}", &game);
         game.round = 5; // force single hand
         while game.winner.is_none() {
-            let mut iterations = 1000;
+            let iterations = 500;
             let action = if game.current_player == 0 || game.current_player == 2 {
                 let mut game = game.clone();
                 game.experiment = false;
-                let mut moves = game.get_moves();
-                moves.shuffle(&mut thread_rng());
-                moves[0]
-                //get_mcts_move(&game, iterations, false)
+                get_mcts_move(&game, iterations, false)
             } else {
                 let mut game = game.clone();
                 game.experiment = true;
-                iterations = 500;
                 get_mcts_move(&game, iterations, false)
             };
 
