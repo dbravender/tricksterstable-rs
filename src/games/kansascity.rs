@@ -612,6 +612,7 @@ impl ismcts::Game for KansasCityGame {
         for p1 in 0..4 {
             for p2 in 0..4 {
                 if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
+                    // Don't swap current player's cards - player knows exactly what they have
                     continue;
                 }
 
@@ -624,12 +625,21 @@ impl ismcts::Game for KansasCityGame {
                     self.hands[p2 as usize].clone(),
                 ];
 
-                // allow swapping of any cards that are not in the combined void set
-                shuffle_and_divide_matching_cards(
-                    |c: &Card| !combined_voids.contains(&c.suit),
-                    &mut new_hands,
-                    rng,
-                );
+                for value in 1..=8 {
+                    shuffle_and_divide_matching_cards(
+                        |c: &Card| {
+                            // Trump cards are visible - do not swap
+                            c.suit != Suit::Trump
+                                 // Do not swap cards where one player has a known void in that suit
+                                && !combined_voids.contains(&c.suit)
+                                // Values are visible on the backs of cards, only exchange
+                                // cards with the same value
+                                && c.value == value
+                        },
+                        &mut new_hands,
+                        rng,
+                    );
+                }
 
                 self.hands[p1 as usize] = new_hands[0].clone();
                 self.hands[p2 as usize] = new_hands[1].clone();
