@@ -10,6 +10,7 @@
 | Short Zoot Suit       | ✅                                  | ✅                                         | ✅ (not yet used)                   | ✅ never pass on a draw when losing, pass when winning (heuristic not used in pure ISMCTS Rust implementation)                                                    |
 | Dealer's Dilemma      | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
 | Hotdog                | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
+| Kansas City                | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
 
 * Magic Trick implementation (in Dart): https://github.com/dbravender/magictrick
 * Version of SIMPLE used to train AIs: https://github.com/davidADSP/SIMPLE/pull/34
