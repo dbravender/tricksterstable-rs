@@ -32,10 +32,10 @@ static ID_TO_CARD: Lazy<HashMap<i32, Card>> = Lazy::new(|| {
 #[serde(rename_all = "camelCase")]
 pub enum State {
     #[default]
-    // Optionally select a card from your hand to convert it to trump
-    OptionallyPromoteTrump,
     // Trick play
     Play,
+    // Optionally select a card from your hand to convert it to trump
+    OptionallyPromoteTrump,
 }
 
 #[derive(
@@ -109,7 +109,6 @@ pub enum ChangeType {
 pub struct Change {
     #[serde(rename(serialize = "type", deserialize = "type"))]
     pub change_type: ChangeType,
-    #[serde(rename(serialize = "id", deserialize = "id"))]
     object_id: usize,
     dest: Location,
     tricks_taken: i32,
@@ -297,6 +296,7 @@ impl KansasCityGame {
                         index,
                         Change {
                             change_type: ChangeType::PromoteToTrump,
+                            dest: Location::Hand,
                             object_id: card.id as usize,
                             ..Default::default()
                         },
