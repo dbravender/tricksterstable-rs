@@ -209,8 +209,14 @@ impl KansasCityGame {
                 self.hands[player].push(card);
             }
         }
-        self.hands[0].sort_by(card_sorter);
-        self.reorder_hand(0, true);
+        for player in 0..4 {
+            self.hands[player].sort_by(if player == 0 {
+                human_card_sorter
+            } else {
+                opponent_card_sorter
+            });
+            self.reorder_hand(player, player == 0);
+        }
     }
 
     pub fn deck() -> Vec<Card> {
@@ -297,10 +303,17 @@ impl KansasCityGame {
                         Change {
                             change_type: ChangeType::PromoteToTrump,
                             dest: Location::Hand,
+                            player: self.current_player,
                             object_id: card.id as usize,
                             ..Default::default()
                         },
                     );
+                    self.hands[self.current_player].sort_by(if self.current_player == 0 {
+                        human_card_sorter
+                    } else {
+                        opponent_card_sorter
+                    });
+                    self.reorder_hand(self.current_player, true);
                 }
                 self.current_player = (self.current_player + 1) % 4;
 
@@ -369,19 +382,23 @@ impl KansasCityGame {
                         * 2;
 
                     let index = self.new_change();
-                    self.add_change(
-                        index,
-                        Change {
-                            object_id: self.lead_player,
-                            player: self.lead_player,
-                            dest: Location::Score,
-                            start_score: self.scores[self.lead_player],
-                            end_score: self.scores[self.lead_player] + points,
-                            ..Default::default()
-                        },
-                    );
-                    // Record score change
-                    self.scores[self.lead_player] += points;
+
+                    if points > 0 {
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::Score,
+                                object_id: self.lead_player,
+                                player: self.lead_player,
+                                dest: Location::Score,
+                                start_score: self.scores[self.lead_player],
+                                end_score: self.scores[self.lead_player] + points,
+                                ..Default::default()
+                            },
+                        );
+                        // Record score change
+                        self.scores[self.lead_player] += points;
+                    }
 
                     self.state = State::OptionallyPromoteTrump;
 
@@ -440,6 +457,7 @@ impl KansasCityGame {
                             self.add_change(
                                 score_index,
                                 Change {
+                                    change_type: ChangeType::Score,
                                     object_id: player,
                                     player,
                                     dest: Location::Score,
@@ -715,11 +733,21 @@ pub fn get_mcts_move(game: &KansasCityGame, iterations: i32, debug: bool) -> i32
     ismcts.best_move().expect("should have a move to make")
 }
 
-fn card_sorter(a: &Card, b: &Card) -> Ordering {
+fn human_card_sorter(a: &Card, b: &Card) -> Ordering {
     match a.suit.cmp(&b.suit) {
         Ordering::Less => Ordering::Less,
         Ordering::Greater => Ordering::Greater,
         Ordering::Equal => a.value.cmp(&b.value),
+    }
+}
+
+fn opponent_card_sorter(a: &Card, b: &Card) -> Ordering {
+    if a.suit != b.suit && a.suit == Suit::Trump {
+        Ordering::Greater
+    } else if a.suit != b.suit && b.suit == Suit::Trump {
+        Ordering::Less
+    } else {
+        a.value.cmp(&b.value)
     }
 }
 
