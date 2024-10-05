@@ -242,7 +242,7 @@ impl Yokai2pGame {
         cards.shuffle(&mut thread_rng());
         // End dealing with sevens
         self.hands = [vec![], vec![]];
-        for y in 0..11 {
+        for _ in 0..11 {
             for player in 0..2 {
                 let card = cards.pop().unwrap();
                 self.hands[player].push(card);

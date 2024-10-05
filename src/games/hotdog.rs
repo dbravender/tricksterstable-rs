@@ -6,7 +6,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/365349/hotdog
 
 use rand::Rng;
 use std::{
-    cmp::{max, Ordering},
+    cmp::Ordering,
     collections::{BTreeMap, HashMap, HashSet},
 };
 
@@ -543,7 +543,7 @@ impl HotdogGame {
         match self.state {
             State::NameRelish => {
                 for i in 0..=9 {
-                    let relish = if i == 0 {
+                    let relish = if i == NO_RELISH {
                         "no relish".to_string()
                     } else {
                         format!("{} as relish", i)

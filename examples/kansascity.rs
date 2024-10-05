@@ -1,4 +1,4 @@
-use rand::{seq::SliceRandom, thread_rng, Rng};
+use rand::{thread_rng, Rng};
 use tricksterstable_rs::games::kansascity::{get_mcts_move, KansasCityGame};
 
 fn main() {

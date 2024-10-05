@@ -14,16 +14,15 @@ fn main() {
                 _ => false,
             };
 
-            let mut iterations = 1000;
             let action = if game.current_player == 0 {
                 let mut game = game.clone();
                 game.experiment = false;
-                iterations = 2000;
+                let iterations = 2000;
                 get_mcts_move(&game, iterations, debug)
             } else {
                 let mut game = game.clone();
                 game.experiment = true;
-                iterations = 2000;
+                let iterations = 2000;
                 get_mcts_move(&game, iterations, debug)
             };
 

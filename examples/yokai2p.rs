@@ -1,4 +1,3 @@
-use ismcts::IsmctsHandler;
 use tricksterstable_rs::games::{yokai2p::get_mcts_move, yokai2p::Yokai2pGame};
 
 fn main() {
