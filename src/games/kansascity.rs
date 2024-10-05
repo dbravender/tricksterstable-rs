@@ -20,14 +20,6 @@ use crate::utils::shuffle_and_divide_matching_cards;
 
 const SKIP_TRUMP_PROMOTION: i32 = -1;
 
-static ID_TO_CARD: Lazy<HashMap<i32, Card>> = Lazy::new(|| {
-    let mut m = HashMap::new();
-    for card in KansasCityGame::deck() {
-        m.insert(card.id as i32, card);
-    }
-    m
-});
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum State {
@@ -172,6 +164,7 @@ impl KansasCityGame {
 
     // Called at the start of a game and when a new hand is dealt
     pub fn deal(&mut self) {
+        self.state = State::Play;
         self.tricks_taken = [0, 0, 0, 0];
         self.round += 1;
         self.hands = [vec![], vec![], vec![], vec![]];
@@ -292,9 +285,8 @@ impl KansasCityGame {
             State::OptionallyPromoteTrump => {
                 if action != SKIP_TRUMP_PROMOTION {
                     let index = self.new_change();
-                    let card = ID_TO_CARD[&action];
                     for hand_card in self.hands[self.current_player].iter_mut() {
-                        if hand_card.id == card.id {
+                        if hand_card.id == action {
                             hand_card.suit = Suit::Trump;
                         }
                     }
@@ -304,7 +296,7 @@ impl KansasCityGame {
                             change_type: ChangeType::PromoteToTrump,
                             dest: Location::Hand,
                             player: self.current_player,
-                            object_id: card.id as usize,
+                            object_id: action as usize,
                             ..Default::default()
                         },
                     );
@@ -329,14 +321,16 @@ impl KansasCityGame {
                 }
             }
             State::Play => {
-                let card = ID_TO_CARD[&action];
                 let lead_suit = match self.current_trick[self.lead_player] {
                     Some(lead_card) => Some(lead_card.suit),
                     None => None,
                 };
 
-                // Card played was from hand
-                self.hands[self.current_player].retain(|c| c.id != card.id);
+                let pos = self.hands[self.current_player]
+                    .iter()
+                    .position(|c| c.id == action)
+                    .unwrap();
+                let card = self.hands[self.current_player].remove(pos);
 
                 self.add_change(
                     0,
