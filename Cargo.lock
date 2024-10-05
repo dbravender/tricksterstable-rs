@@ -269,7 +269,7 @@ checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 [[package]]
 name = "ismcts"
 version = "0.1.0"
-source = "git+https://github.com/Deliquescence/ismcts?rev=50494a7#50494a7ce48a280b5e9c6d0bf6af07b2c1282f6d"
+source = "git+https://github.com/Deliquescence/ismcts?rev=174c8d8#174c8d859d8720d5d7ced3ed601b757c62d40fe1"
 dependencies = [
  "crossbeam",
  "ordered-float",
@@ -623,7 +623,7 @@ dependencies = [
  "colored",
  "duplicate",
  "enum-iterator",
- "ismcts 0.1.0 (git+https://github.com/Deliquescence/ismcts?rev=50494a7)",
+ "ismcts 0.1.0 (git+https://github.com/Deliquescence/ismcts?rev=174c8d8)",
  "ismcts 0.1.0 (git+https://github.com/Deliquescence/ismcts?rev=d5cd5ad)",
  "memoize",
  "once_cell",
