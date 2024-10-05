@@ -386,15 +386,6 @@ impl Yokai2pGame {
         return visible;
     }
 
-    fn hidden_straw(&self, player: usize) -> HashSet<Card> {
-        let exposed_straw_bottoms = self.exposed_straw_bottoms(player);
-        return self.straw_bottom[player]
-            .iter()
-            .filter_map(|x| *x)
-            .filter(|x| !exposed_straw_bottoms.contains(x))
-            .collect();
-    }
-
     pub fn reveal_straw_bottoms(&mut self, player: usize) {
         if self.no_changes {
             return;

@@ -1,11 +1,9 @@
 use games::szs::{ChangeType, Game};
 use ismcts::{Game as MctsGame, IsmctsHandler};
-use rand::random;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::hash::Hash;
 use std::io::{self, prelude::*, BufReader};
 use std::time::Instant;
 
@@ -73,6 +71,7 @@ fn verify_against_dart() -> io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn random_play() {
     // let mut scores = vec![0, 0, 0];
 
@@ -148,7 +147,7 @@ pub fn ismcts_play() {
         let mut start_game = games::szs::Game::new();
         start_game.with_no_changes();
         start_game.round = 4;
-        for cycle in 0..3 {
+        for _ in 0..3 {
             let mut total_move_time: HashMap<String, u128> = HashMap::new();
             let mut game = start_game.clone();
             let player = players.pop().unwrap();

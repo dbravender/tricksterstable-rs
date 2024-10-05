@@ -11,7 +11,6 @@ use std::{
 
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
-use once_cell::sync::Lazy;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};

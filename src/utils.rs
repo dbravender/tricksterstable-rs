@@ -44,9 +44,7 @@ pub fn shuffle_and_divide_matching_cards<T: Copy>(
 
 pub mod tests {
     use enum_iterator::{all, Sequence};
-    use rand::{rngs::StdRng, seq::SliceRandom, thread_rng, SeedableRng};
-
-    use super::shuffle_and_divide_matching_cards;
+    use rand::{seq::SliceRandom, thread_rng};
 
     #[derive(Debug, Clone, Copy, PartialEq, Sequence, PartialOrd, Ord, Eq)]
     enum Suit {
