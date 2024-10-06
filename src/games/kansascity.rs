@@ -100,7 +100,7 @@ pub enum ChangeType {
 pub struct Change {
     #[serde(rename(serialize = "type", deserialize = "type"))]
     pub change_type: ChangeType,
-    object_id: usize,
+    object_id: i32,
     dest: Location,
     tricks_taken: i32,
     start_score: i32,
@@ -190,7 +190,7 @@ impl KansasCityGame {
                     deal_index,
                     Change {
                         change_type: ChangeType::Deal,
-                        object_id: card.id as usize,
+                        object_id: card.id,
                         dest: Location::Hand,
                         player,
                         offset: hand_index,
@@ -209,6 +209,7 @@ impl KansasCityGame {
             });
             self.reorder_hand(player, player == 0);
         }
+        self.show_playable();
     }
 
     pub fn deck() -> Vec<Card> {
@@ -295,7 +296,7 @@ impl KansasCityGame {
                             change_type: ChangeType::PromoteToTrump,
                             dest: Location::Hand,
                             player: self.current_player,
-                            object_id: action as usize,
+                            object_id: action,
                             ..Default::default()
                         },
                     );
@@ -306,7 +307,6 @@ impl KansasCityGame {
                     });
                     self.reorder_hand(self.current_player, true);
                 }
-                self.current_player = (self.current_player + 1) % 4;
 
                 loop {
                     self.current_player = (self.current_player + 1) % 4;
@@ -315,8 +315,11 @@ impl KansasCityGame {
                         break;
                     }
                     if self.get_moves().len() == 1 {
+                        // Don't present an option to select a trump card
+                        // to players that can only pass
                         continue;
                     }
+                    break;
                 }
             }
             State::Play => {
@@ -335,7 +338,7 @@ impl KansasCityGame {
                     0,
                     Change {
                         change_type: ChangeType::Play,
-                        object_id: action as usize,
+                        object_id: action,
                         dest: Location::Play,
                         player: self.current_player,
                         ..Default::default()
@@ -381,7 +384,7 @@ impl KansasCityGame {
                             index,
                             Change {
                                 change_type: ChangeType::Score,
-                                object_id: self.lead_player,
+                                object_id: self.lead_player as i32,
                                 player: self.lead_player,
                                 dest: Location::Score,
                                 start_score: self.scores[self.lead_player],
@@ -399,7 +402,7 @@ impl KansasCityGame {
                         index,
                         Change {
                             change_type: ChangeType::ShowWinningCard,
-                            object_id: self.current_trick[trick_winner].unwrap().id as usize,
+                            object_id: self.current_trick[trick_winner].unwrap().id,
                             dest: Location::Play,
                             ..Default::default()
                         },
@@ -421,7 +424,7 @@ impl KansasCityGame {
                             change_index,
                             Change {
                                 change_type: ChangeType::TricksToWinner,
-                                object_id: card.unwrap().id as usize,
+                                object_id: card.unwrap().id,
                                 dest: Location::TricksTaken,
                                 player: trick_winner,
                                 tricks_taken: self.tricks_taken[trick_winner],
@@ -451,7 +454,7 @@ impl KansasCityGame {
                                 score_index,
                                 Change {
                                     change_type: ChangeType::Score,
-                                    object_id: player,
+                                    object_id: player as i32,
                                     player,
                                     dest: Location::Score,
                                     start_score: self.scores[player as usize],
@@ -530,7 +533,7 @@ impl KansasCityGame {
             Change {
                 change_type: ChangeType::Reorder,
                 dest: Location::ReorderHand,
-                object_id: card.id as usize,
+                object_id: card.id,
                 player,
                 offset,
                 length,
@@ -544,13 +547,13 @@ impl KansasCityGame {
             self.changes = vec![vec![]];
         }
         let change_index = self.new_change();
-        if self.current_player == 0 && self.state == State::Play {
+        if self.current_player == 0 {
             let moves = self.get_moves();
             for id in moves {
                 self.add_change(
                     change_index,
                     Change {
-                        object_id: id as usize,
+                        object_id: id,
                         change_type: ChangeType::ShowPlayable,
                         dest: Location::Hand,
                         player: self.current_player,
@@ -573,7 +576,7 @@ impl KansasCityGame {
             self.add_change(
                 change_index,
                 Change {
-                    object_id: card.id as usize,
+                    object_id: card.id,
                     change_type: ChangeType::HidePlayable,
                     dest: Location::Hand,
                     player: self.current_player,
@@ -581,6 +584,16 @@ impl KansasCityGame {
                 },
             );
         }
+        self.add_change(
+            change_index,
+            Change {
+                object_id: SKIP_TRUMP_PROMOTION,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: self.current_player,
+                ..Default::default()
+            },
+        );
     }
 
     pub fn get_winner(&self, lead_suit: Suit, trick: &[Option<Card>; 4]) -> usize {
