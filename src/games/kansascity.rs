@@ -468,7 +468,7 @@ impl KansasCityGame {
                         }
 
                         // Check if the game is over
-                        if self.round >= 2 {
+                        if self.round >= 3 {
                             let max_score = self.scores.iter().max().unwrap();
                             for player in 0..4 {
                                 // 0 is first so human player will win ties
