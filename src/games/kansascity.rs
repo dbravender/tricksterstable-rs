@@ -168,6 +168,7 @@ impl KansasCityGame {
         self.round += 1;
         self.hands = [vec![], vec![], vec![], vec![]];
         self.current_player = self.dealer;
+        self.lead_player = self.current_player;
         self.current_trick = [None; 4];
         self.dealer = (self.dealer + 1) % 2;
         self.voids = [vec![], vec![], vec![], vec![]];
