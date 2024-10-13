@@ -66,6 +66,7 @@ enum Location {
     TricksTaken,
     Score,
     ReorderHand,
+    TrickAndScoreCounter,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -93,6 +94,9 @@ pub enum ChangeType {
     ShowWinningCard,
     GameOver,
     Reorder,
+    // Update the counter showing how many tricks were won
+    // and what potential score this would give the player
+    UpdateTricksWonAndCurrentPoints,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,6 +112,9 @@ pub struct Change {
     offset: usize,
     player: usize,
     length: usize,
+    // How many points the player will win if they maintain
+    // the current number of tricks they won
+    current_points: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Eq)]
@@ -423,8 +430,22 @@ impl KansasCityGame {
                         },
                     );
 
-                    // Animate tricks to winner
+                    // Animate potential earned score and tricks to winner
                     let change_index = self.new_change();
+
+                    self.add_change(
+                        change_index,
+                        Change {
+                            change_type: ChangeType::UpdateTricksWonAndCurrentPoints,
+                            dest: Location::TrickAndScoreCounter,
+                            player: trick_winner,
+                            tricks_taken: self.tricks_taken[trick_winner],
+                            current_points: self
+                                .points_for_tricks_taken(self.tricks_taken[trick_winner]),
+                            ..Default::default()
+                        },
+                    );
+
                     for card in self.current_trick {
                         self.add_change(
                             change_index,
@@ -448,13 +469,7 @@ impl KansasCityGame {
                         // Update scores
                         let score_index = self.new_change();
                         for player in 0..4 {
-                            let points = match self.tricks_taken[player] {
-                                1 => 5,
-                                2 => 10,
-                                3 => 15,
-                                4 => 5,
-                                _ => 0,
-                            };
+                            let points = self.points_for_tricks_taken(self.tricks_taken[player]);
                             // Report the score change to the UI
                             self.add_change(
                                 score_index,
@@ -628,6 +643,17 @@ impl KansasCityGame {
             bonus += 200;
         }
         card.value + bonus
+    }
+
+    #[inline]
+    pub fn points_for_tricks_taken(&self, tricks_taken: i32) -> i32 {
+        match tricks_taken {
+            1 => 5,
+            2 => 10,
+            3 => 15,
+            4 => 5,
+            _ => 0,
+        }
     }
 }
 
