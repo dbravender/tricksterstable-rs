@@ -149,6 +149,8 @@ pub struct KansasCityGame {
     pub experiment: bool,
     // Current round
     pub round: usize,
+    // Cards that have been flipped over to be used as trump
+    pub converted_to_trump: [Vec<Card>; 4],
 }
 
 impl KansasCityGame {
@@ -167,6 +169,7 @@ impl KansasCityGame {
         self.tricks_taken = [0, 0, 0, 0];
         self.round += 1;
         self.hands = [vec![], vec![], vec![], vec![]];
+        self.converted_to_trump = [vec![], vec![], vec![], vec![]];
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
         self.current_trick = [None; 4];
@@ -288,6 +291,8 @@ impl KansasCityGame {
                     let index = self.new_change();
                     for hand_card in self.hands[self.current_player].iter_mut() {
                         if hand_card.id == action {
+                            // Keep a copy of the card before it is converted to trump
+                            self.converted_to_trump[self.current_player].push(hand_card.clone());
                             hand_card.suit = Suit::Trump;
                         }
                     }
