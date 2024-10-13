@@ -180,7 +180,7 @@ impl KansasCityGame {
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
         self.current_trick = [None; 4];
-        self.dealer = (self.dealer + 1) % 2;
+        self.dealer = (self.dealer + 1) % 4;
         self.voids = [vec![], vec![], vec![], vec![]];
         let mut cards = KansasCityGame::deck();
         let shuffle_index = self.new_change();
@@ -708,7 +708,7 @@ impl ismcts::Game for KansasCityGame {
     }
 
     fn next_player(&self) -> Self::PlayerTag {
-        (self.current_player + 1) % 2
+        (self.current_player + 1) % 4
     }
 
     fn available_moves(&self) -> Self::MoveList {
