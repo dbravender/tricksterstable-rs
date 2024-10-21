@@ -720,33 +720,24 @@ impl ismcts::Game for KansasCityGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        if let Some(winner) = self.winner {
-            // someone won the game
-            if winner == player {
-                Some(1.0)
-            } else {
-                Some(0.0)
-            }
+        if self.winner.is_none() {
+            // the hand is not over
+            None
         } else {
-            if self.winner.is_none() {
-                // the hand is not over
-                None
+            let current_player_score = self.scores[player] as f64;
+            let other_player_score = *self
+                .scores
+                .iter()
+                .enumerate()
+                .filter(|(player, _)| *player != self.current_player)
+                .max()
+                .unwrap()
+                .1 as f64;
+            let score_difference = current_player_score - other_player_score;
+            if current_player_score >= other_player_score {
+                Some(0.8 + ((score_difference / 10.0) * 0.2))
             } else {
-                let current_player_score = self.scores[player] as f64;
-                let other_player_score = *self
-                    .scores
-                    .iter()
-                    .enumerate()
-                    .filter(|(player, _)| *player != self.current_player)
-                    .max()
-                    .unwrap()
-                    .1 as f64;
-                let score_difference = current_player_score - other_player_score;
-                if current_player_score >= other_player_score {
-                    Some(0.8 + ((score_difference / 10.0) * 0.2))
-                } else {
-                    Some(0.2 + ((score_difference / 10.0) * 0.2))
-                }
+                Some(0.2 + ((score_difference / 10.0) * 0.2))
             }
         }
     }
