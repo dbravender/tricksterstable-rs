@@ -667,8 +667,43 @@ impl ismcts::Game for KansasCityGame {
 
         for p1 in 0..4 {
             for p2 in 0..4 {
-                if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
+                if p1 == self.current_player() || p2 == self.current_player() {
                     // Don't swap current player's cards - player knows exactly what they have
+                    // and which cards they converted to trump
+                    continue;
+                }
+                // Swap with cards converted to trump so opponents don't know
+                // which cards have been converted to trump just like a human
+                // player in their position
+
+                let voids: HashSet<Suit> =
+                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
+
+                let mut new_hands = vec![
+                    self.hands[p1 as usize].clone(),
+                    self.converted_to_trump[p2 as usize].clone(),
+                ];
+
+                for value in 1..=8 {
+                    shuffle_and_divide_matching_cards(
+                        |c: &Card| {
+                            // Trump cards are visible - do not swap
+                            c.suit != Suit::Trump
+                                 // Do not swap cards where the player has a known void in that suit
+                                && !voids.contains(&c.suit)
+                                // It's not known which cards were played facedown as trump so we randomly
+                                // redistribute cards played as trump into players' hands
+                                && c.value == value
+                        },
+                        &mut new_hands,
+                        rng,
+                    );
+                }
+
+                self.hands[p1 as usize] = new_hands[0].clone();
+                self.converted_to_trump[p2 as usize] = new_hands[1].clone();
+
+                if p1 == p2 {
                     continue;
                 }
 
