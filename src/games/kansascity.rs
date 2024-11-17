@@ -668,7 +668,12 @@ impl KansasCityGame {
         let change_index = self.new_change();
         if self.current_player == 0 {
             let moves = self.get_moves();
+            let passed_cards: HashSet<i32> =
+                HashSet::from_iter(self.passed_cards[0].iter().map(|c| c.id));
             for id in moves {
+                if passed_cards.contains(&id) {
+                    continue;
+                }
                 self.add_change(
                     change_index,
                     Change {
@@ -690,8 +695,7 @@ impl KansasCityGame {
             self.changes = vec![vec![]];
         }
         let change_index = self.changes.len() - 1;
-        let mut cards = self.hands[0].clone();
-        cards.extend(self.passed_cards[0].iter());
+        let cards = self.hands[0].clone();
         for card in cards {
             self.add_change(
                 change_index,
