@@ -70,6 +70,7 @@ enum Location {
     ReorderHand,
     TrickAndScoreCounter,
     PassCard,
+    Message,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -101,6 +102,7 @@ pub enum ChangeType {
     // and what potential score this would give the player
     UpdateTricksWonAndCurrentPoints,
     PassCard,
+    Message,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -119,6 +121,7 @@ pub struct Change {
     // How many points the player will win if they maintain
     // the current number of tricks they won
     current_points: i32,
+    message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Eq)]
@@ -232,6 +235,7 @@ impl KansasCityGame {
             self.reorder_hand(player, player == 0);
         }
         self.show_playable();
+        self.show_message();
     }
 
     pub fn deck() -> Vec<Card> {
@@ -613,6 +617,7 @@ impl KansasCityGame {
         }
         self.apply_move_internal(action);
         self.show_playable();
+        self.show_message();
     }
 
     #[inline]
@@ -688,6 +693,44 @@ impl KansasCityGame {
         } else {
             self.hide_playable();
         }
+    }
+
+    fn show_message(&mut self) {
+        let player_name = self.player_name_string();
+        let message = match self.state {
+            State::PassCard => Some(format!(
+                "{} must select 3 cards to pass clockwise",
+                player_name
+            )),
+            State::Play => None,
+            State::OptionallyPromoteTrump => Some(format!(
+                "{} may select a card to promote to trump",
+                player_name
+            )),
+        };
+        self.set_message(message);
+    }
+
+    fn player_name_string(&mut self) -> String {
+        match self.current_player {
+            0 => "You".to_string(),
+            1 => "West".to_string(),
+            2 => "North".to_string(),
+            _ => "East".to_string(),
+        }
+    }
+
+    fn set_message(&mut self, message: Option<String>) {
+        self.add_change(
+            0,
+            Change {
+                change_type: ChangeType::Message,
+                message,
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            },
+        );
     }
 
     fn hide_playable(&mut self) {
