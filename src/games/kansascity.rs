@@ -164,6 +164,8 @@ pub struct KansasCityGame {
     pub converted_to_trump: [Vec<Card>; 4],
     // Cards from player at index that were passed to clockwise opponent
     pub passed_cards: [Vec<Card>; 4],
+    // Which player is the human player
+    pub human_player: Option<usize>,
 }
 
 impl KansasCityGame {
@@ -173,6 +175,12 @@ impl KansasCityGame {
             ..Default::default()
         };
         game.deal();
+        game
+    }
+
+    pub fn new_with_human_player(human_player: usize) -> Self {
+        let mut game = Self::new();
+        game.human_player = Some(human_player);
         game
     }
 
@@ -251,7 +259,15 @@ impl KansasCityGame {
 
     pub fn get_moves(self: &KansasCityGame) -> Vec<i32> {
         match self.state {
-            State::PassCard => self.current_player_card_ids(),
+            State::PassCard => {
+                if self.human_player == Some(self.current_player) {
+                    let mut moves = self.current_player_card_ids();
+                    moves.extend(self.passed_cards[self.current_player].iter().map(|c| c.id));
+                    moves
+                } else {
+                    self.current_player_card_ids()
+                }
+            }
             State::OptionallyPromoteTrump => {
                 let mut promote_ids = self.promotable_card_ids();
                 promote_ids.insert(0, SKIP_TRUMP_PROMOTION);
@@ -312,6 +328,23 @@ impl KansasCityGame {
                     self.hands[self.current_player].push(card);
                     self.sort_hand(self.current_player);
                     self.reorder_hand(self.current_player, false);
+
+                    let passed_cards = &self.passed_cards[self.current_player].clone();
+
+                    for card in passed_cards.iter() {
+                        self.add_change(
+                            0,
+                            Change {
+                                change_type: ChangeType::PassCard,
+                                object_id: card.id,
+                                dest: Location::PassCard,
+                                player: self.current_player,
+                                offset: passed_cards.len(),
+                                ..Default::default()
+                            },
+                        );
+                    }
+
                     return;
                 }
 
@@ -328,6 +361,7 @@ impl KansasCityGame {
                         object_id: action,
                         dest: Location::PassCard,
                         player: self.current_player,
+                        offset: self.passed_cards[self.current_player].len(),
                         ..Default::default()
                     },
                 );
@@ -344,7 +378,8 @@ impl KansasCityGame {
                         for player in 0..4 {
                             let receiving_player = (player + 1) % 4;
                             self.hands[receiving_player].extend(self.passed_cards[player].iter());
-                            self.reorder_hand(player, false);
+                            self.sort_hand(receiving_player);
+                            self.reorder_hand(receiving_player, false);
                         }
                         // Move to play state
                         self.state = State::Play;
@@ -596,7 +631,7 @@ impl KansasCityGame {
 
     #[inline]
     pub fn sort_hand(&mut self, player: usize) {
-        self.hands[player].sort_by(if self.current_player == 0 {
+        self.hands[player].sort_by(if player == 0 {
             human_card_sorter
         } else {
             opponent_card_sorter
