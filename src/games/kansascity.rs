@@ -331,7 +331,7 @@ impl KansasCityGame {
 
                     let passed_cards = &self.passed_cards[self.current_player].clone();
 
-                    for card in passed_cards.iter() {
+                    for (index, card) in passed_cards.iter().enumerate() {
                         self.add_change(
                             0,
                             Change {
@@ -339,7 +339,7 @@ impl KansasCityGame {
                                 object_id: card.id,
                                 dest: Location::PassCard,
                                 player: self.current_player,
-                                offset: passed_cards.len(),
+                                offset: index,
                                 ..Default::default()
                             },
                         );
