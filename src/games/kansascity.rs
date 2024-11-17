@@ -380,7 +380,34 @@ impl KansasCityGame {
                     if self.passed_cards[self.current_player].len() >= 3 {
                         // All players have selected cards to pass, actually pass the cards
                         for player in 0..4 {
+                            self.new_change();
                             let receiving_player = (player + 1) % 4;
+                            if receiving_player == 0 && !self.no_changes {
+                                let passed_cards = self.passed_cards[player].clone();
+                                for (pass_index, card) in passed_cards.iter().enumerate() {
+                                    self.add_change(
+                                        player,
+                                        Change {
+                                            change_type: ChangeType::PassCard,
+                                            object_id: card.id,
+                                            dest: Location::PassCard,
+                                            player: 0,
+                                            offset: pass_index,
+                                            ..Default::default()
+                                        },
+                                    );
+                                }
+                                self.set_message(Some("Cards received from East".to_string()), 0);
+                                self.add_change(
+                                    3,
+                                    Change {
+                                        change_type: ChangeType::OptionalPause,
+                                        object_id: 0,
+                                        dest: Location::Play,
+                                        ..Default::default()
+                                    },
+                                );
+                            }
                             self.hands[receiving_player].extend(self.passed_cards[player].iter());
                             self.sort_hand(receiving_player);
                             self.reorder_hand(receiving_player, false);
@@ -708,7 +735,8 @@ impl KansasCityGame {
                 player_name
             )),
         };
-        self.set_message(message);
+        let index = self.new_change();
+        self.set_message(message, index);
     }
 
     fn player_name_string(&mut self) -> String {
@@ -720,9 +748,9 @@ impl KansasCityGame {
         }
     }
 
-    fn set_message(&mut self, message: Option<String>) {
+    fn set_message(&mut self, message: Option<String>, index: usize) {
         self.add_change(
-            0,
+            index,
             Change {
                 change_type: ChangeType::Message,
                 message,
