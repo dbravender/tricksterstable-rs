@@ -690,7 +690,8 @@ impl KansasCityGame {
             self.changes = vec![vec![]];
         }
         let change_index = self.changes.len() - 1;
-        let cards = self.hands[0].clone();
+        let mut cards = self.hands[0].clone();
+        cards.extend(self.passed_cards[0].iter());
         for card in cards {
             self.add_change(
                 change_index,
