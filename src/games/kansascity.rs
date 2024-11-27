@@ -11,8 +11,8 @@ use std::{
 
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
-use rand::seq::SliceRandom;
 use rand::thread_rng;
+use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 
 use crate::utils::shuffle_and_divide_matching_cards;
@@ -177,6 +177,8 @@ impl KansasCityGame {
             no_changes: false,
             ..Default::default()
         };
+        let mut rng = rand::thread_rng();
+        game.dealer = rng.gen_range(0..=3);
         game.deal();
         game
     }
