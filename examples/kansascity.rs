@@ -1,26 +1,21 @@
-use rand::{thread_rng, Rng};
+use rand::{seq::SliceRandom, thread_rng};
 use tricksterstable_rs::games::kansascity::{get_mcts_move, KansasCityGame};
 
 fn main() {
-    let mut rnd = thread_rng();
+    let mut rng = thread_rng();
+    let mut is_experiment = vec![true, true, false, false];
     for _ in 0..1000 {
+        is_experiment.shuffle(&mut rng);
         let mut game = KansasCityGame::new();
-        game.dealer = rnd.gen_range(0..4);
-        game.current_player = game.dealer;
         //println!("{:?}", &game);
         game.round = 5; // force single hand
         while game.winner.is_none() {
             let iterations = 500;
-            let action = if game.current_player == 0 || game.current_player == 2 {
+            let action = {
                 let mut game = game.clone();
-                game.experiment = false;
-                get_mcts_move(&game, iterations, false)
-            } else {
-                let mut game = game.clone();
-                game.experiment = true;
+                game.experiment = is_experiment[game.current_player];
                 get_mcts_move(&game, iterations, false)
             };
-
             game.apply_move(action);
         }
         let max_score = game.scores.iter().max().unwrap();
@@ -32,10 +27,19 @@ fn main() {
             .map(|(player, _score)| player)
             .collect();
         for winner in winners {
-            println!("winner: {}", winner);
+            println!("winner: {}", get_name(&is_experiment, winner));
         }
         for (player, score) in game.scores.iter().enumerate() {
-            println!("score {}: {}", player, score);
+            println!("score {}: {}", get_name(&is_experiment, player), score);
         }
+    }
+}
+
+#[inline]
+fn get_name(is_experiment: &Vec<bool>, player: usize) -> String {
+    if is_experiment[player] {
+        "experiment".to_string()
+    } else {
+        "baseline".to_string()
     }
 }

@@ -5,7 +5,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/424451/kansas-city-the-trick-
 */
 
 use std::{
-    cmp::Ordering,
+    cmp::{max, min, Ordering},
     collections::{HashMap, HashSet},
 };
 
@@ -939,20 +939,31 @@ impl ismcts::Game for KansasCityGame {
             // the hand is not over
             None
         } else {
-            let current_player_score = self.scores[player] as f64;
-            let other_player_score = *self
-                .scores
-                .iter()
-                .enumerate()
-                .filter(|(player, _)| *player != self.current_player)
-                .max()
-                .unwrap()
-                .1 as f64;
-            let score_difference = current_player_score - other_player_score;
-            if current_player_score >= other_player_score {
-                Some(0.8 + ((score_difference / 10.0) * 0.2))
+            if !self.experiment {
+                // Get the player's total score
+                let total_score = self.scores[player];
+                let total_score_ratio = total_score as f64 / 29.0; // Maximum possible score is 29 (15 for tricks + 14 for 4 cards)
+
+                // Scale the total score to a range between -1.0 and 1.0
+                let final_score = (total_score_ratio * 2.0) - 1.0;
+
+                Some(final_score)
             } else {
-                Some(0.2 + ((score_difference / 10.0) * 0.2))
+                let current_player_score = self.scores[player] as f64;
+                let other_player_score = *self
+                    .scores
+                    .iter()
+                    .enumerate()
+                    .filter(|(p, _)| *p != self.current_player)
+                    .max()
+                    .unwrap()
+                    .1 as f64;
+                let score_difference = current_player_score - other_player_score;
+                if current_player_score >= other_player_score {
+                    Some(0.8 + ((score_difference / 10.0) * 0.2))
+                } else {
+                    Some(0.2 + ((score_difference / 10.0) * 0.2))
+                }
             }
         }
     }
@@ -963,6 +974,7 @@ pub fn get_mcts_move(game: &KansasCityGame, iterations: i32, debug: bool) -> i32
     new_game.no_changes = true;
     // reset scores for the simulation
     new_game.scores = [0; 4];
+    new_game.round = 6; // force evaluation of a single hand
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
     ismcts.run_iterations(
