@@ -883,6 +883,38 @@ mod tests {
                 ],
                 expected_winner: 0,
             },
+            TrickWinnerTestCase {
+                description: "King is higher than the highest trump card".to_string(),
+                lead_player: 0,
+                trump: Suit::Blue,
+                current_trick: [
+                    Some(Card {
+                        suit: Suit::Orange,
+                        value: 3,
+                        points: 0,
+                        id: 0,
+                    }),
+                    Some(Card {
+                        suit: Suit::Green,
+                        value: 10,
+                        points: 0,
+                        id: 1,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: KING,
+                        points: 0,
+                        suit: Suit::Purple,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 12,
+                        points: 0,
+                        suit: Suit::Blue,
+                    }),
+                ],
+                expected_winner: 2,
+            },
         ];
         for test_case in test_cases {
             let mut game = SixOfVIIIGame::new();
