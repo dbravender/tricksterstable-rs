@@ -719,6 +719,20 @@ impl SixOfVIIIGame {
     pub fn value_for_card(&self, card: &Card) -> i32 {
         let lead_suit = self.current_trick[self.lead_player].unwrap().suit;
         let mut bonus: i32 = 0;
+        if self.current_trump == Suit::Red
+            && lead_suit != Suit::Black
+            && card.value == 0
+            && card.suit == Suit::Black
+        {
+            bonus += 213;
+        }
+        if self.current_trump == Suit::Black
+            && lead_suit != Suit::Red
+            && card.value == 0
+            && card.suit == Suit::Red
+        {
+            bonus += 213;
+        }
         if card.suit == lead_suit {
             bonus += 100;
         }
@@ -819,6 +833,138 @@ mod tests {
     #[test]
     fn test_trick_winner() {
         let test_cases = [
+            TrickWinnerTestCase {
+                description:
+                    "Red 0 is highest red card when black is trump but not when red is led"
+                        .to_string(),
+                lead_player: 0,
+                trump: Suit::Black,
+                current_trick: [
+                    Some(Card {
+                        suit: Suit::Red,
+                        value: 3,
+                        points: 0,
+                        id: 0,
+                    }),
+                    Some(Card {
+                        suit: Suit::Red,
+                        value: 0,
+                        points: 0,
+                        id: 1,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 3,
+                        points: 0,
+                        suit: Suit::Black,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 2,
+                        points: 0,
+                        suit: Suit::Green,
+                    }),
+                ],
+                expected_winner: 2,
+            },
+            TrickWinnerTestCase {
+                description: "Red 0 is highest red card when black is trump".to_string(),
+                lead_player: 0,
+                trump: Suit::Red,
+                current_trick: [
+                    Some(Card {
+                        suit: Suit::Orange,
+                        value: 3,
+                        points: 0,
+                        id: 0,
+                    }),
+                    Some(Card {
+                        suit: Suit::Red,
+                        value: 0,
+                        points: 0,
+                        id: 1,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 3,
+                        points: 0,
+                        suit: Suit::Black,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 2,
+                        points: 0,
+                        suit: Suit::Green,
+                    }),
+                ],
+                expected_winner: 1,
+            },
+            TrickWinnerTestCase {
+                description:
+                    "Black 0 is highest red card when red is trump but not when black is led"
+                        .to_string(),
+                lead_player: 0,
+                trump: Suit::Red,
+                current_trick: [
+                    Some(Card {
+                        suit: Suit::Black,
+                        value: 3,
+                        points: 0,
+                        id: 0,
+                    }),
+                    Some(Card {
+                        suit: Suit::Black,
+                        value: 0,
+                        points: 0,
+                        id: 1,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 3,
+                        points: 0,
+                        suit: Suit::Red,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 2,
+                        points: 0,
+                        suit: Suit::Green,
+                    }),
+                ],
+                expected_winner: 2,
+            },
+            TrickWinnerTestCase {
+                description: "Black 0 is highest red card when red is trump".to_string(),
+                lead_player: 0,
+                trump: Suit::Red,
+                current_trick: [
+                    Some(Card {
+                        suit: Suit::Orange,
+                        value: 3,
+                        points: 0,
+                        id: 0,
+                    }),
+                    Some(Card {
+                        suit: Suit::Black,
+                        value: 0,
+                        points: 0,
+                        id: 1,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 3,
+                        points: 0,
+                        suit: Suit::Red,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 2,
+                        points: 0,
+                        suit: Suit::Green,
+                    }),
+                ],
+                expected_winner: 1,
+            },
             TrickWinnerTestCase {
                 description: "Highest trump card wins".to_string(),
                 lead_player: 0,
