@@ -131,26 +131,25 @@ pub struct SixOfVIIIGame {
     pub current_trick: [Option<Card>; 4],
     // Cards in each player's hand
     pub hands: [Vec<Card>; 4],
-    // Voids revealed when a player couldn't follow a lead card - only applies
-    // to hand - not to straw piles - used to determine possible hands
+    // Voids revealed when a player couldn't follow a lead card (used during determination)
     pub voids: [Vec<Suit>; 4],
-    // Total number of tricks taken for the current hand
-    pub tricks_taken: [i32; 4],
+    // Total number of tricks taken for the current hand (per team)
+    pub cards_taken: [Vec<Card>; 2],
     // Player who starts the next hand
     pub dealer: usize,
     // List of list of animations to run after a move is made to get from the current state to the next state
     pub changes: Vec<Vec<Change>>,
     // When running simulations we save time by not creating vecs and structs to be added to the change animation list
     pub no_changes: bool,
-    // Current score of the game
-    pub scores: [i32; 4],
+    // Current score of the game (per team)
+    pub scores: [i32; 2],
     // Game winner
     pub winner: Option<usize>,
     // Use experimental reward function for comparison
     pub experiment: bool,
     // Current round
     pub round: usize,
-    // Cards from player at index that were passed to clockwise opponent
+    // Cards from player at index that were passed to their partner
     pub passed_cards: [Vec<Card>; 4],
     // Which player is the human player
     pub human_player: Option<usize>,
@@ -183,7 +182,7 @@ impl SixOfVIIIGame {
     // Called at the start of a game and when a new hand is dealt
     pub fn deal(&mut self) {
         self.state = State::PassCard;
-        self.tricks_taken = [0, 0, 0, 0];
+        self.cards_taken = [vec![], vec![]];
         self.round += 1;
         self.hands = [vec![], vec![], vec![], vec![]];
         self.passed_cards = [vec![], vec![], vec![], vec![]];
@@ -222,6 +221,9 @@ impl SixOfVIIIGame {
                 self.hands[player].push(card);
             }
         }
+        // Keep track of the remaining cards for distribution during the simulation
+        // so the bots don't have the unfair advantage of knowing the exact cards in play
+        self.burned_cards = cards;
         for player in 0..4 {
             self.sort_hand(player);
             self.reorder_hand(player, player == 0);
@@ -482,7 +484,8 @@ impl SixOfVIIIGame {
                     let trick_winner = self.get_trick_winner();
                     self.lead_player = trick_winner;
                     self.current_player = (trick_winner + 1) % 4;
-                    self.tricks_taken[trick_winner] += 1;
+                    self.cards_taken[trick_winner]
+                        .extend(self.current_trick.iter().flatten().cloned());
 
                     let index = self.new_change();
 
@@ -516,7 +519,7 @@ impl SixOfVIIIGame {
                                 object_id: card.unwrap().id,
                                 dest: Location::TricksTaken,
                                 player: trick_winner,
-                                tricks_taken: self.tricks_taken[trick_winner],
+                                tricks_taken: (self.cards_taken[trick_winner].len() / 4) as i32,
                                 ..Default::default()
                             },
                         );
@@ -792,7 +795,7 @@ pub fn get_mcts_move(game: &SixOfVIIIGame, iterations: i32, debug: bool) -> i32 
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation
-    new_game.scores = [0; 4];
+    new_game.scores = [0; 2];
     new_game.round = 6; // force evaluation of a single hand
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
@@ -808,6 +811,18 @@ fn human_card_sorter(a: &Card, b: &Card) -> Ordering {
         Ordering::Less => Ordering::Less,
         Ordering::Greater => Ordering::Greater,
         Ordering::Equal => a.value.cmp(&b.value),
+    }
+}
+
+fn trick_number_to_trump(trick_number: i32) -> Suit {
+    match trick_number {
+        0..=3 => Suit::Black,
+        4..=6 => Suit::Red,
+        7..=8 => Suit::Orange,
+        9..=9 => Suit::Yellow,
+        10..=11 => Suit::Green,
+        12..=14 => Suit::Blue,
+        _ => unreachable!(),
     }
 }
 
