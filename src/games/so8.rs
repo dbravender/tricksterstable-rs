@@ -160,6 +160,8 @@ pub struct SixOfVIIIGame {
     pub burned_cards: Vec<Card>,
     // Current trump suit
     pub current_trump: Suit,
+    // Which team has the King card this hand - used for tiebreakers
+    pub team_with_king: Option<usize>,
 }
 
 impl SixOfVIIIGame {
@@ -225,7 +227,12 @@ impl SixOfVIIIGame {
         // Keep track of the remaining cards for distribution during the simulation
         // so the bots don't have the unfair advantage of knowing the exact cards in play
         self.burned_cards = cards;
+        self.team_with_king = None;
         for player in 0..4 {
+            // Save which team has the King card
+            if self.hands[player].iter().any(|c| c.id == KING_ID) {
+                self.team_with_king = Some(player % 2);
+            }
             self.sort_hand(player);
             self.reorder_hand(player, player == 0);
         }
@@ -506,7 +513,7 @@ impl SixOfVIIIGame {
                     let trick_winner = self.get_trick_winner();
                     self.lead_player = trick_winner;
                     self.current_player = (trick_winner + 1) % 4;
-                    self.cards_taken[trick_winner]
+                    self.cards_taken[(trick_winner % 2)]
                         .extend(self.current_trick.iter().flatten().cloned());
 
                     let index = self.new_change();
@@ -553,29 +560,35 @@ impl SixOfVIIIGame {
                     if self.hands.iter().all(|x| x.is_empty()) {
                         // The hand is over
 
-                        // Check if the game is over
                         if self.round >= 4 {
-                            let max_score = self.scores.iter().max().unwrap();
-                            for team in 0..2 {
-                                // TODO: tiebreaker
+                            // The game is over
+                            if self.scores[0] == self.scores[1] {
+                                // Tiebreaker
                                 // If there is a tie, the team that does not have the
                                 // King card wins. If neither team had the King card,
                                 // the team that won the last trick wins.
-                                if self.scores[team] == *max_score {
-                                    self.winner = Some(team);
-                                    let change_index = self.new_change();
-                                    self.add_change(
-                                        change_index,
-                                        Change {
-                                            change_type: ChangeType::GameOver,
-                                            object_id: 0,
-                                            dest: Location::Deck,
-                                            ..Default::default()
-                                        },
-                                    );
-                                    return;
+                                if self.team_with_king.is_some() {
+                                    self.winner = Some((self.team_with_king.unwrap() + 1) % 2);
+                                } else {
+                                    self.winner = Some(trick_winner);
                                 }
+                            } else {
+                                let max_score = self.scores.iter().max().unwrap();
+                                self.winner = Some(
+                                    self.scores.iter().position(|&x| x == *max_score).unwrap(),
+                                );
                             }
+                            let change_index = self.new_change();
+                            self.add_change(
+                                change_index,
+                                Change {
+                                    change_type: ChangeType::GameOver,
+                                    object_id: 0,
+                                    dest: Location::Deck,
+                                    ..Default::default()
+                                },
+                            );
+                            return;
                         }
                         self.deal();
                         return;
