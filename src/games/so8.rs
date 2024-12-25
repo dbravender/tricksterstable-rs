@@ -5,9 +5,9 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/394691/the-six-of-viii
 */
 
 use std::{
-    cmp::{max, min, Ordering},
+    cmp::Ordering,
     collections::{HashMap, HashSet},
-    ops::{Range, RangeInclusive},
+    ops::RangeInclusive,
 };
 
 use enum_iterator::{all, Sequence};
@@ -299,6 +299,8 @@ impl SixOfVIIIGame {
             }
         }
 
+        deck.shuffle(&mut thread_rng());
+
         return deck;
     }
 
@@ -552,12 +554,15 @@ impl SixOfVIIIGame {
                         // The hand is over
 
                         // Check if the game is over
-                        if self.round >= 3 {
+                        if self.round >= 4 {
                             let max_score = self.scores.iter().max().unwrap();
-                            for player in 0..4 {
-                                // 0 is first so human player will win ties
-                                if self.scores[player] == *max_score {
-                                    self.winner = Some(player);
+                            for team in 0..2 {
+                                // TODO: tiebreaker
+                                // If there is a tie, the team that does not have the
+                                // King card wins. If neither team had the King card,
+                                // the team that won the last trick wins.
+                                if self.scores[team] == *max_score {
+                                    self.winner = Some(team);
                                     let change_index = self.new_change();
                                     self.add_change(
                                         change_index,
@@ -615,6 +620,10 @@ impl SixOfVIIIGame {
 
     #[inline]
     pub fn reorder_hand(&mut self, player: usize, force_new_animation: bool) {
+        if player != 0 {
+            // Only reorder the human player's hand
+            return;
+        }
         if self.no_changes {
             return;
         }
@@ -683,7 +692,7 @@ impl SixOfVIIIGame {
         match self.current_player {
             0 => "You".to_string(),
             1 => "West".to_string(),
-            2 => "North".to_string(),
+            2 => "your partner".to_string(),
             _ => "East".to_string(),
         }
     }
