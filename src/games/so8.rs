@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::utils::shuffle_and_divide_matching_cards;
 
 const KING: i32 = 13;
+const KING_ID: i32 = 62;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -328,12 +329,27 @@ impl SixOfVIIIGame {
         // Must follow
         if self.current_trick[self.lead_player].is_some() {
             let lead_suit = self.current_trick[self.lead_player].clone().unwrap().suit;
-            let moves: Vec<i32> = self.hands[self.current_player]
+            let may_play_cant_be_pulled: Vec<i32> = self.hands[self.current_player]
+                .iter()
+                .filter(|c| {
+                    // The King card can be played whenever trump is led but it cannot be pulled
+                    (lead_suit == self.current_trump && c.id == KING_ID)
+                        // Black zeroes may be played as a red 13 to follow a red lead,
+                        // but cannot be pulled from a hand to follow red
+                        || (lead_suit == Suit::Red && c.value == 0 && c.suit == Suit::Black)
+                        // Red zeroes may be played as a black 13 to follow a black lead,
+                        // but cannot be pulled from a hand to follow black
+                        || (lead_suit == Suit::Black && c.value == 0 && c.suit == Suit::Red)
+                })
+                .map(|c| c.id)
+                .collect();
+            let mut moves: Vec<i32> = self.hands[self.current_player]
                 .iter()
                 .filter(|c| c.suit == lead_suit)
                 .map(|c| c.id)
                 .collect();
             if !moves.is_empty() {
+                moves.extend(may_play_cant_be_pulled);
                 return moves;
             }
         }
@@ -833,6 +849,7 @@ mod tests {
     #[test]
     fn test_deck() {
         let d = SixOfVIIIGame::deck();
+        println!("{:?}", d);
         assert_eq!(d.len(), 63);
     }
 
