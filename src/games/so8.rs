@@ -413,13 +413,14 @@ impl SixOfVIIIGame {
 
                 self.passed_cards[self.current_player].push(card);
 
-                if self.passed_cards[self.current_player].len() >= 3 {
+                if self.passed_cards[self.current_player].len() >= 2 {
                     self.current_player = (self.current_player + 1) % 4;
                     if self.passed_cards[self.current_player].len() >= 3 {
                         // All players have selected cards to pass, actually pass the cards
                         for player in 0..4 {
                             self.new_change();
-                            let receiving_player = (player + 1) % 4;
+                            // Pass selected cards to players' partners
+                            let receiving_player = (player + 2) % 4;
                             if receiving_player == 0 && !self.no_changes {
                                 let passed_cards = self.passed_cards[player].clone();
                                 for (pass_index, card) in passed_cards.iter().enumerate() {
@@ -435,7 +436,10 @@ impl SixOfVIIIGame {
                                         },
                                     );
                                 }
-                                self.set_message(Some("Cards received from East".to_string()), 0);
+                                self.set_message(
+                                    Some("Cards received from partner".to_string()),
+                                    0,
+                                );
                                 self.add_change(
                                     3,
                                     Change {
