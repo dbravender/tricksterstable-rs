@@ -20,6 +20,8 @@ use crate::utils::shuffle_and_divide_matching_cards;
 
 const KING: i32 = 13;
 const KING_ID: i32 = 62;
+const PASS: i32 = 0;
+const ANNUL_TRICK: i32 = 1;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +69,8 @@ enum Location {
     Hand,
     Play,
     TricksTaken,
+    // Church of England was used so the winning team does not receive the trick
+    TricksAnnulled,
     Score,
     ReorderHand,
     TrickAndScoreCounter,
@@ -90,6 +94,8 @@ pub enum ChangeType {
     Deal,
     Play,
     TricksToWinner,
+    // Church of England was used so the winning team does not receive the trick
+    TricksAnnulled,
     Faceup,
     Shuffle,
     Score,
@@ -228,6 +234,7 @@ impl SixOfVIIIGame {
         // so the bots don't have the unfair advantage of knowing the exact cards in play
         self.burned_cards = cards;
         self.team_with_king = None;
+        self.church_of_england_played = false;
         for player in 0..4 {
             // Save which team has the King card
             if self.hands[player].iter().any(|c| c.id == KING_ID) {
@@ -323,7 +330,9 @@ impl SixOfVIIIGame {
                 }
             }
             State::Play => self.playable_card_ids(),
-            State::OptionallyPlayChurchOfEngland => todo!(),
+            State::OptionallyPlayChurchOfEngland => {
+                vec![PASS, ANNUL_TRICK]
+            }
         }
     }
 
@@ -367,7 +376,9 @@ impl SixOfVIIIGame {
 
     fn apply_move_internal(&mut self, action: i32) {
         match self.state {
-            State::OptionallyPlayChurchOfEngland => todo!(),
+            State::OptionallyPlayChurchOfEngland => {
+                self.score_trick(action == ANNUL_TRICK);
+            }
             State::PassCard => {
                 if let Some(pos) = self.passed_cards[self.current_player]
                     .iter()
@@ -424,7 +435,7 @@ impl SixOfVIIIGame {
 
                 if self.passed_cards[self.current_player].len() >= 2 {
                     self.current_player = (self.current_player + 1) % 4;
-                    if self.passed_cards[self.current_player].len() >= 3 {
+                    if self.passed_cards[self.current_player].len() >= 2 {
                         // All players have selected cards to pass, actually pass the cards
                         for player in 0..4 {
                             self.new_change();
@@ -511,10 +522,6 @@ impl SixOfVIIIGame {
                     // End trick
 
                     let trick_winner = self.get_trick_winner();
-                    self.lead_player = trick_winner;
-                    self.current_player = (trick_winner + 1) % 4;
-                    self.cards_taken[(trick_winner % 2)]
-                        .extend(self.current_trick.iter().flatten().cloned());
 
                     let index = self.new_change();
 
@@ -537,64 +544,122 @@ impl SixOfVIIIGame {
                         },
                     );
 
-                    // Animate potential earned score and tricks to winner
-                    let change_index = self.new_change();
+                    self.lead_player = trick_winner;
+                    let trick_losing_team = (trick_winner + 1) % 2;
 
-                    for card in self.current_trick {
-                        self.add_change(
-                            change_index,
-                            Change {
-                                change_type: ChangeType::TricksToWinner,
-                                object_id: card.unwrap().id,
-                                dest: Location::TricksTaken,
-                                player: trick_winner,
-                                tricks_taken: (self.cards_taken[trick_winner].len() / 4) as i32,
-                                ..Default::default()
-                            },
-                        );
-                    }
-
-                    // Clear trick
-                    self.current_trick = [None; 4];
-
-                    if self.hands.iter().all(|x| x.is_empty()) {
-                        // The hand is over
-
-                        if self.round >= 4 {
-                            // The game is over
-                            if self.scores[0] == self.scores[1] {
-                                // Tiebreaker
-                                // If there is a tie, the team that does not have the
-                                // King card wins. If neither team had the King card,
-                                // the team that won the last trick wins.
-                                if self.team_with_king.is_some() {
-                                    self.winner = Some((self.team_with_king.unwrap() + 1) % 2);
-                                } else {
-                                    self.winner = Some(trick_winner);
-                                }
-                            } else {
-                                let max_score = self.scores.iter().max().unwrap();
-                                self.winner = Some(
-                                    self.scores.iter().position(|&x| x == *max_score).unwrap(),
-                                );
-                            }
-                            let change_index = self.new_change();
-                            self.add_change(
-                                change_index,
-                                Change {
-                                    change_type: ChangeType::GameOver,
-                                    object_id: 0,
-                                    dest: Location::Deck,
-                                    ..Default::default()
-                                },
-                            );
-                            return;
-                        }
-                        self.deal();
+                    if self.team_can_play_church_of_england(trick_losing_team) {
+                        self.state = State::OptionallyPlayChurchOfEngland;
+                        // 0 - Human player will decide for their team
+                        // 1 - West can decide for their team
+                        self.current_player = trick_losing_team;
                         return;
+                    } else {
+                        self.score_trick(false);
                     }
                 }
             }
+        }
+    }
+
+    pub fn team_can_play_church_of_england(&self, trick_losing_team: usize) -> bool {
+        if self.church_of_england_played {
+            // The Church of England ability has already been used this hand
+            return false;
+        }
+        // The Church of England card cannot be used on a trick that includes the King
+        if self
+            .current_trick
+            .iter()
+            .filter_map(|c| *c)
+            .any(|c| c.id == KING_ID)
+        {
+            return false;
+        }
+        if self.current_trump == Suit::Black {
+            // The Church of England ability can only be used when Red or beyond is trump
+            return false;
+        }
+        // Only the team with the lower score at the start of a hand can use the
+        // Church of England ability
+        return self.scores[trick_losing_team] < self.scores[(trick_losing_team + 1) % 2];
+    }
+
+    pub fn score_trick(&mut self, trick_annulled: bool) {
+        if trick_annulled {
+            self.church_of_england_played = true;
+        }
+        self.state = State::Play;
+        let trick_winner = self.lead_player;
+        self.current_player = self.lead_player;
+        if !trick_annulled {
+            self.cards_taken[trick_winner % 2].extend(self.current_trick.iter().flatten().cloned());
+        }
+
+        // Animate tricks to winning team or offscrean if annulled
+        let change_index = self.new_change();
+
+        for card in self.current_trick {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: if trick_annulled {
+                        ChangeType::TricksAnnulled
+                    } else {
+                        ChangeType::TricksToWinner
+                    },
+                    object_id: card.unwrap().id,
+                    dest: if trick_annulled {
+                        Location::TricksAnnulled
+                    } else {
+                        Location::TricksTaken
+                    },
+                    player: trick_winner,
+                    tricks_taken: if trick_annulled {
+                        1
+                    } else {
+                        (self.cards_taken[trick_winner].len() / 4) as i32
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Clear trick
+        self.current_trick = [None; 4];
+
+        if self.hands.iter().all(|x| x.is_empty()) {
+            // The hand is over
+
+            if self.round >= 4 {
+                // The game is over
+                if self.scores[0] == self.scores[1] {
+                    // Tiebreaker
+                    // If there is a tie, the team that does not have the
+                    // King card wins. If neither team had the King card,
+                    // the team that won the last trick wins.
+                    if self.team_with_king.is_some() {
+                        self.winner = Some((self.team_with_king.unwrap() + 1) % 2);
+                    } else {
+                        self.winner = Some(trick_winner);
+                    }
+                } else {
+                    let max_score = self.scores.iter().max().unwrap();
+                    self.winner = Some(self.scores.iter().position(|&x| x == *max_score).unwrap());
+                }
+                let change_index = self.new_change();
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::GameOver,
+                        object_id: 0,
+                        dest: Location::Deck,
+                        ..Default::default()
+                    },
+                );
+                return;
+            }
+            self.deal();
+            return;
         }
     }
 
