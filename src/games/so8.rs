@@ -251,7 +251,7 @@ impl SixOfVIIIGame {
                 ..Default::default()
             },
         );
-        for hand_index in 0..14 {
+        for hand_index in 0..15 {
             for player in 0..4 {
                 let card = cards.pop().unwrap();
                 self.add_change(
