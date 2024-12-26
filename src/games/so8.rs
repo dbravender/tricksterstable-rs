@@ -4,6 +4,7 @@ Designer: Carol LaGrow
 BoardGameGeek: https://boardgamegeek.com/boardgame/394691/the-six-of-viii
 */
 
+use core::panic;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -22,6 +23,7 @@ const KING: i32 = 13;
 const KING_ID: i32 = 62;
 const PASS: i32 = 0;
 const ANNUL_TRICK: i32 = 1;
+const MAX_POINTS_PER_HAND: f64 = 50.0;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -509,6 +511,9 @@ impl SixOfVIIIGame {
                 if lead_suit.is_some() {
                     if Some(card.suit) != lead_suit
                         && !self.voids[self.current_player].contains(&lead_suit.unwrap())
+                        // Zeroes and the King card don't always reveal voids
+                        && card.value != 0
+                        && card.id != KING_ID
                     {
                         // Player has revealed a void
                         self.voids[self.current_player].push(lead_suit.unwrap());
@@ -617,7 +622,7 @@ impl SixOfVIIIGame {
                     tricks_taken: if trick_annulled {
                         1
                     } else {
-                        (self.cards_taken[trick_winner].len() / 4) as i32
+                        (self.cards_taken[trick_winner % 2].len() / 4) as i32
                     },
                     ..Default::default()
                 },
@@ -626,6 +631,9 @@ impl SixOfVIIIGame {
 
         // Clear trick
         self.current_trick = [None; 4];
+
+        // Set trump
+        self.current_trump = trick_number_to_trump(14 - self.hands[0].len() as i32);
 
         if self.hands.iter().all(|x| x.is_empty()) {
             // The hand is over
@@ -668,8 +676,8 @@ impl SixOfVIIIGame {
                     // If there is a tie, the team that does not have the
                     // King card wins. If neither team had the King card,
                     // the team that won the last trick wins.
-                    if self.team_with_king.is_some() {
-                        self.winner = Some((self.team_with_king.unwrap() + 1) % 2);
+                    if let Some(team_with_king) = self.team_with_king {
+                        self.winner = Some((team_with_king + 1) % 2);
                     } else {
                         self.winner = Some(trick_winner);
                     }
@@ -697,8 +705,9 @@ impl SixOfVIIIGame {
     pub fn apply_move(&mut self, action: i32) {
         self.changes = vec![vec![]]; // card from player to table
         if !self.get_moves().contains(&action) {
-            // return the same game with no animations when an invalid move is made
-            return;
+            println!("Invalid move: {}", action);
+            println!("Moves: {:?}", self.get_moves());
+            panic!("Invalid move");
         }
         self.apply_move_internal(action);
         self.show_playable();
@@ -893,10 +902,50 @@ impl ismcts::Game for SixOfVIIIGame {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
-        todo!();
+        let rng = &mut thread_rng();
 
-        // 3 cards are burned
-        // assert!(remaining_cards.len() == 3);
+        for p1 in 0..4 {
+            if p1 != self.current_player() {
+                // randomly swap each player's hand with the burned cards
+                let mut new_hands =
+                    vec![self.hands[p1 as usize].clone(), self.burned_cards.clone()];
+
+                // only swap cards that aren't in the current players void set
+                shuffle_and_divide_matching_cards(
+                    |c: &Card| !self.voids[p1].contains(&c.suit),
+                    &mut new_hands,
+                    rng,
+                );
+
+                self.hands[p1] = new_hands[0].clone();
+                self.burned_cards = new_hands[1].clone();
+            }
+
+            for p2 in 0..4 {
+                if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
+                    continue;
+                }
+
+                let mut combined_voids: HashSet<Suit> =
+                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
+                combined_voids.extend(self.voids[p2 as usize].iter());
+
+                let mut new_hands = vec![
+                    self.hands[p1 as usize].clone(),
+                    self.hands[p2 as usize].clone(),
+                ];
+
+                // allow swapping of any cards that are not in the combined void set
+                shuffle_and_divide_matching_cards(
+                    |c: &Card| !combined_voids.contains(&c.suit),
+                    &mut new_hands,
+                    rng,
+                );
+
+                self.hands[p1 as usize] = new_hands[0].clone();
+                self.hands[p2 as usize] = new_hands[1].clone();
+            }
+        }
     }
 
     fn current_player(&self) -> Self::PlayerTag {
@@ -916,14 +965,19 @@ impl ismcts::Game for SixOfVIIIGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        let team = player % 2;
         if self.winner.is_none() {
-            // the hand is not over
             None
         } else {
             if !self.experiment {
-                todo!();
+                let total_score_ratio = self.scores[team] as f64 / MAX_POINTS_PER_HAND;
+
+                // Scale the total score to a range between -1.0 and 1.0
+                let final_score = (total_score_ratio * 2.0) - 1.0;
+
+                Some(final_score)
             } else {
-                todo!();
+                todo!("No experiment implemented");
             }
         }
     }
@@ -934,7 +988,7 @@ pub fn get_mcts_move(game: &SixOfVIIIGame, iterations: i32, debug: bool) -> i32 
     new_game.no_changes = true;
     // reset scores for the simulation
     new_game.scores = [0; 2];
-    new_game.round = 6; // force evaluation of a single hand
+    new_game.round = 4; // force evaluation of a single hand
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
     ismcts.run_iterations(
@@ -971,7 +1025,6 @@ mod tests {
     #[test]
     fn test_deck() {
         let d = SixOfVIIIGame::deck();
-        println!("{:?}", d);
         assert_eq!(d.len(), 63);
     }
 
