@@ -630,6 +630,37 @@ impl SixOfVIIIGame {
         if self.hands.iter().all(|x| x.is_empty()) {
             // The hand is over
 
+            // Score the hand
+            let mut earned_this_hand = [0; 2];
+            // Each trick of 4 cards is worth 1 point
+            for team in 0..2 {
+                earned_this_hand[team] += self.cards_taken[team].len() as i32 / 4;
+            }
+            // Add all the points on the cards to the team's score
+            for (team, cards) in self.cards_taken.iter().enumerate() {
+                for card in cards {
+                    earned_this_hand[team] += card.points;
+                }
+            }
+
+            // Animate the scores
+            let score_change_index = self.new_change();
+            for team in 0..2 {
+                self.add_change(
+                    score_change_index,
+                    Change {
+                        change_type: ChangeType::Score,
+                        object_id: 0,
+                        dest: Location::Score,
+                        player: team,
+                        start_score: self.scores[team],
+                        end_score: self.scores[team] + earned_this_hand[team],
+                        ..Default::default()
+                    },
+                );
+                self.scores[team] += earned_this_hand[team];
+            }
+
             if self.round >= 4 {
                 // The game is over
                 if self.scores[0] == self.scores[1] {
