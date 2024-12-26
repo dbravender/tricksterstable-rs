@@ -63,6 +63,20 @@ pub enum Suit {
     Purple = 6,
 }
 
+impl Suit {
+    pub fn text_display(&self) -> &str {
+        match self {
+            Suit::Black => "♠",
+            Suit::Red => "♥",
+            Suit::Orange => "♦",
+            Suit::Yellow => "♣",
+            Suit::Green => "★",
+            Suit::Blue => "●",
+            Suit::Purple => "♚",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 enum Location {
@@ -84,9 +98,32 @@ enum Location {
 #[serde(rename_all = "camelCase")]
 pub struct Card {
     id: i32,
-    suit: Suit,
+    pub suit: Suit,
     points: i32,
     value: i32,
+}
+
+impl Card {
+    pub fn text_display(&self, show_id: bool) -> String {
+        let mut text = String::new();
+        if show_id {
+            text.push_str(&format!("{:>2}: ", self.id));
+        }
+        if self.value == KING {
+            text.push_str("K");
+        } else {
+            text.push_str(&self.value.to_string());
+        }
+        let point_display = match self.points {
+            0 => "   ",
+            1 => " ◆ ",
+            2 => "◆ ◆",
+            3 => "◆◆◆",
+            _ => panic!("Invalid point value"),
+        };
+        text.push_str(&format!("{} {}", &self.suit.text_display(), point_display));
+        text
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -800,7 +837,10 @@ impl SixOfVIIIGame {
                 player_name
             )),
             State::Play => None,
-            State::OptionallyPlayChurchOfEngland => todo!(),
+            State::OptionallyPlayChurchOfEngland => Some(format!(
+                "{} must decide whether to play the Church of England",
+                player_name
+            )),
         };
         let index = self.new_change();
         self.set_message(message, index);
