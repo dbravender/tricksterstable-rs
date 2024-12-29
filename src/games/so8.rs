@@ -236,6 +236,7 @@ impl SixOfVIIIGame {
         self.passed_cards = [vec![], vec![], vec![], vec![]];
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
+        self.current_trump = Suit::Black;
         self.current_trick = [None; 4];
         self.dealer = (self.dealer + 1) % 4;
         self.voids = [vec![], vec![], vec![], vec![]];
@@ -382,10 +383,21 @@ impl SixOfVIIIGame {
             .collect()
     }
 
+    pub fn get_lead_suit(&self) -> Option<Suit> {
+        if let Some(lead_card) = self.current_trick[self.lead_player] {
+            if lead_card.suit == Suit::Purple {
+                // When the King is led it is as if the current trump suit was led
+                return Some(self.current_trump);
+            } else {
+                return Some(lead_card.suit);
+            }
+        }
+        None
+    }
+
     pub fn playable_card_ids(&self) -> Vec<i32> {
         // Must follow
-        if self.current_trick[self.lead_player].is_some() {
-            let lead_suit = self.current_trick[self.lead_player].clone().unwrap().suit;
+        if let Some(lead_suit) = self.get_lead_suit() {
             let may_play_cant_be_pulled: Vec<i32> = self.hands[self.current_player]
                 .iter()
                 .filter(|c| {
@@ -519,10 +531,7 @@ impl SixOfVIIIGame {
                 }
             }
             State::Play => {
-                let lead_suit = match self.current_trick[self.lead_player] {
-                    Some(lead_card) => Some(lead_card.suit),
-                    None => None,
-                };
+                let lead_suit = self.get_lead_suit();
 
                 let pos = self.hands[self.current_player]
                     .iter()
@@ -907,7 +916,7 @@ impl SixOfVIIIGame {
     }
 
     pub fn value_for_card(&self, card: &Card) -> i32 {
-        let lead_suit = self.current_trick[self.lead_player].unwrap().suit;
+        let lead_suit = self.get_lead_suit().unwrap();
         let mut bonus: i32 = 0;
         if self.current_trump == Suit::Red
             && lead_suit != Suit::Black
