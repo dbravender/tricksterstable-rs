@@ -216,7 +216,7 @@ impl SixOfVIIIGame {
             ..Default::default()
         };
         let mut rng = rand::thread_rng();
-        game.dealer = rng.gen_range(0..=3);
+        game.dealer = rng.gen_range(0..4);
         game.deal();
         game
     }
