@@ -92,6 +92,8 @@ enum Location {
     TrickAndScoreCounter,
     PassCard,
     Message,
+    // The trump tracker
+    TrumpTrack,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -146,6 +148,8 @@ pub enum ChangeType {
     Reorder,
     PassCard,
     Message,
+    // New trump suit for this trick
+    TrumpChange,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -162,6 +166,8 @@ pub struct Change {
     player: usize,
     length: usize,
     message: Option<String>,
+    // Current trump offset for the trick
+    trick_number: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -243,6 +249,16 @@ impl SixOfVIIIGame {
         let mut cards = SixOfVIIIGame::deck();
         let shuffle_index = self.new_change();
         let deal_index = self.new_change();
+        // Reset the trump track
+        self.add_change(
+            shuffle_index,
+            Change {
+                change_type: ChangeType::TrumpChange,
+                trick_number: Some(0),
+                dest: Location::TrumpTrack,
+                ..Default::default()
+            },
+        );
         self.add_change(
             shuffle_index,
             Change {
@@ -679,7 +695,18 @@ impl SixOfVIIIGame {
         self.current_trick = [None; 4];
 
         // Set trump
-        self.current_trump = trick_number_to_trump(14 - self.hands[0].len() as i32);
+        let trick_number = 15 - self.hands[0].len() as i32;
+        self.current_trump = trick_number_to_trump(trick_number);
+        // Reset the trump track
+        self.add_change(
+            change_index,
+            Change {
+                change_type: ChangeType::TrumpChange,
+                trick_number: Some(trick_number),
+                dest: Location::TrumpTrack,
+                ..Default::default()
+            },
+        );
 
         if self.hands.iter().all(|x| x.is_empty()) {
             // The hand is over
@@ -1058,7 +1085,7 @@ fn trick_number_to_trump(trick_number: i32) -> Suit {
         7..=8 => Suit::Orange,
         9..=9 => Suit::Yellow,
         10..=11 => Suit::Green,
-        12..=14 => Suit::Blue,
+        12..=15 => Suit::Blue,
         _ => unreachable!(),
     }
 }
