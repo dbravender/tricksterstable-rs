@@ -784,10 +784,6 @@ impl SixOfVIIIGame {
 
     #[inline]
     pub fn reorder_hand(&mut self, player: usize, force_new_animation: bool) {
-        if player != 0 {
-            // Only reorder the human player's hand
-            return;
-        }
         if self.no_changes {
             return;
         }
