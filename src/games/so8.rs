@@ -21,8 +21,8 @@ use crate::utils::shuffle_and_divide_matching_cards;
 
 const KING: i32 = 13;
 const KING_ID: i32 = 62;
-const PASS: i32 = 0;
-const ANNUL_TRICK: i32 = 1;
+const PASS: i32 = -100;
+const ANNUL_TRICK: i32 = -101;
 const MAX_POINTS_PER_HAND: f64 = 50.0;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -444,6 +444,26 @@ impl SixOfVIIIGame {
     fn apply_move_internal(&mut self, action: i32) {
         match self.state {
             State::OptionallyPlayChurchOfEngland => {
+                if action == ANNUL_TRICK && self.current_player != 0 {
+                    let index = self.new_change();
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::Message,
+                            message: Some("Opponents chose to annul the trick".to_string()),
+                            ..Default::default()
+                        },
+                    );
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::OptionalPause,
+                            object_id: 0,
+                            dest: Location::Play,
+                            ..Default::default()
+                        },
+                    );
+                }
                 self.score_trick(action == ANNUL_TRICK);
             }
             State::PassCard => {
@@ -837,7 +857,7 @@ impl SixOfVIIIGame {
             self.changes = vec![vec![]];
         }
         let change_index = self.new_change();
-        if self.current_player == 0 {
+        if self.human_player.is_some() && self.current_player == self.human_player.unwrap() {
             let moves = self.get_moves();
             let passed_cards: HashSet<i32> =
                 HashSet::from_iter(self.passed_cards[0].iter().map(|c| c.id));
@@ -882,7 +902,7 @@ impl SixOfVIIIGame {
         match self.current_player {
             0 => "You".to_string(),
             1 => "West".to_string(),
-            2 => "your partner".to_string(),
+            2 => "Your partner".to_string(),
             _ => "East".to_string(),
         }
     }
@@ -911,6 +931,19 @@ impl SixOfVIIIGame {
                 change_index,
                 Change {
                     object_id: card.id,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    player: self.current_player,
+                    ..Default::default()
+                },
+            );
+        }
+        // Hide the Church of England and pass action cards
+        for id in [PASS, ANNUL_TRICK].iter() {
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: *id,
                     change_type: ChangeType::HidePlayable,
                     dest: Location::Hand,
                     player: self.current_player,
