@@ -94,6 +94,8 @@ enum Location {
     Message,
     // The trump tracker
     TrumpTrack,
+    // Undealt cards moved off the table
+    CardsBurned,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -150,6 +152,8 @@ pub enum ChangeType {
     Message,
     // New trump suit for this trick
     TrumpChange,
+    // Move undealt cards off the table
+    CardsBurned,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -289,6 +293,17 @@ impl SixOfVIIIGame {
         // Keep track of the remaining cards for distribution during the simulation
         // so the bots don't have the unfair advantage of knowing the exact cards in play
         self.burned_cards = cards;
+        for card in self.burned_cards.clone() {
+            self.add_change(
+                deal_index,
+                Change {
+                    change_type: ChangeType::CardsBurned,
+                    object_id: card.id,
+                    dest: Location::CardsBurned,
+                    ..Default::default()
+                },
+            );
+        }
         self.team_with_king = None;
         self.church_of_england_played = false;
         for player in 0..4 {
