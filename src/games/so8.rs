@@ -737,7 +737,7 @@ impl SixOfVIIIGame {
             change_index,
             Change {
                 change_type: ChangeType::TrumpChange,
-                trick_number: Some(trick_number),
+                trick_number: Some(trick_number % 15),
                 dest: Location::TrumpTrack,
                 ..Default::default()
             },
@@ -989,19 +989,30 @@ impl SixOfVIIIGame {
     pub fn value_for_card(&self, card: &Card) -> i32 {
         let lead_suit = self.get_lead_suit().unwrap();
         let mut bonus: i32 = 0;
-        if self.current_trump == Suit::Red
-            && lead_suit != Suit::Black
-            && card.value == 0
-            && card.suit == Suit::Black
-        {
-            bonus += 213;
+        if card.value == 0 {
+            match (lead_suit, self.current_trump, card.suit) {
+                (_, Suit::Red, Suit::Black) => {
+                    bonus += 213;
+                }
+                (Suit::Red, _, Suit::Black) => {
+                    bonus += 113;
+                }
+                (_, Suit::Black, Suit::Red) => {
+                    bonus += 213;
+                }
+                (Suit::Black, _, Suit::Red) => {
+                    bonus += 113;
+                }
+                (_, _, _) => {}
+            }
         }
-        if self.current_trump == Suit::Black
-            && lead_suit != Suit::Red
-            && card.value == 0
-            && card.suit == Suit::Red
-        {
-            bonus += 213;
+        if card.value == 0 && card.suit == Suit::Black {
+            if lead_suit == Suit::Red {
+                bonus += 113;
+            }
+            if self.current_trump == Suit::Red {
+                bonus += 213;
+            }
         }
         if card.suit == lead_suit {
             bonus += 100;
@@ -1010,7 +1021,7 @@ impl SixOfVIIIGame {
             bonus += 200;
         }
         if card.value == KING {
-            bonus += 500;
+            bonus += 1000;
         }
         card.value + bonus
     }
@@ -1161,9 +1172,7 @@ mod tests {
     fn test_trick_winner() {
         let test_cases = [
             TrickWinnerTestCase {
-                description:
-                    "Red 0 is highest red card when black is trump but not when red is led"
-                        .to_string(),
+                description: "Red 0 is highest red card when black is trump".to_string(),
                 lead_player: 0,
                 trump: Suit::Black,
                 current_trick: [
@@ -1192,7 +1201,7 @@ mod tests {
                         suit: Suit::Green,
                     }),
                 ],
-                expected_winner: 2,
+                expected_winner: 1,
             },
             TrickWinnerTestCase {
                 description: "Red 0 is highest red card when black is trump".to_string(),
@@ -1227,14 +1236,12 @@ mod tests {
                 expected_winner: 1,
             },
             TrickWinnerTestCase {
-                description:
-                    "Black 0 is highest red card when red is trump but not when black is led"
-                        .to_string(),
+                description: "Black 0 is the highest red card when red is trump".to_string(),
                 lead_player: 0,
                 trump: Suit::Red,
                 current_trick: [
                     Some(Card {
-                        suit: Suit::Black,
+                        suit: Suit::Red,
                         value: 3,
                         points: 0,
                         id: 0,
@@ -1247,7 +1254,7 @@ mod tests {
                     }),
                     Some(Card {
                         id: 2,
-                        value: 3,
+                        value: 10,
                         points: 0,
                         suit: Suit::Red,
                     }),
@@ -1258,7 +1265,7 @@ mod tests {
                         suit: Suit::Green,
                     }),
                 ],
-                expected_winner: 2,
+                expected_winner: 1,
             },
             TrickWinnerTestCase {
                 description: "Black 0 is highest red card when red is trump".to_string(),
