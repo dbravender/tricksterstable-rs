@@ -995,20 +995,30 @@ impl SixOfVIIIGame {
         let lead_suit = self.get_lead_suit().unwrap();
         let mut bonus: i32 = 0;
         if card.value == 0 {
-            match (lead_suit, self.current_trump, card.suit) {
-                (Suit::Red, Suit::Red, Suit::Black) => {
-                    bonus += 213;
+            match card.suit {
+                Suit::Black => {
+                    if lead_suit == Suit::Black {
+                        bonus += 0;
+                    } else if self.current_trump == Suit::Red {
+                        bonus += 213;
+                    } else if lead_suit == Suit::Red {
+                        bonus += 113;
+                    } else if self.current_trump == Suit::Black {
+                        bonus += 200;
+                    }
                 }
-                (Suit::Red, _, Suit::Black) => {
-                    bonus += 113;
+                Suit::Red => {
+                    if lead_suit == Suit::Red {
+                        bonus += 0;
+                    } else if self.current_trump == Suit::Black {
+                        bonus += 213;
+                    } else if lead_suit == Suit::Black {
+                        bonus += 113;
+                    } else if self.current_trump == Suit::Red {
+                        bonus += 200;
+                    }
                 }
-                (Suit::Black, Suit::Black, Suit::Red) => {
-                    bonus += 213;
-                }
-                (Suit::Black, _, Suit::Red) => {
-                    bonus += 113;
-                }
-                (_, _, _) => {}
+                _ => {}
             }
         }
         if card.value == 0 && card.suit == Suit::Black {
