@@ -985,6 +985,9 @@ impl SixOfVIIIGame {
             .iter() // Convert the Vec into an Iterator
             .filter_map(|&x| x) // filter_map will only pass through the Some values
             .collect();
+        for card in cards.iter() {
+            println!("{:?} = {}", card, self.value_for_card(&card));
+        }
         cards.sort_by_key(|c| std::cmp::Reverse(self.value_for_card(c)));
         *card_id_to_player
             .get(&cards.first().expect("there should be a winning card").id)
@@ -994,51 +997,39 @@ impl SixOfVIIIGame {
     pub fn value_for_card(&self, card: &Card) -> i32 {
         let lead_suit = self.get_lead_suit().unwrap();
         let mut bonus: i32 = 0;
+        let mut treated_value = card.value;
+        let mut treated_suit = card.suit;
         if card.value == 0 {
             match card.suit {
                 Suit::Black => {
-                    if lead_suit == Suit::Black {
-                        bonus += 0;
-                    } else if self.current_trump == Suit::Red {
-                        bonus += 213;
-                    } else if lead_suit == Suit::Red {
-                        bonus += 113;
-                    } else if self.current_trump == Suit::Black {
-                        bonus += 200;
+                    if lead_suit == Suit::Red
+                        || (lead_suit != Suit::Black && self.current_trump == Suit::Red)
+                    {
+                        treated_suit = Suit::Red;
+                        treated_value = 13;
                     }
                 }
                 Suit::Red => {
-                    if lead_suit == Suit::Red {
-                        bonus += 0;
-                    } else if self.current_trump == Suit::Black {
-                        bonus += 213;
-                    } else if lead_suit == Suit::Black {
-                        bonus += 113;
-                    } else if self.current_trump == Suit::Red {
-                        bonus += 200;
+                    if lead_suit == Suit::Black
+                        || (lead_suit != Suit::Red && self.current_trump == Suit::Black)
+                    {
+                        treated_suit = Suit::Black;
+                        treated_value = 13;
                     }
                 }
                 _ => {}
             }
         }
-        if card.value == 0 && card.suit == Suit::Black {
-            if lead_suit == Suit::Red {
-                bonus += 113;
-            }
-            if self.current_trump == Suit::Red {
-                bonus += 213;
-            }
-        }
-        if card.suit == lead_suit {
+        if treated_suit == lead_suit {
             bonus += 100;
         }
-        if card.suit == self.current_trump {
+        if treated_suit == self.current_trump {
             bonus += 200;
         }
         if card.value == KING {
             bonus += 1000;
         }
-        card.value + bonus
+        treated_value + bonus
     }
 }
 
@@ -1187,7 +1178,40 @@ mod tests {
     fn test_trick_winner() {
         let test_cases = [
             TrickWinnerTestCase {
-                description: "Red 0 is highest red card when black is trump".to_string(),
+                description: "Red 0 is highest black card when black is trump and red is not led"
+                    .to_string(),
+                lead_player: 3,
+                trump: Suit::Black,
+                current_trick: [
+                    Some(Card {
+                        suit: Suit::Red,
+                        value: 0,
+                        points: 0,
+                        id: 1,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        value: 12,
+                        points: 0,
+                        suit: Suit::Black,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        value: 7,
+                        points: 0,
+                        suit: Suit::Black,
+                    }),
+                    Some(Card {
+                        suit: Suit::Black,
+                        value: 2,
+                        points: 0,
+                        id: 0,
+                    }),
+                ],
+                expected_winner: 0,
+            },
+            TrickWinnerTestCase {
+                description: "Red 0 is not trump when red is led".to_string(),
                 lead_player: 0,
                 trump: Suit::Black,
                 current_trick: [
