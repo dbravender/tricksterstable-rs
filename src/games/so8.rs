@@ -459,13 +459,18 @@ impl SixOfVIIIGame {
     fn apply_move_internal(&mut self, action: i32) {
         match self.state {
             State::OptionallyPlayChurchOfEngland => {
-                if action == ANNUL_TRICK && self.current_player != 0 {
+                if action == ANNUL_TRICK {
                     let index = self.new_change();
+                    let message = if self.current_player == 0 {
+                        Some("You chose to annul the trick".to_string())
+                    } else {
+                        Some("Opponents chose to annul the trick".to_string())
+                    };
                     self.add_change(
                         index,
                         Change {
                             change_type: ChangeType::Message,
-                            message: Some("Opponents chose to annul the trick".to_string()),
+                            message,
                             ..Default::default()
                         },
                     );
