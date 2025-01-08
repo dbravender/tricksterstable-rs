@@ -991,13 +991,13 @@ impl SixOfVIIIGame {
         let mut bonus: i32 = 0;
         if card.value == 0 {
             match (lead_suit, self.current_trump, card.suit) {
-                (_, Suit::Red, Suit::Black) => {
+                (Suit::Red, Suit::Red, Suit::Black) => {
                     bonus += 213;
                 }
                 (Suit::Red, _, Suit::Black) => {
                     bonus += 113;
                 }
-                (_, Suit::Black, Suit::Red) => {
+                (Suit::Black, Suit::Black, Suit::Red) => {
                     bonus += 213;
                 }
                 (Suit::Black, _, Suit::Red) => {
@@ -1201,7 +1201,7 @@ mod tests {
                         suit: Suit::Green,
                     }),
                 ],
-                expected_winner: 1,
+                expected_winner: 2,
             },
             TrickWinnerTestCase {
                 description: "Red 0 is highest red card when black is trump".to_string(),
