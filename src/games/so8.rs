@@ -283,7 +283,7 @@ impl SixOfVIIIGame {
                         dest: Location::Hand,
                         player,
                         offset: hand_index,
-                        length: 14,
+                        length: 15,
                         ..Default::default()
                     },
                 );
