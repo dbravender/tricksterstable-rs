@@ -232,8 +232,14 @@ impl SixOfVIIIGame {
     }
 
     pub fn new_with_human_player(human_player: usize) -> Self {
-        let mut game = Self::new();
+        let mut game = Self {
+            no_changes: false,
+            ..Default::default()
+        };
+        let mut rng = rand::thread_rng();
+        game.dealer = rng.gen_range(0..4);
         game.human_player = Some(human_player);
+        game.deal();
         game
     }
 
