@@ -4,4 +4,5 @@ pub mod kaibosh;
 pub mod kansascity;
 pub mod so8;
 pub mod szs;
+pub mod torchlit;
 pub mod yokai2p;
