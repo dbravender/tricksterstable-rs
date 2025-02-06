@@ -125,6 +125,11 @@ pub struct Change {
     length: usize,
     message: Option<String>,
 }
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrickResult {
+    pub dungeon_warden: usize,
+    pub movers: Vec<usize>,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -338,9 +343,9 @@ impl TorchlitGame {
                 if self.current_trick.iter().flatten().count() == 3 {
                     // End trick
 
-                    let (trick_winner, advancers) = self.get_trick_winners();
+                    let trick_result = self.get_trick_result();
                     let index = self.new_change();
-                    for trick_winner in advancers {
+                    for trick_winner in trick_result.movers {
                         self.add_change(
                             index,
                             Change {
@@ -362,7 +367,7 @@ impl TorchlitGame {
                     );
                     // TOOD: animate meeples
 
-                    self.lead_player = trick_winner;
+                    self.lead_player = trick_result.dungeon_warden;
 
                     self.score_trick();
                 }
@@ -374,6 +379,8 @@ impl TorchlitGame {
     }
 
     pub fn score_trick(&mut self) {
+        todo!(); // tricks aren't scored - there is a new phase that needs to be added
+                 // where the dungeon warden selects cards to play on the dungeons
         self.state = State::Play;
         let trick_winner = self.lead_player;
         self.current_player = self.lead_player;
@@ -385,7 +392,7 @@ impl TorchlitGame {
             self.add_change(
                 change_index,
                 Change {
-                    change_type: ChangeType::TricksToWinner,
+                    change_type: ChangeType::CardsBurned,
                     object_id: card.unwrap().id,
                     dest: Location::CardsBurned,
                     ..Default::default()
@@ -594,7 +601,7 @@ impl TorchlitGame {
         }
     }
 
-    pub fn get_trick_winners(&self) -> (usize, Vec<usize>) {
+    pub fn get_trick_result(&self) -> TrickResult {
         let mut card_id_to_player: HashMap<i32, usize> = HashMap::new();
         for (player, card) in self.current_trick.iter().enumerate() {
             if let Some(card) = card {
@@ -606,24 +613,28 @@ impl TorchlitGame {
             .iter() // Convert the Vec into an Iterator
             .filter_map(|&x| x) // filter_map will only pass through the Some values
             .collect();
-        for card in cards.iter() {
-            println!("{:?} = {}", card, self.value_for_card(&card));
-        }
         cards.sort_by_key(|c| std::cmp::Reverse(self.value_for_card(c)));
-        let winning_player = *card_id_to_player
-            .get(&cards.first().expect("there should be a winning card").id)
-            .expect("cards_to_player missing card");
-
         let winning_value = cards.first().expect("there should be a winning card").value;
+        let lowest_value = cards.iter().map(|c| c.value).min().unwrap();
+        // Iterate over all cards played starting with the lead player
+        // The player that played the lowest card last becomes the dungeon warden
+        let mut dungeon_warden: usize = 0;
+        for offset in 0..3 {
+            let player = (self.lead_player + offset) % 3;
+            let card = self.current_trick[player].unwrap();
+            if card.value == lowest_value {
+                dungeon_warden = player;
+            }
+        }
 
-        (
-            winning_player,
-            cards
-                .into_iter()
-                .filter(|c| c.id == winning_value)
+        TrickResult {
+            dungeon_warden,
+            movers: cards
+                .iter()
+                .filter(|c| c.value == winning_value)
                 .map(|c| card_id_to_player[&c.id])
                 .collect(),
-        )
+        }
     }
 
     pub fn value_for_card(&self, card: &Card) -> i32 {
@@ -746,19 +757,19 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TrickWinnerTestCase {
+    struct TrickResultTestCase {
         description: String,
         current_trick: [Option<Card>; 3],
         lead_player: usize,
-        expected_winner: usize,
+        expected_result: TrickResult,
     }
 
     #[test]
-    fn test_trick_winner() {
+    fn test_trick_result() {
         let test_cases = [
-            TrickWinnerTestCase {
+            TrickResultTestCase {
                 description: "Highest dragon wins the trick".to_string(),
-                lead_player: 3,
+                lead_player: 2,
                 current_trick: [
                     Some(Card {
                         suit: Suit::Dragons,
@@ -776,15 +787,19 @@ mod tests {
                         suit: Suit::Goblins,
                     }),
                 ],
-                expected_winner: 0,
+                expected_result: TrickResult {
+                    dungeon_warden: 0,
+                    movers: vec![0],
+                },
             },
-            TrickWinnerTestCase {
-                description: "Highest lead card wins".to_string(),
-                lead_player: 0,
+            TrickResultTestCase {
+                description: "Highest lead card wins, last player to play lowest card is warden"
+                    .to_string(),
+                lead_player: 1,
                 current_trick: [
                     Some(Card {
                         suit: Suit::Ghosts,
-                        value: 0,
+                        value: 1,
                         id: 0,
                     }),
                     Some(Card {
@@ -794,11 +809,14 @@ mod tests {
                     }),
                     Some(Card {
                         id: 2,
-                        value: 3,
+                        value: 1,
                         suit: Suit::Skulls,
                     }),
                 ],
-                expected_winner: 0,
+                expected_result: TrickResult {
+                    dungeon_warden: 0,
+                    movers: vec![1, 0, 2],
+                },
             },
         ];
         for test_case in test_cases {
@@ -806,8 +824,8 @@ mod tests {
             game.lead_player = test_case.lead_player;
             game.current_trick = test_case.current_trick;
             assert_eq!(
-                game.get_trick_winners(),
-                test_case.expected_winner,
+                game.get_trick_result(),
+                test_case.expected_result,
                 "{} {:?}",
                 test_case.description,
                 test_case
