@@ -19,6 +19,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::shuffle_and_divide_matching_cards;
 
+// Used to indicate when a player does not want to spawn more monsters
+const PASS: i32 = -1;
+// Max points
+// 6 - 1 point for each card of that number (6 suits)
+// 2 points for a dragon (one of each number)
+// 4 2 points for each opponent torch
+// 3 points for lighting one's own torch
+const MAX_POINTS_PER_HAND: f64 = 15.0;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum State {
@@ -93,7 +102,7 @@ pub enum ChangeType {
     ShowPlayable,
     HidePlayable,
     OptionalPause,
-    ShowWinningCard,
+    ShowWinningCards,
     GameOver,
     Reorder,
     PassCard,
@@ -109,7 +118,6 @@ pub struct Change {
     pub change_type: ChangeType,
     object_id: i32,
     dest: Location,
-    tricks_taken: i32,
     start_score: i32,
     end_score: i32,
     offset: usize,
@@ -149,8 +157,6 @@ pub struct TorchlitGame {
     pub round: usize,
     // Which player is the human player
     pub human_player: Option<usize>,
-    // 3 cards that were not dealt to players (used during determination)
-    pub burned_cards: Vec<Card>,
 }
 
 impl TorchlitGame {
@@ -160,7 +166,7 @@ impl TorchlitGame {
             ..Default::default()
         };
         let mut rng = rand::thread_rng();
-        game.dealer = rng.gen_range(0..4);
+        game.dealer = rng.gen_range(0..3);
         game.deal();
         game
     }
@@ -171,7 +177,7 @@ impl TorchlitGame {
             ..Default::default()
         };
         let mut rng = rand::thread_rng();
-        game.dealer = rng.gen_range(0..4);
+        game.dealer = rng.gen_range(0..3);
         game.human_player = Some(human_player);
         game.deal();
         game
@@ -187,7 +193,7 @@ impl TorchlitGame {
         self.current_trick = [None; 3];
         self.dealer = (self.dealer + 1) % 3;
         self.voids = [vec![], vec![], vec![]];
-        let mut cards = Torchlit::deck();
+        let mut cards = TorchlitGame::deck();
         let shuffle_index = self.new_change();
         let deal_index = self.new_change();
         self.add_change(
@@ -216,20 +222,6 @@ impl TorchlitGame {
                 );
                 self.hands[player].push(card);
             }
-        }
-        // Keep track of the remaining cards for distribution during the simulation
-        // so the bots don't have the unfair advantage of knowing the exact cards in play
-        self.burned_cards = cards;
-        for card in self.burned_cards.clone() {
-            self.add_change(
-                deal_index,
-                Change {
-                    change_type: ChangeType::CardsBurned,
-                    object_id: card.id,
-                    dest: Location::CardsBurned,
-                    ..Default::default()
-                },
-            );
         }
         for player in 0..3 {
             self.sort_hand(player);
@@ -275,11 +267,13 @@ impl TorchlitGame {
     }
 
     pub fn playable_card_ids(&self) -> Vec<i32> {
-        // Must follow
-        if let Some(lead_suit) = self.get_lead_suit() {
-            let mut moves: Vec<i32> = self.hands[self.current_player]
+        // Must follow except when a dragon is led and when it's the last trick
+        // FIXME: any card can be played on the last trick (may follow)
+        let lead_suit = self.get_lead_suit();
+        if lead_suit.is_some() && lead_suit != Some(Suit::Dragons) {
+            let moves: Vec<i32> = self.hands[self.current_player]
                 .iter()
-                .filter(|c| c.suit == lead_suit)
+                .filter(|c| Some(c.suit) == lead_suit)
                 .map(|c| c.id)
                 .collect();
             if !moves.is_empty() {
@@ -289,13 +283,22 @@ impl TorchlitGame {
         self.current_player_card_ids()
     }
 
+    fn spawn_monster_card_ids(&self) -> Vec<i32> {
+        // When every card in the trick is a different color
+        // the Dungeon Warden gains full control.
+        // Otherwise, the Dungeon Warden must select one card from
+        // each card color present
+        // need a way to stage and then either commit or undo these moves
+        todo!();
+        self.current_player_card_ids()
+    }
+
     fn apply_move_internal(&mut self, action: i32) {
         match self.state {
             State::LightTorch => {
                 todo!();
             }
             State::Play => {
-                todo!(); // Review all this code
                 let lead_suit = self.get_lead_suit();
 
                 let pos = self.hands[self.current_player]
@@ -319,37 +322,35 @@ impl TorchlitGame {
 
                 self.current_trick[self.current_player] = Some(card);
 
-                if lead_suit.is_some() {
+                // Dragons do not need to be followed
+                if lead_suit.is_some() && lead_suit != Some(Suit::Dragons) {
                     if Some(card.suit) != lead_suit
                         && !self.voids[self.current_player].contains(&lead_suit.unwrap())
-                        // Zeroes and the King card don't always reveal voids
-                        && card.value != 0
-                        && card.id != KING_ID
                     {
                         // Player has revealed a void
                         self.voids[self.current_player].push(lead_suit.unwrap());
                     }
                 }
 
-                self.current_player = (self.current_player + 1) % 4;
+                self.current_player = (self.current_player + 1) % 3;
                 self.hide_playable();
 
-                if self.current_trick.iter().flatten().count() == 4 {
+                if self.current_trick.iter().flatten().count() == 3 {
                     // End trick
 
-                    let trick_winner = self.get_trick_winner();
-
+                    let (trick_winner, advancers) = self.get_trick_winners();
                     let index = self.new_change();
-
-                    self.add_change(
-                        index,
-                        Change {
-                            change_type: ChangeType::ShowWinningCard,
-                            object_id: self.current_trick[trick_winner].unwrap().id,
-                            dest: Location::Play,
-                            ..Default::default()
-                        },
-                    );
+                    for trick_winner in advancers {
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::ShowWinningCards,
+                                object_id: self.current_trick[trick_winner].unwrap().id,
+                                dest: Location::Play,
+                                ..Default::default()
+                            },
+                        );
+                    }
                     self.add_change(
                         index,
                         Change {
@@ -359,6 +360,7 @@ impl TorchlitGame {
                             ..Default::default()
                         },
                     );
+                    // TOOD: animate meeples
 
                     self.lead_player = trick_winner;
 
@@ -371,33 +373,7 @@ impl TorchlitGame {
         }
     }
 
-    pub fn team_can_play_church_of_england(&self, trick_losing_team: usize) -> bool {
-        if self.church_of_england_played {
-            // The Church of England ability has already been used this hand
-            return false;
-        }
-        // The Church of England card cannot be used on a trick that includes the King
-        if self
-            .current_trick
-            .iter()
-            .filter_map(|c| *c)
-            .any(|c| c.id == KING_ID)
-        {
-            return false;
-        }
-        if self.current_trump == Suit::Black {
-            // The Church of England ability can only be used when Red or beyond is trump
-            return false;
-        }
-        // Only the team with the lower score at the start of a hand can use the
-        // Church of England ability
-        return self.scores[trick_losing_team] < self.scores[(trick_losing_team + 1) % 2];
-    }
-
-    pub fn score_trick(&mut self, trick_annulled: bool) {
-        if trick_annulled {
-            self.church_of_england_played = true;
-        }
+    pub fn score_trick(&mut self) {
         self.state = State::Play;
         let trick_winner = self.lead_player;
         self.current_player = self.lead_player;
@@ -409,95 +385,55 @@ impl TorchlitGame {
             self.add_change(
                 change_index,
                 Change {
-                    change_type: if trick_annulled {
-                        ChangeType::TricksAnnulled
-                    } else {
-                        ChangeType::TricksToWinner
-                    },
+                    change_type: ChangeType::TricksToWinner,
                     object_id: card.unwrap().id,
-                    dest: if trick_annulled {
-                        Location::TricksAnnulled
-                    } else {
-                        Location::TricksTaken
-                    },
-                    player: trick_winner,
-                    tricks_taken: if trick_annulled {
-                        1
-                    } else {
-                        (self.cards_taken[trick_winner % 2].len() / 4) as i32
-                    },
+                    dest: Location::CardsBurned,
                     ..Default::default()
                 },
             );
         }
 
         // Clear trick
-        self.current_trick = [None; 4];
-
-        // Set trump
-        let trick_number = 15 - self.hands[0].len() as i32;
-        self.current_trump = trick_number_to_trump(trick_number);
-        // Reset the trump track
-        self.add_change(
-            change_index,
-            Change {
-                change_type: ChangeType::TrumpChange,
-                trick_number: Some(trick_number % 15),
-                dest: Location::TrumpTrack,
-                ..Default::default()
-            },
-        );
+        self.current_trick = [None; 3];
 
         if self.hands.iter().all(|x| x.is_empty()) {
             // The hand is over
 
             // Score the hand
-            let mut earned_this_hand = [0; 2];
-            // Each trick of 4 cards is worth 1 point
-            for team in 0..2 {
-                earned_this_hand[team] += self.cards_taken[team].len() as i32 / 4;
-            }
-            // Add all the points on the cards to the team's score
-            for (team, cards) in self.cards_taken.iter().enumerate() {
-                for card in cards {
-                    earned_this_hand[team] += card.points;
-                }
-            }
+            let mut earned_this_hand = [0; 3];
+
+            // FIXME: implement scoring
+            // If multiple players' pawns occupy the same dungeon, the total value
+            // of cards in that dungeon is divided by the number of pawns present.
+            // Any fractional values are rounded down.
 
             // Animate the scores
             let score_change_index = self.new_change();
-            for team in 0..2 {
+            for player in 0..3 {
                 self.add_change(
                     score_change_index,
                     Change {
                         change_type: ChangeType::Score,
                         object_id: 0,
                         dest: Location::Score,
-                        player: team,
-                        start_score: self.scores[team],
-                        end_score: self.scores[team] + earned_this_hand[team],
+                        player,
+                        start_score: self.scores[player],
+                        end_score: self.scores[player] + earned_this_hand[player],
                         ..Default::default()
                     },
                 );
-                self.scores[team] += earned_this_hand[team];
+                self.scores[player] += earned_this_hand[player];
             }
 
-            if self.round >= 4 {
+            if self.round >= 3 {
                 // The game is over
-                if self.scores[0] == self.scores[1] {
-                    // Tiebreaker
-                    // If there is a tie, the team that does not have the
-                    // King card wins. If neither team had the King card,
-                    // the team that won the last trick wins.
-                    if let Some(team_with_king) = self.team_with_king {
-                        self.winner = Some((team_with_king + 1) % 2);
-                    } else {
-                        self.winner = Some(trick_winner);
-                    }
-                } else {
-                    let max_score = self.scores.iter().max().unwrap();
-                    self.winner = Some(self.scores.iter().position(|&x| x == *max_score).unwrap());
-                }
+                let max_score = self.scores.iter().max().unwrap();
+                // FIXME: implement tiebreaker
+                // Tiebreaker
+                // If there is a tie, the player who scored the most
+                // points in the last round wins
+                // If a tie persists, the victory is shared
+                self.winner = Some(self.scores.iter().position(|&x| x == *max_score).unwrap());
                 let change_index = self.new_change();
                 self.add_change(
                     change_index,
@@ -579,12 +515,7 @@ impl TorchlitGame {
         let change_index = self.new_change();
         if self.human_player.is_some() && self.current_player == self.human_player.unwrap() {
             let moves = self.get_moves();
-            let passed_cards: HashSet<i32> =
-                HashSet::from_iter(self.passed_cards[0].iter().map(|c| c.id));
             for id in moves {
-                if passed_cards.contains(&id) {
-                    continue;
-                }
                 self.add_change(
                     change_index,
                     Change {
@@ -603,14 +534,18 @@ impl TorchlitGame {
 
     fn show_message(&mut self) {
         let player_name = self.player_name_string();
+        let player_possessive = match self.current_player {
+            0 => "your",
+            _ => "their",
+        };
         let message = match self.state {
-            State::PassCard => Some(format!(
-                "{} must select 2 cards to pass to partner",
-                player_name
+            State::LightTorch => Some(format!(
+                "{} must select a card as {} torch",
+                player_name, player_possessive
             )),
             State::Play => None,
-            State::OptionallyPlayChurchOfEngland => Some(format!(
-                "{} must decide whether to play the Church of England",
+            State::SpawnMonsters => Some(format!(
+                "{} must select where to spawn monsters",
                 player_name
             )),
         };
@@ -622,7 +557,6 @@ impl TorchlitGame {
         match self.current_player {
             0 => "You".to_string(),
             1 => "West".to_string(),
-            2 => "Your partner".to_string(),
             _ => "East".to_string(),
         }
     }
@@ -658,22 +592,9 @@ impl TorchlitGame {
                 },
             );
         }
-        // Hide the Church of England and pass action cards
-        for id in [PASS, ANNUL_TRICK].iter() {
-            self.add_change(
-                change_index,
-                Change {
-                    object_id: *id,
-                    change_type: ChangeType::HidePlayable,
-                    dest: Location::Hand,
-                    player: self.current_player,
-                    ..Default::default()
-                },
-            );
-        }
     }
 
-    pub fn get_trick_winner(&self) -> usize {
+    pub fn get_trick_winners(&self) -> (usize, Vec<usize>) {
         let mut card_id_to_player: HashMap<i32, usize> = HashMap::new();
         for (player, card) in self.current_trick.iter().enumerate() {
             if let Some(card) = card {
@@ -689,51 +610,36 @@ impl TorchlitGame {
             println!("{:?} = {}", card, self.value_for_card(&card));
         }
         cards.sort_by_key(|c| std::cmp::Reverse(self.value_for_card(c)));
-        *card_id_to_player
+        let winning_player = *card_id_to_player
             .get(&cards.first().expect("there should be a winning card").id)
-            .expect("cards_to_player missing card")
+            .expect("cards_to_player missing card");
+
+        let winning_value = cards.first().expect("there should be a winning card").value;
+
+        (
+            winning_player,
+            cards
+                .into_iter()
+                .filter(|c| c.id == winning_value)
+                .map(|c| card_id_to_player[&c.id])
+                .collect(),
+        )
     }
 
     pub fn value_for_card(&self, card: &Card) -> i32 {
         let lead_suit = self.get_lead_suit().unwrap();
         let mut bonus: i32 = 0;
-        let mut treated_value = card.value;
-        let mut treated_suit = card.suit;
-        if card.value == 0 {
-            match card.suit {
-                Suit::Black => {
-                    if lead_suit == Suit::Red
-                        || (lead_suit != Suit::Black && self.current_trump == Suit::Red)
-                    {
-                        treated_suit = Suit::Red;
-                        treated_value = 13;
-                    }
-                }
-                Suit::Red => {
-                    if lead_suit == Suit::Black
-                        || (lead_suit != Suit::Red && self.current_trump == Suit::Black)
-                    {
-                        treated_suit = Suit::Black;
-                        treated_value = 13;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if treated_suit == lead_suit {
+        if card.suit == lead_suit {
             bonus += 100;
         }
-        if treated_suit == self.current_trump {
+        if card.suit == Suit::Dragons {
             bonus += 200;
         }
-        if card.value == KING {
-            bonus += 1000;
-        }
-        treated_value + bonus
+        card.value + bonus
     }
 }
 
-impl ismcts::Game for SixOfVIIIGame {
+impl ismcts::Game for TorchlitGame {
     type Move = i32;
     type PlayerTag = usize;
     type MoveList = Vec<i32>;
@@ -741,24 +647,10 @@ impl ismcts::Game for SixOfVIIIGame {
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
 
-        for p1 in 0..4 {
-            if p1 != self.current_player() {
-                // randomly swap each player's hand with the burned cards
-                let mut new_hands =
-                    vec![self.hands[p1 as usize].clone(), self.burned_cards.clone()];
+        // FIXME: must also add torch cards to swap
 
-                // only swap cards that aren't in the current players void set
-                shuffle_and_divide_matching_cards(
-                    |c: &Card| !self.voids[p1].contains(&c.suit),
-                    &mut new_hands,
-                    rng,
-                );
-
-                self.hands[p1] = new_hands[0].clone();
-                self.burned_cards = new_hands[1].clone();
-            }
-
-            for p2 in 0..4 {
+        for p1 in 0..3 {
+            for p2 in 0..3 {
                 if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
                     continue;
                 }
@@ -820,11 +712,11 @@ impl ismcts::Game for SixOfVIIIGame {
     }
 }
 
-pub fn get_mcts_move(game: &SixOfVIIIGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &TorchlitGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation
-    new_game.scores = [0; 2];
+    new_game.scores = [0; 3];
     new_game.round = 4; // force evaluation of a single hand
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
@@ -843,33 +735,20 @@ fn human_card_sorter(a: &Card, b: &Card) -> Ordering {
     }
 }
 
-fn trick_number_to_trump(trick_number: i32) -> Suit {
-    match trick_number {
-        0..=3 => Suit::Black,
-        4..=6 => Suit::Red,
-        7..=8 => Suit::Orange,
-        9..=9 => Suit::Yellow,
-        10..=11 => Suit::Green,
-        12..=15 => Suit::Blue,
-        _ => unreachable!(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_deck() {
-        let d = SixOfVIIIGame::deck();
-        assert_eq!(d.len(), 63);
+        let d = TorchlitGame::deck();
+        assert_eq!(d.len(), 42);
     }
 
     #[derive(Debug)]
     struct TrickWinnerTestCase {
         description: String,
-        current_trick: [Option<Card>; 4],
-        trump: Suit,
+        current_trick: [Option<Card>; 3],
         lead_player: usize,
         expected_winner: usize,
     }
@@ -878,270 +757,56 @@ mod tests {
     fn test_trick_winner() {
         let test_cases = [
             TrickWinnerTestCase {
-                description: "Red 0 is highest black card when black is trump and red is not led"
-                    .to_string(),
+                description: "Highest dragon wins the trick".to_string(),
                 lead_player: 3,
-                trump: Suit::Black,
                 current_trick: [
                     Some(Card {
-                        suit: Suit::Red,
+                        suit: Suit::Dragons,
                         value: 0,
-                        points: 0,
                         id: 1,
                     }),
                     Some(Card {
                         id: 2,
-                        value: 12,
-                        points: 0,
-                        suit: Suit::Black,
+                        value: 5,
+                        suit: Suit::FlamingEyes,
                     }),
                     Some(Card {
                         id: 3,
-                        value: 7,
-                        points: 0,
-                        suit: Suit::Black,
-                    }),
-                    Some(Card {
-                        suit: Suit::Black,
-                        value: 2,
-                        points: 0,
-                        id: 0,
+                        value: 6,
+                        suit: Suit::Goblins,
                     }),
                 ],
                 expected_winner: 0,
             },
             TrickWinnerTestCase {
-                description: "Red 0 is not trump when red is led".to_string(),
+                description: "Highest lead card wins".to_string(),
                 lead_player: 0,
-                trump: Suit::Black,
                 current_trick: [
                     Some(Card {
-                        suit: Suit::Red,
-                        value: 3,
-                        points: 0,
-                        id: 0,
-                    }),
-                    Some(Card {
-                        suit: Suit::Red,
+                        suit: Suit::Ghosts,
                         value: 0,
-                        points: 0,
-                        id: 1,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        value: 3,
-                        points: 0,
-                        suit: Suit::Black,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 2,
-                        points: 0,
-                        suit: Suit::Green,
-                    }),
-                ],
-                expected_winner: 2,
-            },
-            TrickWinnerTestCase {
-                description: "Red 0 is highest red card when black is trump".to_string(),
-                lead_player: 0,
-                trump: Suit::Red,
-                current_trick: [
-                    Some(Card {
-                        suit: Suit::Orange,
-                        value: 3,
-                        points: 0,
                         id: 0,
                     }),
                     Some(Card {
-                        suit: Suit::Red,
-                        value: 0,
-                        points: 0,
+                        suit: Suit::Goblins,
+                        value: 1,
                         id: 1,
                     }),
                     Some(Card {
                         id: 2,
                         value: 3,
-                        points: 0,
-                        suit: Suit::Black,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 2,
-                        points: 0,
-                        suit: Suit::Green,
-                    }),
-                ],
-                expected_winner: 1,
-            },
-            TrickWinnerTestCase {
-                description: "Black 0 is the highest red card when red is trump".to_string(),
-                lead_player: 0,
-                trump: Suit::Red,
-                current_trick: [
-                    Some(Card {
-                        suit: Suit::Red,
-                        value: 3,
-                        points: 0,
-                        id: 0,
-                    }),
-                    Some(Card {
-                        suit: Suit::Black,
-                        value: 0,
-                        points: 0,
-                        id: 1,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        value: 10,
-                        points: 0,
-                        suit: Suit::Red,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 2,
-                        points: 0,
-                        suit: Suit::Green,
-                    }),
-                ],
-                expected_winner: 1,
-            },
-            TrickWinnerTestCase {
-                description: "Black 0 is highest red card when red is trump".to_string(),
-                lead_player: 0,
-                trump: Suit::Red,
-                current_trick: [
-                    Some(Card {
-                        suit: Suit::Orange,
-                        value: 3,
-                        points: 0,
-                        id: 0,
-                    }),
-                    Some(Card {
-                        suit: Suit::Black,
-                        value: 0,
-                        points: 0,
-                        id: 1,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        value: 3,
-                        points: 0,
-                        suit: Suit::Red,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 2,
-                        points: 0,
-                        suit: Suit::Green,
-                    }),
-                ],
-                expected_winner: 1,
-            },
-            TrickWinnerTestCase {
-                description: "Highest trump card wins".to_string(),
-                lead_player: 0,
-                trump: Suit::Black,
-                current_trick: [
-                    Some(Card {
-                        suit: Suit::Orange,
-                        value: 3,
-                        points: 0,
-                        id: 0,
-                    }),
-                    Some(Card {
-                        suit: Suit::Black,
-                        value: 10,
-                        points: 0,
-                        id: 1,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        value: 3,
-                        points: 0,
-                        suit: Suit::Red,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 2,
-                        points: 0,
-                        suit: Suit::Green,
-                    }),
-                ],
-                expected_winner: 1,
-            },
-            TrickWinnerTestCase {
-                description: "Highest lead suit wins".to_string(),
-                lead_player: 0,
-                trump: Suit::Blue,
-                current_trick: [
-                    Some(Card {
-                        suit: Suit::Orange,
-                        value: 3,
-                        points: 0,
-                        id: 0,
-                    }),
-                    Some(Card {
-                        suit: Suit::Green,
-                        value: 10,
-                        points: 0,
-                        id: 1,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        value: 8,
-                        points: 0,
-                        suit: Suit::Red,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 2,
-                        points: 0,
-                        suit: Suit::Black,
+                        suit: Suit::Skulls,
                     }),
                 ],
                 expected_winner: 0,
-            },
-            TrickWinnerTestCase {
-                description: "King is higher than the highest trump card".to_string(),
-                lead_player: 0,
-                trump: Suit::Blue,
-                current_trick: [
-                    Some(Card {
-                        suit: Suit::Orange,
-                        value: 3,
-                        points: 0,
-                        id: 0,
-                    }),
-                    Some(Card {
-                        suit: Suit::Green,
-                        value: 10,
-                        points: 0,
-                        id: 1,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        value: KING,
-                        points: 0,
-                        suit: Suit::Purple,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        value: 12,
-                        points: 0,
-                        suit: Suit::Blue,
-                    }),
-                ],
-                expected_winner: 2,
             },
         ];
         for test_case in test_cases {
-            let mut game = SixOfVIIIGame::new();
+            let mut game = TorchlitGame::new();
             game.lead_player = test_case.lead_player;
             game.current_trick = test_case.current_trick;
-            game.current_trump = test_case.trump;
             assert_eq!(
-                game.get_trick_winner(),
+                game.get_trick_winners(),
                 test_case.expected_winner,
                 "{} {:?}",
                 test_case.description,
