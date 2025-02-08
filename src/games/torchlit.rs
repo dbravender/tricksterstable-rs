@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 use crate::utils::shuffle_and_divide_matching_cards;
 
 // Used to indicate when a player does not want to spawn more monsters
-const PASS: i32 = -1;
+const CONFIRM_SPAWN: i32 = -2;
+const UNDO_SPAWN: i32 = -3;
 // Max points
 // 6 - 1 point for each card of that number (6 suits)
 // 2 points for a dragon (one of each number)
@@ -63,6 +64,7 @@ pub enum Suit {
     FlamingEyes = 3,
     Skulls = 4,
     Dragons = 5,
+    Slime = 6,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,6 +168,8 @@ pub struct TorchlitGame {
     pub human_player: Option<usize>,
     // Cards selected as the torch card
     pub torches: [Option<Card>; 4],
+    // Dungeon card player is on
+    pub dungeon_offset: [usize; 4],
 }
 
 impl TorchlitGame {
@@ -369,17 +373,18 @@ impl TorchlitGame {
                 self.current_player = (self.current_player + 1) % 4;
                 self.hide_playable();
 
-                if self.current_trick.iter().flatten().count() == 3 {
+                if self.current_trick.iter().flatten().count() == 4 {
                     // End trick
 
                     let trick_result = self.get_trick_result();
+                    let movers = trick_result.movers;
                     let index = self.new_change();
-                    for trick_winner in trick_result.movers {
+                    for trick_winner in &movers {
                         self.add_change(
                             index,
                             Change {
                                 change_type: ChangeType::ShowWinningCards,
-                                object_id: self.current_trick[trick_winner].unwrap().id,
+                                object_id: self.current_trick[*trick_winner].unwrap().id,
                                 dest: Location::Play,
                                 ..Default::default()
                             },
@@ -394,14 +399,33 @@ impl TorchlitGame {
                             ..Default::default()
                         },
                     );
-                    // TOOD: animate meeples
+                    let index = self.new_change();
+                    for trick_winner in &movers {
+                        self.dungeon_offset[*trick_winner] += 1;
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::ShowWinningCards,
+                                object_id: self.current_trick[*trick_winner].unwrap().id,
+                                dest: Location::Play,
+                                offset: self.dungeon_offset[*trick_winner],
+                                ..Default::default()
+                            },
+                        );
+                    }
 
-                    self.lead_player = trick_result.dungeon_warden;
+                    self.current_player = trick_result.dungeon_warden;
+                    self.lead_player = self.current_player;
 
-                    self.score_trick();
+                    self.state = State::SpawnMonsters;
                 }
             }
             State::SpawnMonsters => {
+                if action == CONFIRM_SPAWN {
+                    self.score_trick();
+                }
+                if action == UNDO_SPAWN {}
+
                 todo!();
             }
         }
@@ -782,7 +806,7 @@ mod tests {
     #[test]
     fn test_deck() {
         let d = TorchlitGame::deck();
-        assert_eq!(d.len(), 42);
+        assert_eq!(d.len(), 49);
     }
 
     #[derive(Debug)]
@@ -815,6 +839,11 @@ mod tests {
                         value: 6,
                         suit: Suit::Goblins,
                     }),
+                    Some(Card {
+                        id: 3,
+                        value: 1,
+                        suit: Suit::Goblins,
+                    }),
                 ],
                 expected_result: TrickResult {
                     dungeon_warden: 0,
@@ -841,10 +870,15 @@ mod tests {
                         value: 1,
                         suit: Suit::Skulls,
                     }),
+                    Some(Card {
+                        id: 3,
+                        value: 1,
+                        suit: Suit::Goblins,
+                    }),
                 ],
                 expected_result: TrickResult {
                     dungeon_warden: 0,
-                    movers: vec![1, 0, 2],
+                    movers: vec![1, 3, 0, 2],
                 },
             },
         ];
