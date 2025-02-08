@@ -78,6 +78,7 @@ enum Location {
     ReorderHand,
     Message,
     CardsBurned,
+    Torch,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -109,6 +110,7 @@ pub enum ChangeType {
     Message,
     // Move undealt cards off the table
     CardsBurned,
+    LightTorch,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,20 +307,40 @@ impl TorchlitGame {
         self.current_player_card_ids()
     }
 
+    fn pop_card(&mut self, id: i32) -> Card {
+        let pos = self.hands[self.current_player]
+            .iter()
+            .position(|c| c.id == id)
+            .unwrap();
+        let card = self.hands[self.current_player].remove(pos);
+        return card;
+    }
+
     fn apply_move_internal(&mut self, action: i32) {
         match self.state {
             State::LightTorch => {
-                todo!();
+                let card = self.pop_card(action);
+                self.torches[self.current_player] = Some(card);
+                let change_index = self.new_change();
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::LightTorch,
+                        object_id: action,
+                        dest: Location::Torch,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+                self.current_player = (self.current_player + 1) % 4;
+                if self.torches[self.current_player].is_some() {
+                    // When everyone has played a torch being the trick taking phase
+                    self.state = State::Play;
+                }
             }
             State::Play => {
+                let card = self.pop_card(action);
                 let lead_suit = self.get_lead_suit();
-
-                let pos = self.hands[self.current_player]
-                    .iter()
-                    .position(|c| c.id == action)
-                    .unwrap();
-                let card = self.hands[self.current_player].remove(pos);
-
                 self.add_change(
                     0,
                     Change {
