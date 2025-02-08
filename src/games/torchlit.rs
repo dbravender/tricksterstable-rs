@@ -141,11 +141,11 @@ pub struct TorchlitGame {
     // Player who led the current trick
     pub lead_player: usize,
     // Cards each player has played in the current trick
-    pub current_trick: [Option<Card>; 3],
+    pub current_trick: [Option<Card>; 4],
     // Cards in each player's hand
-    pub hands: [Vec<Card>; 3],
+    pub hands: [Vec<Card>; 4],
     // Voids revealed when a player couldn't follow a lead card (used during determination)
-    pub voids: [Vec<Suit>; 3],
+    pub voids: [Vec<Suit>; 4],
     // Player who starts the next hand
     pub dealer: usize,
     // List of list of animations to run after a move is made to get from the current state to the next state
@@ -153,7 +153,7 @@ pub struct TorchlitGame {
     // When running simulations we save time by not creating vecs and structs to be added to the change animation list
     pub no_changes: bool,
     // Current score of the game (per team)
-    pub scores: [i32; 3],
+    pub scores: [i32; 4],
     // Game winner
     pub winner: Option<usize>,
     // Use experimental reward function for comparison
@@ -171,7 +171,7 @@ impl TorchlitGame {
             ..Default::default()
         };
         let mut rng = rand::thread_rng();
-        game.dealer = rng.gen_range(0..3);
+        game.dealer = rng.gen_range(0..4);
         game.deal();
         game
     }
@@ -182,7 +182,7 @@ impl TorchlitGame {
             ..Default::default()
         };
         let mut rng = rand::thread_rng();
-        game.dealer = rng.gen_range(0..3);
+        game.dealer = rng.gen_range(0..4);
         game.human_player = Some(human_player);
         game.deal();
         game
@@ -195,8 +195,8 @@ impl TorchlitGame {
         self.hands = [vec![], vec![], vec![]];
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
-        self.current_trick = [None; 3];
-        self.dealer = (self.dealer + 1) % 3;
+        self.current_trick = [None; 4];
+        self.dealer = (self.dealer + 1) % 4;
         self.voids = [vec![], vec![], vec![]];
         let mut cards = TorchlitGame::deck();
         let shuffle_index = self.new_change();
@@ -210,8 +210,8 @@ impl TorchlitGame {
                 ..Default::default()
             },
         );
-        for hand_index in 0..14 {
-            for player in 0..3 {
+        for hand_index in 0..11 {
+            for player in 0..4 {
                 let card = cards.pop().unwrap();
                 self.add_change(
                     deal_index,
@@ -228,7 +228,7 @@ impl TorchlitGame {
                 self.hands[player].push(card);
             }
         }
-        for player in 0..3 {
+        for player in 0..4 {
             self.sort_hand(player);
             self.reorder_hand(player, player == 0);
         }
@@ -337,7 +337,7 @@ impl TorchlitGame {
                     }
                 }
 
-                self.current_player = (self.current_player + 1) % 3;
+                self.current_player = (self.current_player + 1) % 4;
                 self.hide_playable();
 
                 if self.current_trick.iter().flatten().count() == 3 {
@@ -401,13 +401,13 @@ impl TorchlitGame {
         }
 
         // Clear trick
-        self.current_trick = [None; 3];
+        self.current_trick = [None; 4];
 
         if self.hands.iter().all(|x| x.is_empty()) {
             // The hand is over
 
             // Score the hand
-            let mut earned_this_hand = [0; 3];
+            let mut earned_this_hand = [0; 4];
 
             // FIXME: implement scoring
             // If multiple players' pawns occupy the same dungeon, the total value
@@ -416,7 +416,7 @@ impl TorchlitGame {
 
             // Animate the scores
             let score_change_index = self.new_change();
-            for player in 0..3 {
+            for player in 0..4 {
                 self.add_change(
                     score_change_index,
                     Change {
@@ -619,8 +619,8 @@ impl TorchlitGame {
         // Iterate over all cards played starting with the lead player
         // The player that played the lowest card last becomes the dungeon warden
         let mut dungeon_warden: usize = 0;
-        for offset in 0..3 {
-            let player = (self.lead_player + offset) % 3;
+        for offset in 0..4 {
+            let player = (self.lead_player + offset) % 4;
             let card = self.current_trick[player].unwrap();
             if card.value == lowest_value {
                 dungeon_warden = player;
@@ -660,8 +660,8 @@ impl ismcts::Game for TorchlitGame {
 
         // FIXME: must also add torch cards to swap
 
-        for p1 in 0..3 {
-            for p2 in 0..3 {
+        for p1 in 0..4 {
+            for p2 in 0..4 {
                 if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
                     continue;
                 }
@@ -727,7 +727,7 @@ pub fn get_mcts_move(game: &TorchlitGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation
-    new_game.scores = [0; 3];
+    new_game.scores = [0; 4];
     new_game.round = 4; // force evaluation of a single hand
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
@@ -759,7 +759,7 @@ mod tests {
     #[derive(Debug)]
     struct TrickResultTestCase {
         description: String,
-        current_trick: [Option<Card>; 3],
+        current_trick: [Option<Card>; 4],
         lead_player: usize,
         expected_result: TrickResult,
     }
