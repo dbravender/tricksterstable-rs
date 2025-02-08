@@ -162,6 +162,8 @@ pub struct TorchlitGame {
     pub round: usize,
     // Which player is the human player
     pub human_player: Option<usize>,
+    // Cards selected as the torch card
+    pub torches: [Option<Card>; 4],
 }
 
 impl TorchlitGame {
@@ -192,12 +194,13 @@ impl TorchlitGame {
     pub fn deal(&mut self) {
         self.state = State::LightTorch;
         self.round += 1;
-        self.hands = [vec![], vec![], vec![]];
+        self.hands = [vec![], vec![], vec![], vec![]];
+        self.torches = [None; 4];
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
         self.current_trick = [None; 4];
         self.dealer = (self.dealer + 1) % 4;
-        self.voids = [vec![], vec![], vec![]];
+        self.voids = [vec![], vec![], vec![], vec![]];
         let mut cards = TorchlitGame::deck();
         let shuffle_index = self.new_change();
         let deal_index = self.new_change();
@@ -272,9 +275,13 @@ impl TorchlitGame {
     }
 
     pub fn playable_card_ids(&self) -> Vec<i32> {
-        // Must follow except when a dragon is led and when it's the last trick
-        // FIXME: any card can be played on the last trick (may follow)
+        if self.torches[self.current_player].is_none() {
+            // Any card can be played on the last trick when the torch card
+            // is placed back in the players' hands (may follow)
+            return self.current_player_card_ids();
+        }
         let lead_suit = self.get_lead_suit();
+        // Must follow except when a dragon is led
         if lead_suit.is_some() && lead_suit != Some(Suit::Dragons) {
             let moves: Vec<i32> = self.hands[self.current_player]
                 .iter()
