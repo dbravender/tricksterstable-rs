@@ -23,11 +23,11 @@ use crate::utils::shuffle_and_divide_matching_cards;
 const CONFIRM_SPAWN: i32 = -2;
 const UNDO_SPAWN: i32 = -3;
 // Max points
-// 6 - 1 point for each card of that number (6 suits)
+// 2 - 1 point for each card of that number (6 suits)
 // 2 points for a dragon (one of each number)
-// 4 2 points for each opponent torch
+// 6 2 points for each opponent torch
 // 3 points for lighting one's own torch
-const MAX_POINTS_PER_HAND: f64 = 15.0;
+const MAX_POINTS_PER_HAND: f64 = 13.0;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -422,7 +422,7 @@ impl TorchlitGame {
             }
             State::SpawnMonsters => {
                 if action == CONFIRM_SPAWN {
-                    self.score_trick();
+                    self.score_hand();
                 }
                 if action == UNDO_SPAWN {}
 
@@ -431,9 +431,7 @@ impl TorchlitGame {
         }
     }
 
-    pub fn score_trick(&mut self) {
-        todo!(); // tricks aren't scored - there is a new phase that needs to be added
-                 // where the dungeon warden selects cards to play on the dungeons
+    pub fn score_hand(&mut self) {
         self.state = State::Play;
         let trick_winner = self.lead_player;
         self.current_player = self.lead_player;
