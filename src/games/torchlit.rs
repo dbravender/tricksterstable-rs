@@ -8,7 +8,6 @@ use core::panic;
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    ops::RangeInclusive,
 };
 
 use enum_iterator::{all, Sequence};
@@ -170,6 +169,10 @@ pub struct TorchlitGame {
     pub torches: [Option<Card>; 4],
     // Dungeon card player is on
     pub dungeon_offset: [usize; 4],
+    // Cards that have not been selected to be spawned - initially set to the trick
+    pub spawnable_cards: Vec<Card>,
+    // Cards that have been staged to be spawned
+    pub spawnable_staged: Vec<Card>,
 }
 
 impl TorchlitGame {
@@ -207,6 +210,8 @@ impl TorchlitGame {
         self.current_trick = [None; 4];
         self.dealer = (self.dealer + 1) % 4;
         self.voids = [vec![], vec![], vec![], vec![]];
+        self.spawnable_cards = vec![];
+        self.spawnable_staged = vec![];
         let mut cards = TorchlitGame::deck();
         let shuffle_index = self.new_change();
         let deal_index = self.new_change();
@@ -265,7 +270,7 @@ impl TorchlitGame {
         match self.state {
             State::LightTorch => self.playable_card_ids(),
             State::Play => self.playable_card_ids(),
-            State::SpawnMonsters => self.spawn_monster_card_ids(),
+            State::SpawnMonsters => self.spawn_actions(),
         }
     }
 
@@ -301,14 +306,34 @@ impl TorchlitGame {
         self.current_player_card_ids()
     }
 
-    fn spawn_monster_card_ids(&self) -> Vec<i32> {
-        // When every card in the trick is a different color
-        // the Dungeon Warden gains full control.
-        // Otherwise, the Dungeon Warden must select one card from
-        // each card color present
-        // need a way to stage and then either commit or undo these moves
-        todo!();
-        self.current_player_card_ids()
+    pub fn spawn_actions(&self) -> Vec<i32> {
+        let mut playable_actions: Vec<i32> = self.spawnable_cards.iter().map(|c| c.id).collect();
+        let trick_suits: HashSet<Suit> = self
+            .current_trick
+            .iter()
+            .flatten()
+            .map(|c| c.suit)
+            .collect();
+        if trick_suits.len() == 4 {
+            // When there are 4 different suits the player can choose
+            // any subset of them to spawn
+            if Some(self.current_player) == self.human_player {
+                playable_actions.push(UNDO_SPAWN);
+            }
+            // The player can choose to discard any or all cards when they are
+            // all different suits
+            playable_actions.push(CONFIRM_SPAWN);
+        } else {
+            let mut playable_actions: Vec<i32> =
+                self.spawnable_cards.iter().map(|c| c.id).collect();
+            if Some(self.current_player) == self.human_player {
+                playable_actions.push(UNDO_SPAWN);
+            }
+            if self.spawnable_cards.len() == 0 {
+                playable_actions.push(CONFIRM_SPAWN);
+            }
+        }
+        playable_actions
     }
 
     fn pop_card(&mut self, id: i32) -> Card {
@@ -418,25 +443,43 @@ impl TorchlitGame {
                     self.lead_player = self.current_player;
 
                     self.state = State::SpawnMonsters;
+                    self.reset_spawn();
                 }
             }
             State::SpawnMonsters => {
                 if action == CONFIRM_SPAWN {
                     self.score_hand();
+                    return;
                 }
-                if action == UNDO_SPAWN {}
-
-                todo!();
+                if action == UNDO_SPAWN {
+                    self.reset_spawn();
+                    return;
+                }
+                let pos = self
+                    .spawnable_cards
+                    .iter()
+                    .position(|c| c.id == action)
+                    .unwrap();
+                let card = self.spawnable_cards.remove(pos);
+                // Remove all cards that share the suit of the staged card from spawnable cards
+                self.spawnable_cards.retain(|c| c.suit != card.suit);
+                self.spawnable_staged.push(card);
+                // TODO: animate changes
             }
         }
     }
 
+    pub fn reset_spawn(&mut self) {
+        self.spawnable_staged = vec![];
+        self.spawnable_cards = self.current_trick.iter().flatten().cloned().collect();
+        // TODO: animation, animate all spawnable cards back to their original spot
+    }
+
     pub fn score_hand(&mut self) {
         self.state = State::Play;
-        let trick_winner = self.lead_player;
         self.current_player = self.lead_player;
 
-        // Animate tricks to winning team or offscrean if annulled
+        // Animate spawned cards from the staging area to the dunctions
         let change_index = self.new_change();
 
         for card in self.current_trick {
