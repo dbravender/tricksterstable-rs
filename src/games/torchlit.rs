@@ -401,6 +401,17 @@ impl TorchlitGame {
                 if self.current_trick.iter().flatten().count() == 4 {
                     // End trick
 
+                    if self.hands.iter().map(|h| h.len()).all(|l| l == 1) {
+                        // When there is only one card left in each player's hand each player's torch
+                        // card is moved back into their hand
+                        for (player, torch) in self.torches.iter_mut().enumerate() {
+                            if let Some(torch) = torch.take() {
+                                // TODO: animate torch back to hand
+                                self.hands[player].push(torch);
+                            }
+                        }
+                    }
+
                     let trick_result = self.get_trick_result();
                     let movers = trick_result.movers;
                     let index = self.new_change();
@@ -497,8 +508,8 @@ impl TorchlitGame {
         // Clear trick
         self.current_trick = [None; 4];
 
-        if self.hands.iter().all(|x| x.is_empty()) {
-            // The hand is over
+        if self.hands.iter().all(|x| x.len() == 1) {
+            // The hand is over when every player has one card left in their hand
 
             // Score the hand
             let mut earned_this_hand = [0; 4];
