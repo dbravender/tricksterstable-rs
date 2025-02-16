@@ -763,8 +763,6 @@ impl ismcts::Game for TorchlitGame {
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
 
-        // FIXME: must also add torch cards to swap
-
         for p1 in 0..4 {
             for p2 in 0..4 {
                 if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
@@ -775,10 +773,17 @@ impl ismcts::Game for TorchlitGame {
                     HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
                 combined_voids.extend(self.voids[p2 as usize].iter());
 
-                let mut new_hands = vec![
-                    self.hands[p1 as usize].clone(),
-                    self.hands[p2 as usize].clone(),
-                ];
+                let mut cards1 = self.hands[p1 as usize].clone();
+                let mut cards2 = self.hands[p2 as usize].clone();
+
+                if let Some(torch) = self.torches[p1] {
+                    cards1.push(torch);
+                }
+                if let Some(torch) = self.torches[p2] {
+                    cards2.push(torch);
+                }
+
+                let mut new_hands = vec![cards1, cards2];
 
                 // allow swapping of any cards that are not in the combined void set
                 shuffle_and_divide_matching_cards(
@@ -789,6 +794,14 @@ impl ismcts::Game for TorchlitGame {
 
                 self.hands[p1 as usize] = new_hands[0].clone();
                 self.hands[p2 as usize] = new_hands[1].clone();
+                if self.torches[p1].is_some() {
+                    let torch = self.hands[p1 as usize].pop();
+                    self.torches[p1] = torch;
+                }
+                if self.torches[p2].is_some() {
+                    let torch = self.hands[p2 as usize].pop();
+                    self.torches[p2] = torch;
+                }
             }
         }
     }
