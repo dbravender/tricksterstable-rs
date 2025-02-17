@@ -88,6 +88,19 @@ pub struct Card {
     id: i32,
     pub suit: Suit,
     value: i32,
+    dropped_torch: bool,
+}
+
+impl Card {
+    fn get_points(&self) -> i32 {
+        if self.dropped_torch {
+            2
+        } else if self.suit == Suit::Dragons {
+            2
+        } else {
+            1
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -167,8 +180,10 @@ pub struct TorchlitGame {
     pub human_player: Option<usize>,
     // Cards selected as the torch card
     pub torches: [Option<Card>; 4],
+    // Cards at each dungeon space
+    pub dungeon_cards: [Vec<Card>; 8],
     // Dungeon card player is on
-    pub dungeon_offset: [usize; 4],
+    pub player_dungeon_offset: [i32; 4],
     // Cards that have not been selected to be spawned - initially set to the trick
     pub spawnable_cards: Vec<Card>,
     // Cards that have been staged to be spawned
@@ -210,6 +225,16 @@ impl TorchlitGame {
         self.current_trick = [None; 4];
         self.dealer = (self.dealer + 1) % 4;
         self.voids = [vec![], vec![], vec![], vec![]];
+        self.dungeon_cards = [
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        ];
         self.spawnable_cards = vec![];
         self.spawnable_staged = vec![];
         let mut cards = TorchlitGame::deck();
@@ -224,7 +249,7 @@ impl TorchlitGame {
                 ..Default::default()
             },
         );
-        for hand_index in 0..11 {
+        for hand_index in 0..14 {
             for player in 0..4 {
                 let card = cards.pop().unwrap();
                 self.add_change(
@@ -255,8 +280,13 @@ impl TorchlitGame {
         let mut id = 0;
 
         for suit in all::<Suit>() {
-            for value in 0..=6 {
-                deck.push(Card { id, value, suit });
+            for value in 0..=7 {
+                deck.push(Card {
+                    id,
+                    value,
+                    suit,
+                    dropped_torch: false,
+                });
                 id += 1;
             }
         }
@@ -323,17 +353,18 @@ impl TorchlitGame {
             // The player can choose to discard any or all cards when they are
             // all different suits
             playable_actions.push(CONFIRM_SPAWN);
+            playable_actions
         } else {
             let mut playable_actions: Vec<i32> =
                 self.spawnable_cards.iter().map(|c| c.id).collect();
             if Some(self.current_player) == self.human_player {
                 playable_actions.push(UNDO_SPAWN);
             }
-            if self.spawnable_cards.len() == 0 {
+            if playable_actions.len() == 0 {
                 playable_actions.push(CONFIRM_SPAWN);
             }
+            playable_actions
         }
-        playable_actions
     }
 
     fn pop_card(&mut self, id: i32) -> Card {
@@ -363,7 +394,7 @@ impl TorchlitGame {
                 );
                 self.current_player = (self.current_player + 1) % 4;
                 if self.torches[self.current_player].is_some() {
-                    // When everyone has played a torch being the trick taking phase
+                    // When everyone has played a torch begin the trick taking phase
                     self.state = State::Play;
                 }
             }
@@ -437,14 +468,15 @@ impl TorchlitGame {
                     );
                     let index = self.new_change();
                     for trick_winner in &movers {
-                        self.dungeon_offset[*trick_winner] += 1;
+                        self.player_dungeon_offset[*trick_winner] =
+                            (self.player_dungeon_offset[*trick_winner] + 1) % 7;
                         self.add_change(
                             index,
                             Change {
                                 change_type: ChangeType::ShowWinningCards,
                                 object_id: self.current_trick[*trick_winner].unwrap().id,
                                 dest: Location::Play,
-                                offset: self.dungeon_offset[*trick_winner],
+                                offset: self.player_dungeon_offset[*trick_winner] as usize,
                                 ..Default::default()
                             },
                         );
@@ -459,7 +491,15 @@ impl TorchlitGame {
             }
             State::SpawnMonsters => {
                 if action == CONFIRM_SPAWN {
-                    self.score_hand();
+                    // TODO: animate cards to dungeons
+                    for card in self.spawnable_staged.iter() {
+                        self.dungeon_cards[card.value as usize].push(*card);
+                    }
+                    self.spawnable_staged = vec![];
+                    self.spawnable_cards = vec![];
+
+                    self.end_trick();
+
                     return;
                 }
                 if action == UNDO_SPAWN {
@@ -486,7 +526,7 @@ impl TorchlitGame {
         // TODO: animation, animate all spawnable cards back to their original spot
     }
 
-    pub fn score_hand(&mut self) {
+    pub fn end_trick(&mut self) {
         self.state = State::Play;
         self.current_player = self.lead_player;
 
@@ -508,16 +548,35 @@ impl TorchlitGame {
         // Clear trick
         self.current_trick = [None; 4];
 
-        if self.hands.iter().all(|x| x.len() == 1) {
-            // The hand is over when every player has one card left in their hand
-
+        if self.hands.iter().all(|h| h.len() == 1) {
             // Score the hand
             let mut earned_this_hand = [0; 4];
+            let mut players_per_space: HashMap<i32, i32> = HashMap::new();
 
-            // FIXME: implement scoring
-            // If multiple players' pawns occupy the same dungeon, the total value
-            // of cards in that dungeon is divided by the number of pawns present.
-            // Any fractional values are rounded down.
+            for player in 0..4 {
+                let mut torch_card = self.hands[player].first().unwrap().clone();
+                if torch_card.value == self.player_dungeon_offset[player] {
+                    earned_this_hand[player] = 3;
+                } else {
+                    torch_card.dropped_torch = true;
+                    self.dungeon_cards[torch_card.value as usize].push(torch_card.clone());
+                    // TODO: Animate torch to dungeon space
+                }
+                *players_per_space
+                    .entry(self.player_dungeon_offset[player])
+                    .or_insert(0) += 1;
+            }
+
+            for player in 0..4 {
+                let total_players_at_space = players_per_space
+                    .get(&self.player_dungeon_offset[player])
+                    .unwrap_or(&1);
+                let score: i32 = self.dungeon_cards[self.player_dungeon_offset[player] as usize]
+                    .iter()
+                    .map(|c| c.get_points())
+                    .sum();
+                earned_this_hand[player] += score / total_players_at_space;
+            }
 
             // Animate the scores
             let score_change_index = self.new_change();
@@ -823,12 +882,11 @@ impl ismcts::Game for TorchlitGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        let team = player % 2;
         if self.winner.is_none() {
             None
         } else {
             if !self.experiment {
-                let total_score_ratio = self.scores[team] as f64 / MAX_POINTS_PER_HAND;
+                let total_score_ratio = self.scores[player] as f64 / MAX_POINTS_PER_HAND;
 
                 // Scale the total score to a range between -1.0 and 1.0
                 let final_score = (total_score_ratio * 2.0) - 1.0;
@@ -871,7 +929,7 @@ mod tests {
     #[test]
     fn test_deck() {
         let d = TorchlitGame::deck();
-        assert_eq!(d.len(), 49);
+        assert_eq!(d.len(), 56);
     }
 
     #[derive(Debug)]
@@ -893,21 +951,25 @@ mod tests {
                         suit: Suit::Dragons,
                         value: 0,
                         id: 1,
+                        dropped_torch: false,
                     }),
                     Some(Card {
                         id: 2,
                         value: 5,
                         suit: Suit::FlamingEyes,
+                        dropped_torch: false,
                     }),
                     Some(Card {
                         id: 3,
                         value: 6,
                         suit: Suit::Goblins,
+                        dropped_torch: false,
                     }),
                     Some(Card {
                         id: 3,
                         value: 1,
                         suit: Suit::Goblins,
+                        dropped_torch: false,
                     }),
                 ],
                 expected_result: TrickResult {
@@ -924,21 +986,25 @@ mod tests {
                         suit: Suit::Ghosts,
                         value: 1,
                         id: 0,
+                        dropped_torch: false,
                     }),
                     Some(Card {
                         suit: Suit::Goblins,
                         value: 1,
                         id: 1,
+                        dropped_torch: false,
                     }),
                     Some(Card {
                         id: 2,
                         value: 1,
                         suit: Suit::Skulls,
+                        dropped_torch: false,
                     }),
                     Some(Card {
                         id: 3,
                         value: 1,
                         suit: Suit::Goblins,
+                        dropped_torch: false,
                     }),
                 ],
                 expected_result: TrickResult {
