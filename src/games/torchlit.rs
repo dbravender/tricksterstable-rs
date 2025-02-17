@@ -92,7 +92,7 @@ pub struct Card {
 }
 
 impl Card {
-    fn get_points(&self) -> i32 {
+    pub fn get_points(&self) -> i32 {
         if self.dropped_torch {
             2
         } else if self.suit == Suit::Dragons {
@@ -575,7 +575,8 @@ impl TorchlitGame {
                     .iter()
                     .map(|c| c.get_points())
                     .sum();
-                earned_this_hand[player] += score / total_players_at_space;
+                earned_this_hand[player] +=
+                    ((score / total_players_at_space) as f64).floor() as i32;
             }
 
             // Animate the scores
@@ -893,7 +894,18 @@ impl ismcts::Game for TorchlitGame {
 
                 Some(final_score)
             } else {
-                todo!("No experiment implemented");
+                let max_score = *self.scores.iter().max().unwrap() as f64;
+                let player_score = self.scores[player] as f64;
+
+                if player_score == max_score {
+                    // Winner gets a positive score scaled between 0 and 1
+                    let final_score = player_score / MAX_POINTS_PER_HAND;
+                    Some(final_score)
+                } else {
+                    // Losers get a negative score between -1.0 and 0
+                    let loss_penalty = (player_score - max_score) / max_score;
+                    Some(loss_penalty) // This will be negative
+                }
             }
         }
     }
