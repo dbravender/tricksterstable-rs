@@ -344,27 +344,18 @@ impl TorchlitGame {
             .flatten()
             .map(|c| c.suit)
             .collect();
-        if trick_suits.len() == 4 {
-            // When there are 4 different suits the player can choose
-            // any subset of them to spawn
-            if Some(self.current_player) == self.human_player {
-                playable_actions.push(UNDO_SPAWN);
-            }
-            // The player can choose to discard any or all cards when they are
-            // all different suits
-            playable_actions.push(CONFIRM_SPAWN);
-            playable_actions
-        } else {
-            let mut playable_actions: Vec<i32> =
-                self.spawnable_cards.iter().map(|c| c.id).collect();
-            if Some(self.current_player) == self.human_player {
-                playable_actions.push(UNDO_SPAWN);
-            }
-            if playable_actions.len() == 0 {
-                playable_actions.push(CONFIRM_SPAWN);
-            }
-            playable_actions
+
+        if Some(self.current_player) == self.human_player {
+            playable_actions.push(UNDO_SPAWN);
         }
+
+        if trick_suits.len() == 4 {
+            playable_actions.push(CONFIRM_SPAWN);
+        } else if playable_actions.is_empty() {
+            playable_actions.push(CONFIRM_SPAWN);
+        }
+
+        playable_actions
     }
 
     fn pop_card(&mut self, id: i32) -> Card {
@@ -729,6 +720,7 @@ impl TorchlitGame {
         match self.current_player {
             0 => "You".to_string(),
             1 => "West".to_string(),
+            2 => "North".to_string(),
             _ => "East".to_string(),
         }
     }
