@@ -219,6 +219,7 @@ impl TorchlitGame {
         self.state = State::LightTorch;
         self.round += 1;
         self.hands = [vec![], vec![], vec![], vec![]];
+        self.player_dungeon_offset = [0; 4];
         self.torches = [None; 4];
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
