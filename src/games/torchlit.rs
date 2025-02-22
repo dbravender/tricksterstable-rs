@@ -57,13 +57,13 @@ pub enum State {
 #[serde(rename_all = "camelCase")]
 pub enum Suit {
     #[default]
-    Goblins = 0,
-    Ghosts = 1,
-    TreasureChests = 2,
-    FlamingEyes = 3,
-    Skulls = 4,
-    Dragons = 5,
-    Slime = 6,
+    Goblin = 0,
+    Ghost = 1,
+    Mimic = 2,
+    Beholder = 3,
+    Skull = 4,
+    Dragon = 5,
+    Ooze = 6,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,7 +95,7 @@ impl Card {
     pub fn get_points(&self) -> i32 {
         if self.dropped_torch {
             2
-        } else if self.suit == Suit::Dragons {
+        } else if self.suit == Suit::Dragon {
             2
         } else {
             1
@@ -324,7 +324,7 @@ impl TorchlitGame {
         }
         let lead_suit = self.get_lead_suit();
         // Must follow except when a dragon is led
-        if lead_suit.is_some() && lead_suit != Some(Suit::Dragons) {
+        if lead_suit.is_some() && lead_suit != Some(Suit::Dragon) {
             let moves: Vec<i32> = self.hands[self.current_player]
                 .iter()
                 .filter(|c| Some(c.suit) == lead_suit)
@@ -409,7 +409,7 @@ impl TorchlitGame {
                 self.current_trick[self.current_player] = Some(card);
 
                 // Dragons do not need to be followed
-                if lead_suit.is_some() && lead_suit != Some(Suit::Dragons) {
+                if lead_suit.is_some() && lead_suit != Some(Suit::Dragon) {
                     if Some(card.suit) != lead_suit
                         && !self.voids[self.current_player].contains(&lead_suit.unwrap())
                     {
@@ -801,7 +801,7 @@ impl TorchlitGame {
         if card.suit == lead_suit {
             bonus += 100;
         }
-        if card.suit == Suit::Dragons {
+        if card.suit == Suit::Dragon {
             bonus += 200;
         }
         card.value + bonus
@@ -953,7 +953,7 @@ mod tests {
                 lead_player: 2,
                 current_trick: [
                     Some(Card {
-                        suit: Suit::Dragons,
+                        suit: Suit::Dragon,
                         value: 0,
                         id: 1,
                         dropped_torch: false,
@@ -961,19 +961,19 @@ mod tests {
                     Some(Card {
                         id: 2,
                         value: 5,
-                        suit: Suit::FlamingEyes,
+                        suit: Suit::Beholder,
                         dropped_torch: false,
                     }),
                     Some(Card {
                         id: 3,
                         value: 6,
-                        suit: Suit::Goblins,
+                        suit: Suit::Goblin,
                         dropped_torch: false,
                     }),
                     Some(Card {
                         id: 3,
                         value: 1,
-                        suit: Suit::Goblins,
+                        suit: Suit::Goblin,
                         dropped_torch: false,
                     }),
                 ],
@@ -988,13 +988,13 @@ mod tests {
                 lead_player: 1,
                 current_trick: [
                     Some(Card {
-                        suit: Suit::Ghosts,
+                        suit: Suit::Ghost,
                         value: 1,
                         id: 0,
                         dropped_torch: false,
                     }),
                     Some(Card {
-                        suit: Suit::Goblins,
+                        suit: Suit::Goblin,
                         value: 1,
                         id: 1,
                         dropped_torch: false,
@@ -1002,13 +1002,13 @@ mod tests {
                     Some(Card {
                         id: 2,
                         value: 1,
-                        suit: Suit::Skulls,
+                        suit: Suit::Skull,
                         dropped_torch: false,
                     }),
                     Some(Card {
                         id: 3,
                         value: 1,
-                        suit: Suit::Goblins,
+                        suit: Suit::Goblin,
                         dropped_torch: false,
                     }),
                 ],
