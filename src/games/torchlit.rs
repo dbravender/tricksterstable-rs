@@ -125,6 +125,7 @@ pub enum ChangeType {
     // Move undealt cards off the table
     CardsBurned,
     LightTorch,
+    MoveAdventurer,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -250,6 +251,18 @@ impl TorchlitGame {
                 ..Default::default()
             },
         );
+        for player in 0..4 {
+            self.add_change(
+                shuffle_index,
+                Change {
+                    change_type: ChangeType::MoveAdventurer,
+                    player,
+                    offset: 0,
+                    dest: Location::Dungeon,
+                    ..Default::default()
+                },
+            );
+        }
         for hand_index in 0..14 {
             for player in 0..4 {
                 let card = cards.pop().unwrap();
@@ -465,10 +478,10 @@ impl TorchlitGame {
                         self.add_change(
                             index,
                             Change {
-                                change_type: ChangeType::ShowWinningCards,
-                                object_id: self.current_trick[*trick_winner].unwrap().id,
-                                dest: Location::Play,
+                                change_type: ChangeType::MoveAdventurer,
+                                player: *trick_winner,
                                 offset: self.player_dungeon_offset[*trick_winner] as usize,
+                                dest: Location::Dungeon,
                                 ..Default::default()
                             },
                         );
