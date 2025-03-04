@@ -147,6 +147,7 @@ pub struct Change {
 pub struct TrickResult {
     pub dungeon_warden: usize,
     pub movers: Vec<usize>,
+    pub winning_value: i32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -398,6 +399,9 @@ impl TorchlitGame {
                         ..Default::default()
                     },
                 );
+                if (self.current_player == 0) {
+                    self.reorder_hand(0, false);
+                }
                 self.current_player = (self.current_player + 1) % 4;
                 if self.torches[self.current_player].is_some() {
                     // When everyone has played a torch begin the trick taking phase
@@ -479,6 +483,18 @@ impl TorchlitGame {
                         );
                     }
 
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::Message,
+                            message: Some(format!(
+                                "All players that played {} advance",
+                                trick_result.winning_value
+                            )),
+                            ..Default::default()
+                        },
+                    );
+
                     let index = self.new_change();
                     self.add_change(
                         index,
@@ -491,6 +507,13 @@ impl TorchlitGame {
                     );
 
                     let index = self.new_change();
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::Message,
+                            ..Default::default()
+                        },
+                    );
                     // Remove highlight from adventurers
                     for trick_winner in &movers {
                         self.add_change(
@@ -824,6 +847,7 @@ impl TorchlitGame {
                 .filter(|c| c.value == winning_value)
                 .map(|c| card_id_to_player[&c.id])
                 .collect(),
+            winning_value,
         }
     }
 
@@ -1012,6 +1036,7 @@ mod tests {
                 expected_result: TrickResult {
                     dungeon_warden: 0,
                     movers: vec![0],
+                    winning_value: 0,
                 },
             },
             TrickResultTestCase {
@@ -1047,6 +1072,7 @@ mod tests {
                 expected_result: TrickResult {
                     dungeon_warden: 0,
                     movers: vec![1, 3, 0, 2],
+                    winning_value: 1,
                 },
             },
         ];
