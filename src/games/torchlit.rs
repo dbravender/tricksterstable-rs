@@ -399,7 +399,7 @@ impl TorchlitGame {
                         ..Default::default()
                     },
                 );
-                if (self.current_player == 0) {
+                if self.current_player == 0 {
                     self.reorder_hand(0, false);
                 }
                 self.current_player = (self.current_player + 1) % 4;
@@ -447,10 +447,10 @@ impl TorchlitGame {
                         // card is moved back into their hand
                         for (player, torch) in self.torches.iter_mut().enumerate() {
                             if let Some(torch) = torch.take() {
-                                // TODO: animate torch back to hand
                                 self.hands[player].push(torch);
                             }
                         }
+                        self.reorder_hand(0, false);
                     }
 
                     let trick_result = self.get_trick_result();
