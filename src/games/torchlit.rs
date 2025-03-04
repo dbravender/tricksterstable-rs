@@ -140,6 +140,7 @@ pub struct Change {
     offset: usize,
     player: usize,
     length: usize,
+    highlight: bool,
     message: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -462,16 +463,6 @@ impl TorchlitGame {
                             },
                         );
                     }
-                    self.add_change(
-                        index,
-                        Change {
-                            change_type: ChangeType::OptionalPause,
-                            object_id: 0,
-                            dest: Location::Play,
-                            ..Default::default()
-                        },
-                    );
-                    let index = self.new_change();
                     for trick_winner in &movers {
                         self.player_dungeon_offset[*trick_winner] =
                             (self.player_dungeon_offset[*trick_winner] + 1) % 7;
@@ -481,6 +472,34 @@ impl TorchlitGame {
                                 change_type: ChangeType::MoveAdventurer,
                                 player: *trick_winner,
                                 offset: self.player_dungeon_offset[*trick_winner] as usize,
+                                highlight: true,
+                                dest: Location::Dungeon,
+                                ..Default::default()
+                            },
+                        );
+                    }
+
+                    let index = self.new_change();
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::OptionalPause,
+                            object_id: 0,
+                            dest: Location::Play,
+                            ..Default::default()
+                        },
+                    );
+
+                    let index = self.new_change();
+                    // Remove highlight from adventurers
+                    for trick_winner in &movers {
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::MoveAdventurer,
+                                player: *trick_winner,
+                                offset: self.player_dungeon_offset[*trick_winner] as usize,
+                                highlight: false,
                                 dest: Location::Dungeon,
                                 ..Default::default()
                             },
