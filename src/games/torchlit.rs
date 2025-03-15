@@ -550,17 +550,19 @@ impl TorchlitGame {
                     let index = self.new_change();
                     for card in self.spawnable_staged.clone().iter() {
                         self.dungeon_cards[card.value as usize].push(*card);
+                        let height = self.dungeon_cards[card.value as usize].len() - 1;
                         self.add_change(
                             index,
                             Change {
                                 change_type: ChangeType::TricksToDungeon,
+                                object_id: card.id,
+                                offset: card.value as usize,
+                                length: height,
                                 dest: Location::DungeonMonsters,
                                 ..Default::default()
                             },
                         );
                     }
-                    self.spawnable_staged = vec![];
-                    self.spawnable_cards = vec![];
 
                     self.end_trick();
 
@@ -619,6 +621,9 @@ impl TorchlitGame {
         let change_index = self.new_change();
 
         for card in self.current_trick {
+            if self.spawnable_staged.contains(&card.unwrap()) {
+                continue;
+            }
             self.add_change(
                 change_index,
                 Change {
@@ -632,6 +637,8 @@ impl TorchlitGame {
 
         // Clear trick
         self.current_trick = [None; 4];
+        self.spawnable_staged = vec![];
+        self.spawnable_cards = vec![];
 
         if self.hands.iter().all(|h| h.len() == 1) {
             // Score the hand
