@@ -80,6 +80,14 @@ enum Location {
     Message,
     CardsBurned,
     Torch,
+    // Cards which will be played to the dungeon
+    WardenStaged,
+    // Cards which will not be played to the dungeon
+    WardenRemoved,
+    // Cards that have been put in a dungeon
+    DungeonMonsters,
+    // Cards that are being scored
+    ScoredCards,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -468,6 +476,7 @@ impl TorchlitGame {
                         );
                     }
                     for trick_winner in &movers {
+                        let index = self.new_change();
                         self.player_dungeon_offset[*trick_winner] =
                             (self.player_dungeon_offset[*trick_winner] + 1) % 7;
                         self.add_change(
@@ -538,9 +547,17 @@ impl TorchlitGame {
             }
             State::SpawnMonsters => {
                 if action == CONFIRM_SPAWN {
-                    // TODO: animate cards to dungeons
-                    for card in self.spawnable_staged.iter() {
+                    let index = self.new_change();
+                    for card in self.spawnable_staged.clone().iter() {
                         self.dungeon_cards[card.value as usize].push(*card);
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::TricksToDungeon,
+                                dest: Location::DungeonMonsters,
+                                ..Default::default()
+                            },
+                        );
                     }
                     self.spawnable_staged = vec![];
                     self.spawnable_cards = vec![];
@@ -562,7 +579,16 @@ impl TorchlitGame {
                 // Remove all cards that share the suit of the staged card from spawnable cards
                 self.spawnable_cards.retain(|c| c.suit != card.suit);
                 self.spawnable_staged.push(card);
-                // TODO: animate changes
+                let index = self.new_change();
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::Play,
+                        object_id: card.id,
+                        dest: Location::WardenStaged,
+                        ..Default::default()
+                    },
+                );
             }
         }
     }
@@ -570,14 +596,26 @@ impl TorchlitGame {
     pub fn reset_spawn(&mut self) {
         self.spawnable_staged = vec![];
         self.spawnable_cards = self.current_trick.iter().flatten().cloned().collect();
-        // TODO: animation, animate all spawnable cards back to their original spot
+        for (player, card) in self.current_trick.clone().iter().flatten().enumerate() {
+            let index = self.new_change();
+            self.add_change(
+                index,
+                Change {
+                    object_id: card.id,
+                    change_type: ChangeType::Play,
+                    player: player,
+                    ..Default::default()
+                },
+            );
+        }
+        self.show_playable();
     }
 
     pub fn end_trick(&mut self) {
         self.state = State::Play;
         self.current_player = self.lead_player;
 
-        // Animate spawned cards from the staging area to the dunctions
+        // Animate spawned cards from the staging area to the dungeons
         let change_index = self.new_change();
 
         for card in self.current_trick {
