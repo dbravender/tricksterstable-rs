@@ -605,7 +605,8 @@ impl TorchlitGame {
                 Change {
                     object_id: card.id,
                     change_type: ChangeType::Play,
-                    player: player,
+                    dest: Location::Play,
+                    player,
                     ..Default::default()
                 },
             );
