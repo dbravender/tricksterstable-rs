@@ -369,14 +369,14 @@ impl TorchlitGame {
             .map(|c| c.suit)
             .collect();
 
-        if Some(self.current_player) == self.human_player {
-            playable_actions.push(UNDO_SPAWN);
-        }
-
         if trick_suits.len() == 4 {
             playable_actions.push(CONFIRM_SPAWN);
         } else if playable_actions.is_empty() {
             playable_actions.push(CONFIRM_SPAWN);
+        }
+
+        if Some(self.current_player) == self.human_player {
+            playable_actions.push(UNDO_SPAWN);
         }
 
         playable_actions
@@ -779,6 +779,20 @@ impl TorchlitGame {
         }
         let change_index = self.new_change();
         if self.human_player.is_some() && self.current_player == self.human_player.unwrap() {
+            if self.state == State::SpawnMonsters {
+                for card in self.current_trick.clone().iter().flatten() {
+                    self.add_change(
+                        change_index,
+                        Change {
+                            object_id: card.id,
+                            change_type: ChangeType::HidePlayable,
+                            dest: Location::Hand,
+                            player: self.current_player,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
             let moves = self.get_moves();
             for id in moves {
                 self.add_change(
