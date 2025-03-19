@@ -284,7 +284,7 @@ impl TorchlitGame {
                         dest: Location::Hand,
                         player,
                         offset: hand_index,
-                        length: 15,
+                        length: 14,
                         ..Default::default()
                     },
                 );
