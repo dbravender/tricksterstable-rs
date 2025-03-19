@@ -548,6 +548,18 @@ impl TorchlitGame {
             State::SpawnMonsters => {
                 if action == CONFIRM_SPAWN {
                     let index = self.new_change();
+                    if Some(self.current_player) != self.human_player {
+                        let player_name = self.player_name_string();
+                        let message = format!("{} selected which monsters to spawn", player_name,);
+                        self.set_message(Some(message), index);
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::OptionalPause,
+                                ..Default::default()
+                            },
+                        );
+                    }
                     for card in self.spawnable_staged.clone().iter() {
                         self.dungeon_cards[card.value as usize].push(*card);
                         let height = self.dungeon_cards[card.value as usize].len() - 1;
