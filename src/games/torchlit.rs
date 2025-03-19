@@ -598,8 +598,8 @@ impl TorchlitGame {
     pub fn reset_spawn(&mut self) {
         self.spawnable_staged = vec![];
         self.spawnable_cards = self.current_trick.iter().flatten().cloned().collect();
+        let index = self.new_change();
         for (player, card) in self.current_trick.clone().iter().flatten().enumerate() {
-            let index = self.new_change();
             self.add_change(
                 index,
                 Change {
