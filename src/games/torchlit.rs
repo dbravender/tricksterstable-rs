@@ -844,6 +844,18 @@ impl TorchlitGame {
                         },
                     );
                 }
+                for card in self.spawnable_staged.clone().iter() {
+                    self.add_change(
+                        change_index,
+                        Change {
+                            object_id: card.id,
+                            change_type: ChangeType::ShowPlayable,
+                            dest: Location::Hand,
+                            player: self.current_player,
+                            ..Default::default()
+                        },
+                    );
+                }
             }
             let moves = self.get_moves();
             for id in moves {
