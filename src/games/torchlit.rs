@@ -466,8 +466,6 @@ impl TorchlitGame {
                 if self.current_trick.iter().flatten().count() == 4 {
                     // End trick
 
-                    self.hide_playable();
-
                     if self.hands.iter().map(|h| h.len()).all(|l| l == 1) {
                         // When there is only one card left in each player's hand each player's torch
                         // card is moved back into their hand
@@ -693,6 +691,9 @@ impl TorchlitGame {
 
         if self.hands.iter().all(|h| h.len() == 1) {
             // Score the hand
+
+            self.hide_playable();
+
             let mut torch_points = [0; 4];
             let mut players_per_space: HashMap<i32, i32> = HashMap::new();
 
@@ -734,13 +735,14 @@ impl TorchlitGame {
                     .filter(|c| c.dropped_torch == true)
                     .cloned()
                     .collect();
-                for card in dropped_torches.iter() {
+                for (offset, card) in dropped_torches.iter().enumerate() {
                     self.add_change(
                         index,
                         Change {
                             change_type: ChangeType::DroppedTorch,
                             object_id: card.id,
                             dest: Location::DroppedTorch,
+                            offset: offset,
                             length: dropped_torches.len(),
                             ..Default::default()
                         },
@@ -875,7 +877,7 @@ impl TorchlitGame {
                     Change {
                         change_type: ChangeType::CardsBurned,
                         object_id: self.hands[player].first().unwrap().id,
-                        dest: Location::LitTorch,
+                        dest: Location::CardsBurned,
                         ..Default::default()
                     },
                 );
