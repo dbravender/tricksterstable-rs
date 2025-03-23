@@ -590,16 +590,36 @@ impl TorchlitGame {
                     .position(|c| c.id == action)
                     .unwrap();
                 let card = self.spawnable_cards.remove(pos);
+                let index = self.new_change();
+                let mut height = self.dungeon_cards[card.value as usize].len();
                 // Remove all cards that share the suit of the staged card from spawnable cards
+                for c in self.spawnable_staged.clone().iter() {
+                    if c.value == card.value {
+                        height += 1;
+                    }
+                    if c.suit == card.suit {
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::Play,
+                                object_id: card.id,
+                                dest: Location::WardenRemoved,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
                 self.spawnable_cards.retain(|c| c.suit != card.suit);
                 self.spawnable_staged.push(card);
-                let index = self.new_change();
                 self.add_change(
                     index,
                     Change {
                         change_type: ChangeType::Play,
                         object_id: card.id,
-                        dest: Location::WardenStaged,
+                        dest: Location::DungeonMonsters,
+                        offset: card.value as usize,
+                        highlight: true,
+                        length: height,
                         ..Default::default()
                     },
                 );
