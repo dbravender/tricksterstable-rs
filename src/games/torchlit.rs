@@ -742,7 +742,7 @@ impl TorchlitGame {
                             change_type: ChangeType::DroppedTorch,
                             object_id: card.id,
                             dest: Location::DroppedTorch,
-                            offset: offset,
+                            offset,
                             length: dropped_torches.len(),
                             ..Default::default()
                         },
@@ -1068,9 +1068,9 @@ impl TorchlitGame {
     fn player_name_string(&mut self, player: usize) -> String {
         match player {
             0 => "You".to_string(),
-            1 => "West".to_string(),
-            2 => "North".to_string(),
-            _ => "East".to_string(),
+            1 => "Green".to_string(),
+            2 => "Orange".to_string(),
+            _ => "Purple".to_string(),
         }
     }
 
