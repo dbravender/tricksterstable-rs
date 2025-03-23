@@ -88,6 +88,10 @@ enum Location {
     DungeonMonsters,
     // Cards that are being scored
     ScoredCards,
+    // Show torches that have been dropped
+    DroppedTorch,
+    // Show torches that are lit
+    LitTorch,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -134,6 +138,10 @@ pub enum ChangeType {
     CardsBurned,
     LightTorch,
     MoveAdventurer,
+    // Show torches that have been dropped
+    DroppedTorch,
+    // Show torches that are lit
+    LitTorch,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +266,14 @@ impl TorchlitGame {
                 change_type: ChangeType::Shuffle,
                 object_id: 0,
                 dest: Location::Deck,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            shuffle_index,
+            Change {
+                change_type: ChangeType::Message,
+                message: Some("".to_string()),
                 ..Default::default()
             },
         );
@@ -450,6 +466,8 @@ impl TorchlitGame {
                 if self.current_trick.iter().flatten().count() == 4 {
                     // End trick
 
+                    self.hide_playable();
+
                     if self.hands.iter().map(|h| h.len()).all(|l| l == 1) {
                         // When there is only one card left in each player's hand each player's torch
                         // card is moved back into their hand
@@ -549,7 +567,7 @@ impl TorchlitGame {
                 if action == CONFIRM_SPAWN {
                     let index = self.new_change();
                     if Some(self.current_player) != self.human_player {
-                        let player_name = self.player_name_string();
+                        let player_name = self.player_name_string(self.current_player);
                         let message = format!("{} selected which monsters to spawn", player_name,);
                         self.set_message(Some(message), index);
                         self.add_change(
@@ -675,51 +693,192 @@ impl TorchlitGame {
 
         if self.hands.iter().all(|h| h.len() == 1) {
             // Score the hand
-            let mut earned_this_hand = [0; 4];
+            let mut torch_points = [0; 4];
             let mut players_per_space: HashMap<i32, i32> = HashMap::new();
 
             for player in 0..4 {
                 let mut torch_card = self.hands[player].first().unwrap().clone();
                 if torch_card.value == self.player_dungeon_offset[player] {
-                    earned_this_hand[player] = 3;
+                    torch_points[player] = 3;
                 } else {
                     torch_card.dropped_torch = true;
                     self.dungeon_cards[torch_card.value as usize].push(torch_card.clone());
-                    // TODO: Animate torch to dungeon space
                 }
                 *players_per_space
                     .entry(self.player_dungeon_offset[player])
                     .or_insert(0) += 1;
             }
 
-            for player in 0..4 {
-                let total_players_at_space = players_per_space
-                    .get(&self.player_dungeon_offset[player])
-                    .unwrap_or(&1);
-                let score: i32 = self.dungeon_cards[self.player_dungeon_offset[player] as usize]
+            for dungeon in 0..=7 {
+                let total_players_at_space = players_per_space.get(&dungeon).unwrap_or(&0);
+                if *total_players_at_space == 0 {
+                    continue;
+                }
+                let dungeon_points = self.dungeon_cards[dungeon as usize]
+                    .clone()
                     .iter()
                     .map(|c| c.get_points())
-                    .sum();
-                earned_this_hand[player] +=
-                    ((score / total_players_at_space) as f64).floor() as i32;
+                    .sum::<i32>();
+                let per_player_points = dungeon_points / total_players_at_space;
+                let adventurer_or_adventurers = match total_players_at_space {
+                    1 => "adventurer".to_string(),
+                    _ => "adventurers".to_string(),
+                };
+                let point_or_points = match per_player_points {
+                    1 => "point".to_string(),
+                    _ => "points".to_string(),
+                };
+                let index = self.new_change();
+                let dropped_torches: Vec<Card> = self.dungeon_cards[dungeon as usize]
+                    .iter()
+                    .filter(|c| c.dropped_torch == true)
+                    .cloned()
+                    .collect();
+                for card in dropped_torches.iter() {
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::DroppedTorch,
+                            object_id: card.id,
+                            dest: Location::DroppedTorch,
+                            length: dropped_torches.len(),
+                            ..Default::default()
+                        },
+                    );
+                }
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::Message,
+                        object_id: 0,
+                        dest: Location::Message,
+                        message: Some(format!(
+                            "Dungeon {} scores {} / {} {} = {} {}",
+                            dungeon,
+                            dungeon_points,
+                            total_players_at_space,
+                            adventurer_or_adventurers,
+                            per_player_points,
+                            point_or_points,
+                        )),
+                        ..Default::default()
+                    },
+                );
+                for player in 0..4 {
+                    if self.player_dungeon_offset[player] != dungeon {
+                        continue;
+                    }
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::MoveAdventurer,
+                            player: player as usize,
+                            offset: dungeon as usize,
+                            highlight: true,
+                            dest: Location::Dungeon,
+                            ..Default::default()
+                        },
+                    );
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::Score,
+                            object_id: 0,
+                            dest: Location::Score,
+                            player,
+                            start_score: self.scores[player],
+                            end_score: self.scores[player] + per_player_points,
+                            ..Default::default()
+                        },
+                    );
+                    self.scores[player] += per_player_points;
+                }
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::OptionalPause,
+                        ..Default::default()
+                    },
+                );
+                for card in dropped_torches.iter() {
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::CardsBurned,
+                            object_id: card.id,
+                            dest: Location::CardsBurned,
+                            ..Default::default()
+                        },
+                    );
+                }
+                for player in 0..4 {
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::MoveAdventurer,
+                            player: player as usize,
+                            offset: self.player_dungeon_offset[player] as usize,
+                            highlight: false,
+                            dest: Location::Dungeon,
+                            ..Default::default()
+                        },
+                    );
+                }
             }
 
-            // Animate the scores
-            let score_change_index = self.new_change();
+            // Show torch points
             for player in 0..4 {
+                if torch_points[player] == 0 {
+                    continue;
+                }
+                let index = self.new_change();
+                let torch_message = self.torch_message(player);
                 self.add_change(
-                    score_change_index,
+                    index,
+                    Change {
+                        change_type: ChangeType::LitTorch,
+                        object_id: self.hands[player].first().unwrap().id,
+                        dest: Location::LitTorch,
+                        ..Default::default()
+                    },
+                );
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::Message,
+                        message: Some(torch_message),
+                        ..Default::default()
+                    },
+                );
+                self.add_change(
+                    index,
                     Change {
                         change_type: ChangeType::Score,
                         object_id: 0,
                         dest: Location::Score,
                         player,
                         start_score: self.scores[player],
-                        end_score: self.scores[player] + earned_this_hand[player],
+                        end_score: self.scores[player] + torch_points[player],
                         ..Default::default()
                     },
                 );
-                self.scores[player] += earned_this_hand[player];
+                self.scores[player] += torch_points[player];
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::OptionalPause,
+                        ..Default::default()
+                    },
+                );
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::CardsBurned,
+                        object_id: self.hands[player].first().unwrap().id,
+                        dest: Location::LitTorch,
+                        ..Default::default()
+                    },
+                );
             }
 
             if self.round >= 3 {
@@ -875,8 +1034,16 @@ impl TorchlitGame {
         }
     }
 
+    fn torch_message(&mut self, player: usize) -> String {
+        let player_name = self.player_name_string(player);
+        match player {
+            0 => "You get a bonus for lighting your torch".to_string(),
+            _ => format!("{} gets a bonus for lighting their torch", player_name),
+        }
+    }
+
     fn show_message(&mut self) {
-        let player_name = self.player_name_string();
+        let player_name = self.player_name_string(self.current_player);
         let player_possessive = match self.current_player {
             0 => "your",
             _ => "their",
@@ -896,8 +1063,8 @@ impl TorchlitGame {
         self.set_message(message, index);
     }
 
-    fn player_name_string(&mut self) -> String {
-        match self.current_player {
+    fn player_name_string(&mut self, player: usize) -> String {
+        match player {
             0 => "You".to_string(),
             1 => "West".to_string(),
             2 => "North".to_string(),
