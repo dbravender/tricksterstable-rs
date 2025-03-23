@@ -375,7 +375,7 @@ impl TorchlitGame {
             playable_actions.push(CONFIRM_SPAWN);
         }
 
-        if Some(self.current_player) == self.human_player {
+        if Some(self.current_player) == self.human_player && !self.spawnable_staged.is_empty() {
             playable_actions.push(UNDO_SPAWN);
         }
 
@@ -810,6 +810,26 @@ impl TorchlitGame {
             self.changes = vec![vec![]];
         }
         let change_index = self.new_change();
+        self.add_change(
+            change_index,
+            Change {
+                object_id: CONFIRM_SPAWN,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: self.current_player,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            change_index,
+            Change {
+                object_id: UNDO_SPAWN,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: self.current_player,
+                ..Default::default()
+            },
+        );
         if self.human_player.is_some() && self.current_player == self.human_player.unwrap() {
             if self.state == State::SpawnMonsters {
                 for card in self.current_trick.clone().iter().flatten() {
@@ -904,6 +924,26 @@ impl TorchlitGame {
                 },
             );
         }
+        self.add_change(
+            change_index,
+            Change {
+                object_id: UNDO_SPAWN,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: self.current_player,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            change_index,
+            Change {
+                object_id: CONFIRM_SPAWN,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: self.current_player,
+                ..Default::default()
+            },
+        );
     }
 
     pub fn get_trick_result(&self) -> TrickResult {
