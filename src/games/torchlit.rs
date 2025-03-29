@@ -1183,6 +1183,9 @@ impl ismcts::Game for TorchlitGame {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        // if self.experiment {
+        //     return;
+        // }
         let rng = &mut thread_rng();
 
         for p1 in 0..4 {
@@ -1191,25 +1194,29 @@ impl ismcts::Game for TorchlitGame {
                     continue;
                 }
 
-                let mut combined_voids: HashSet<Suit> =
-                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
-                combined_voids.extend(self.voids[p2 as usize].iter());
-
                 let mut cards1 = self.hands[p1 as usize].clone();
                 let mut cards2 = self.hands[p2 as usize].clone();
 
+                let mut torch_card_ids: Vec<i32> = vec![];
+
                 if let Some(torch) = self.torches[p1] {
                     cards1.push(torch);
+                    torch_card_ids.push(torch.id);
                 }
                 if let Some(torch) = self.torches[p2] {
                     cards2.push(torch);
+                    torch_card_ids.push(torch.id);
                 }
+
+                let mut combined_voids: HashSet<Suit> =
+                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
+                combined_voids.extend(self.voids[p2 as usize].iter());
 
                 let mut new_hands = vec![cards1, cards2];
 
                 // allow swapping of any cards that are not in the combined void set
                 shuffle_and_divide_matching_cards(
-                    |c: &Card| !combined_voids.contains(&c.suit),
+                    |c: &Card| torch_card_ids.contains(&c.id) || !combined_voids.contains(&c.suit),
                     &mut new_hands,
                     rng,
                 );
@@ -1248,7 +1255,7 @@ impl ismcts::Game for TorchlitGame {
         if self.winner.is_none() {
             None
         } else {
-            if !self.experiment {
+            if true {
                 let total_score_ratio = self.scores[player] as f64 / MAX_POINTS_PER_HAND;
 
                 // Scale the total score to a range between -1.0 and 1.0
