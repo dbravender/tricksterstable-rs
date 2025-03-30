@@ -776,7 +776,7 @@ impl TorchlitGame {
                 index,
                 Change {
                     change_type: ChangeType::OptionalPause,
-                    dismiss_after_seconds: 1,
+                    dismiss_after_seconds: 2,
                     ..Default::default()
                 },
             );
@@ -1137,7 +1137,7 @@ impl TorchlitGame {
         match player {
             0 => "You get 3 bonus points for keeping your torch".to_string(),
             _ => format!(
-                "{} gets 3 bonus points for lighting their torch",
+                "{} gets 3 bonus points for keeping their torch",
                 player_name
             ),
         }
