@@ -92,6 +92,10 @@ enum Location {
     DroppedTorch,
     // Show torches that are lit
     LitTorch,
+    // Underneath player score
+    RevealTorch,
+    // Middle of the screen
+    RevealMonster,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -142,6 +146,10 @@ pub enum ChangeType {
     DroppedTorch,
     // Show torches that are lit
     LitTorch,
+    // Initially reveal a player's torch card
+    RevealTorch,
+    // Zoom in on dungeon cards in the middle of the screen as they are scored
+    RevealMonster,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,6 +166,7 @@ pub struct Change {
     length: usize,
     highlight: bool,
     message: Option<String>,
+    dropped_torch: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrickResult {
@@ -697,6 +706,8 @@ impl TorchlitGame {
             let mut torch_points = [0; 4];
             let mut players_per_space: HashMap<i32, i32> = HashMap::new();
 
+            let index = self.new_change();
+
             for player in 0..4 {
                 let mut torch_card = self.hands[player].first().unwrap().clone();
                 if torch_card.value == self.player_dungeon_offset[player] {
@@ -705,21 +716,100 @@ impl TorchlitGame {
                     torch_card.dropped_torch = true;
                     self.dungeon_cards[torch_card.value as usize].push(torch_card.clone());
                 }
+                self.hands[player] = vec![torch_card];
                 *players_per_space
                     .entry(self.player_dungeon_offset[player])
                     .or_insert(0) += 1;
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::RevealTorch,
+                        dest: Location::RevealTorch,
+                        object_id: torch_card.id,
+                        player,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::Message,
+                    message: Some("Torches have been revealed".to_string()),
+                    ..Default::default()
+                },
+            );
+
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    ..Default::default()
+                },
+            );
+
+            let mut dropped_torch: bool = false;
+
+            // Flip over the dropped torches
+            for player in 0..4 {
+                let torch_card = self.hands[player].first().unwrap();
+                if !torch_card.dropped_torch {
+                    continue;
+                }
+                dropped_torch = true;
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::RevealTorch,
+                        dest: Location::RevealTorch,
+                        object_id: torch_card.id,
+                        dropped_torch: true,
+                        player,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            if dropped_torch {
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::Message,
+                        message: Some("Dropped torches have been revealed".to_string()),
+                        ..Default::default()
+                    },
+                );
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::OptionalPause,
+                        ..Default::default()
+                    },
+                );
             }
 
             for dungeon in 0..=7 {
+                let index = self.new_change();
                 let total_players_at_space = players_per_space.get(&dungeon).unwrap_or(&0);
+                let dungeon_cards = self.dungeon_cards[dungeon as usize].clone();
                 if *total_players_at_space == 0 {
+                    // Remove all cards from dungeons that didn't score
+                    // Also removes dropped torches (intentionally)
+                    for card in dungeon_cards.iter() {
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::CardsBurned,
+                                object_id: card.id,
+                                dest: Location::CardsBurned,
+                                ..Default::default()
+                            },
+                        );
+                    }
                     continue;
                 }
-                let dungeon_points = self.dungeon_cards[dungeon as usize]
-                    .clone()
-                    .iter()
-                    .map(|c| c.get_points())
-                    .sum::<i32>();
+                let dungeon_points = dungeon_cards.iter().map(|c| c.get_points()).sum::<i32>();
                 let per_player_points = dungeon_points / total_players_at_space;
                 let adventurer_or_adventurers = match total_players_at_space {
                     1 => "adventurer".to_string(),
@@ -730,20 +820,16 @@ impl TorchlitGame {
                     _ => "points".to_string(),
                 };
                 let index = self.new_change();
-                let dropped_torches: Vec<Card> = self.dungeon_cards[dungeon as usize]
-                    .iter()
-                    .filter(|c| c.dropped_torch == true)
-                    .cloned()
-                    .collect();
-                for (offset, card) in dropped_torches.iter().enumerate() {
+                for (offset, card) in dungeon_cards.iter().enumerate() {
                     self.add_change(
                         index,
                         Change {
-                            change_type: ChangeType::DroppedTorch,
+                            change_type: ChangeType::RevealMonster,
                             object_id: card.id,
-                            dest: Location::DroppedTorch,
+                            dest: Location::RevealMonster,
+                            dropped_torch: card.dropped_torch,
                             offset,
-                            length: dropped_torches.len(),
+                            length: self.dungeon_cards[dungeon as usize].len(),
                             ..Default::default()
                         },
                     );
@@ -802,7 +888,7 @@ impl TorchlitGame {
                         ..Default::default()
                     },
                 );
-                for card in dropped_torches.iter() {
+                for card in dungeon_cards.iter() {
                     self.add_change(
                         index,
                         Change {
