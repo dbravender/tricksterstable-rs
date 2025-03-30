@@ -504,7 +504,7 @@ impl TorchlitGame {
                     for trick_winner in &movers {
                         let index = self.new_change();
                         self.player_dungeon_offset[*trick_winner] =
-                            (self.player_dungeon_offset[*trick_winner] + 1) % 7;
+                            (self.player_dungeon_offset[*trick_winner] + 1) % 8;
                         self.add_change(
                             index,
                             Change {
