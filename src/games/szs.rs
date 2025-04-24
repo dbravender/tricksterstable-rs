@@ -166,7 +166,6 @@ pub struct Game {
     lead_player: i32,
     #[serde(default)]
     pub no_changes: bool,
-    pub experiment: bool,
 }
 
 impl Game {
@@ -823,23 +822,9 @@ impl ismcts::Game for Game {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        const MAX_POINTS_PER_HAND: f64 = 25.0;
         if self.winner == None {
             None
         } else {
-            if self.experiment {
-                println!("experiment");
-                let mut sorted = self.scores.clone();
-                sorted.sort_by(|a, b| b.cmp(a));
-                let rank = sorted
-                    .iter()
-                    .position(|&s| s == self.scores[player as usize])
-                    .unwrap();
-                let reward = 1.0 - (rank as f64 / (sorted.len() - 1) as f64); // Top player: 1.0, bottom: 0.0
-                return Some(reward);
-            }
-            println!("non experiment");
-
             let mut sorted_scores = self.scores.clone();
             sorted_scores.sort();
             sorted_scores.reverse();

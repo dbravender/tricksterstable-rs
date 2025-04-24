@@ -1,5 +1,3 @@
-use std::usize::MAX;
-
 use tricksterstable_rs::games::torchlit::{get_mcts_move, TorchlitGame};
 
 fn main() {
@@ -9,10 +7,10 @@ fn main() {
         while game.winner.is_none() {
             // println!("moves: {:?}", game.get_moves());
             // println!("state: {:?}", game.state);
-            let mut iterations = 100;
+            let iterations = 1000;
             game.experiment = false;
             if game.current_player == 0 || game.current_player == 2 {
-                iterations = 2000;
+                game.experiment = true;
             }
             let action = get_mcts_move(&game, iterations, false);
             game.apply_move(action);
@@ -27,13 +25,7 @@ fn main() {
         //             .sum::<i32>()
         //     );
         // }
+        println!("winner: {:?}", game.winner);
         println!("scores: {:?}", game.scores);
-        let max_score = game.scores.iter().max().unwrap();
-        println!("max score: {}", max_score);
-        for (player, score) in game.scores.iter().enumerate() {
-            if score == max_score {
-                println!("winner: {}", player);
-            }
-        }
     }
 }
