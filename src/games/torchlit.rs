@@ -169,6 +169,7 @@ pub struct Change {
     dropped_torch: bool,
     dismiss_after_seconds: i32,
 }
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrickResult {
     pub dungeon_warden: usize,
