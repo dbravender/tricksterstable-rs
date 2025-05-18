@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 const HAND_SIZE: usize = 11;
 const PASS_BID: i32 = -1;
 const BID_OFFSET: i32 = -10; // -10 first bid slot, -11 second bid slot, etc.
+const PLAYER_COUNT: usize = 4;
 const POINT_THRESHOLD: i32 = 45;
-const BID_CARDS: [BidSpace; 4] = [
+const BID_CARDS: [BidSpace; PLAYER_COUNT] = [
     BidSpace::PlusFace,
     BidSpace::PlusOne,
     BidSpace::PlusOne,
@@ -188,11 +189,11 @@ pub struct PalaGame {
     // Player who led the current trick
     pub lead_player: usize,
     // Cards each player has played in the current trick
-    pub current_trick: [Option<Card>; 4],
+    pub current_trick: [Option<Card>; PLAYER_COUNT],
     // Cards in each player's hand
-    pub hands: [Vec<Card>; 4],
+    pub hands: [Vec<Card>; PLAYER_COUNT],
     // Voids revealed when a player couldn't follow a lead card (used during determination)
-    pub voids: [Vec<Suit>; 4],
+    pub voids: [Vec<Suit>; PLAYER_COUNT],
     // Player who starts the next hand
     pub dealer: usize,
     // List of list of animations to run after a move is made to get from the current state to the next state
@@ -200,7 +201,7 @@ pub struct PalaGame {
     // When running simulations we save time by not creating vecs and structs to be added to the change animation list
     pub no_changes: bool,
     // Current score of the game
-    pub scores: [i32; 4],
+    pub scores: [i32; PLAYER_COUNT],
     // Game winner
     pub winner: Option<usize>,
     // Use experimental reward function for comparison
@@ -208,11 +209,11 @@ pub struct PalaGame {
     // Which player is the human player
     pub human_player: Option<usize>,
     // Cards played on the bid spaces
-    pub bids: [Option<Suit>; 4],
+    pub bids: [Option<Suit>; PLAYER_COUNT],
     // Denormalized map of suit to BidSpace
     pub suit_to_bid: HashMap<Suit, BidSpace>,
     // Cards won by each player
-    pub cards_won: [Vec<Card>; 4],
+    pub cards_won: [Vec<Card>; PLAYER_COUNT],
     // Card selected for moves that require multiple actions
     pub selected_card: Option<Card>,
 }
@@ -224,7 +225,7 @@ impl PalaGame {
             ..Default::default()
         };
         let mut rng = rand::thread_rng();
-        game.dealer = rng.gen_range(0..4);
+        game.dealer = rng.gen_range(0..PLAYER_COUNT);
         game.deal();
         game
     }
@@ -235,7 +236,7 @@ impl PalaGame {
             ..Default::default()
         };
         let mut rng = rand::thread_rng();
-        game.dealer = rng.gen_range(0..4);
+        game.dealer = rng.gen_range(0..PLAYER_COUNT);
         game.human_player = Some(human_player);
         game.deal();
         game
@@ -247,8 +248,8 @@ impl PalaGame {
         self.hands = [vec![], vec![], vec![], vec![]];
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
-        self.current_trick = [None; 4];
-        self.dealer = (self.dealer + 1) % 4;
+        self.current_trick = [None; PLAYER_COUNT];
+        self.dealer = (self.dealer + 1) % PLAYER_COUNT;
         self.voids = [vec![], vec![], vec![], vec![]];
         let mut cards = PalaGame::deck();
         let shuffle_index = self.new_change();
@@ -271,7 +272,7 @@ impl PalaGame {
             },
         );
         for hand_index in 0..HAND_SIZE {
-            for player in 0..4 {
+            for player in 0..PLAYER_COUNT {
                 let card = cards.pop().unwrap();
                 self.add_change(
                     deal_index,
@@ -288,7 +289,7 @@ impl PalaGame {
                 self.hands[player].push(card);
             }
         }
-        for player in 0..4 {
+        for player in 0..PLAYER_COUNT {
             self.sort_hand(player);
             self.reorder_hand(player, player == 0);
         }
@@ -329,7 +330,7 @@ impl PalaGame {
     // Intended to be called when all bids are finished
     pub fn set_suit_to_bid(&mut self) {
         self.suit_to_bid = HashMap::new();
-        for i in 0..4 {
+        for i in 0..PLAYER_COUNT {
             let suit = self.bids[i].unwrap();
             self.suit_to_bid.insert(suit, BID_CARDS[i]);
         }
@@ -356,12 +357,11 @@ impl PalaGame {
     }
 
     fn get_moves_select_bid_location(&self) -> Vec<i32> {
-        return self
-            .bids
+        self.bids
             .iter()
             .enumerate()
-            .map(|(b, _)| BID_OFFSET + b as i32)
-            .collect();
+            .filter_map(|(i, bid)| bid.is_none().then(|| BID_OFFSET + i as i32))
+            .collect()
     }
 
     pub fn apply_move(&mut self, action: i32) {
@@ -377,7 +377,7 @@ impl PalaGame {
 
     pub fn apply_move_bid_card(&mut self, action: i32) {
         if action == PASS_BID {
-            self.current_player = (self.current_player + 1) % 4;
+            self.current_player = (self.current_player + 1) % PLAYER_COUNT;
             return;
         }
         self.selected_card = Some(ID_TO_CARD.get(&action).unwrap().clone());
@@ -389,6 +389,13 @@ impl PalaGame {
         self.bids[(action - BID_OFFSET) as usize] = Some(card.suit);
         // TODO: Animate bid card to position
         // TODO: switch state, if bid board is filled start the hand, if not continue to the next player
+        if self.bids.iter().all(|x| x.is_some()) {
+            self.state = State::SelectCardToPlay;
+            self.current_player = self.dealer;
+        } else {
+            self.state = State::BidSelectBidCard;
+            self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+        }
     }
 
     pub fn score_player(&mut self, player: usize) -> i32 {
@@ -650,7 +657,7 @@ mod tests {
 
     struct GetBidMovesScenario {
         name: String,
-        bids: [Option<Suit>; 4],
+        bids: [Option<Suit>; PLAYER_COUNT],
         hand: Vec<Card>,
         expected_moves_for_card_selection: Vec<i32>,
         card_selection_move: i32,
@@ -658,7 +665,8 @@ mod tests {
         expected_next_player: usize,
         expected_moves_after_card_selection: Option<Vec<i32>>,
         bid_offset_move: Option<i32>,
-        expected_bids_after_bid_move: Option<[Option<Suit>; 4]>,
+        expected_bids_after_bid_move: Option<[Option<Suit>; PLAYER_COUNT]>,
+        expected_state_after_bid_move: Option<State>,
     }
 
     #[test]
@@ -698,6 +706,7 @@ mod tests {
                 ]),
                 bid_offset_move: Some(BID_OFFSET + 1),
                 expected_bids_after_bid_move: Some([None, Some(Suit::Orange), None, None]),
+                expected_state_after_bid_move: Some(State::BidSelectBidCard),
             },
             GetBidMovesScenario {
                 name: "Cards matching previous bid not available to bid".to_string(),
@@ -709,7 +718,6 @@ mod tests {
                 expected_next_player: 3,
                 expected_moves_after_card_selection: Some(vec![
                     BID_OFFSET,
-                    BID_OFFSET + 1,
                     BID_OFFSET + 2,
                     BID_OFFSET + 3,
                 ]),
@@ -720,6 +728,7 @@ mod tests {
                     None,
                     None,
                 ]),
+                expected_state_after_bid_move: Some(State::BidSelectBidCard),
             },
             GetBidMovesScenario {
                 name: "Pass should move to the next player".to_string(),
@@ -732,6 +741,30 @@ mod tests {
                 expected_moves_after_card_selection: None,
                 bid_offset_move: None,
                 expected_bids_after_bid_move: None,
+                expected_state_after_bid_move: Some(State::BidSelectBidCard),
+            },
+            GetBidMovesScenario {
+                name: "Should transition to play phase once the bid board is full".to_string(),
+                bids: [
+                    Some(Suit::Green),
+                    Some(Suit::Orange),
+                    Some(Suit::Yellow),
+                    None,
+                ],
+                hand: vec![red7, orange8, purple5],
+                expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
+                card_selection_move: red7.id,
+                expected_state_after_apply_move: State::BidSelectBidLocation,
+                expected_next_player: 3,
+                expected_moves_after_card_selection: Some(vec![BID_OFFSET + 3]),
+                bid_offset_move: Some(BID_OFFSET + 3),
+                expected_bids_after_bid_move: Some([
+                    Some(Suit::Green),
+                    Some(Suit::Orange),
+                    Some(Suit::Yellow),
+                    Some(Suit::Red),
+                ]),
+                expected_state_after_bid_move: Some(State::SelectCardToPlay),
             },
         ];
 
@@ -774,7 +807,13 @@ mod tests {
             assert_eq!(
                 game.bids, expected_bids_after_bid_move,
                 "Scenario: {}, Bids: {:?} Expected bids: {:?}",
-                scenario.name, game.bids, expected_bids_after_bid_move
+                scenario.name, game.bids, expected_bids_after_bid_move,
+            );
+            let expected_state_after_bid_move = scenario.expected_state_after_bid_move.unwrap();
+            assert_eq!(
+                game.state, expected_state_after_bid_move,
+                "Scenario: {}, State: {:?} Expected state: {:?}",
+                scenario.name, game.state, expected_state_after_bid_move,
             );
         }
     }
