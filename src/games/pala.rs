@@ -377,7 +377,7 @@ impl PalaGame {
 
     pub fn apply_move_bid_card(&mut self, action: i32) {
         if action == PASS_BID {
-            self.current_player += 1;
+            self.current_player = (self.current_player + 1) % 4;
             return;
         }
         self.selected_card = Some(ID_TO_CARD.get(&action).unwrap().clone());
@@ -689,7 +689,7 @@ mod tests {
                 expected_moves_for_card_selection: vec![red7.id, orange8.id, purple5.id, PASS_BID],
                 card_selection_move: orange8.id,
                 expected_state_after_apply_move: State::BidSelectBidLocation,
-                expected_next_player: 0,
+                expected_next_player: 3,
                 expected_moves_after_card_selection: Some(vec![
                     BID_OFFSET,
                     BID_OFFSET + 1,
@@ -706,7 +706,7 @@ mod tests {
                 expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
                 card_selection_move: red7.id,
                 expected_state_after_apply_move: State::BidSelectBidLocation,
-                expected_next_player: 0,
+                expected_next_player: 3,
                 expected_moves_after_card_selection: Some(vec![
                     BID_OFFSET,
                     BID_OFFSET + 1,
@@ -728,7 +728,7 @@ mod tests {
                 expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
                 card_selection_move: PASS_BID,
                 expected_state_after_apply_move: State::BidSelectBidCard,
-                expected_next_player: 1,
+                expected_next_player: 0,
                 expected_moves_after_card_selection: None,
                 bid_offset_move: None,
                 expected_bids_after_bid_move: None,
@@ -737,7 +737,7 @@ mod tests {
 
         for scenario in scenarios {
             let mut game = PalaGame::new();
-            game.current_player = 0;
+            game.current_player = 3;
             game.state = State::BidSelectBidCard;
             game.hands[game.current_player] = scenario.hand;
             game.bids = scenario.bids;
