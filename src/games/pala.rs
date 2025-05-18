@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 
 const HAND_SIZE: usize = 11;
 const PASS_BID: i32 = -1;
-const BID_OFFSET: i32 = -10; // -10 first bid slot, -11 second bid slot, etc.
+const UNDO: i32 = -2; // Only the human player can undo their moves
+const CHOOSE_TO_WIN: i32 = -20; // Player chose to win after playing a tying card
+const CHOOSE_TO_LOSE: i32 = -21; // Player chose to lose after playing a tying card
+const BID_OFFSET: i32 = -10; // -10 first bid slot, -9 second bid slot, etc.
 const PLAYER_COUNT: usize = 4;
 const POINT_THRESHOLD: i32 = 45;
 const BID_CARDS: [BidSpace; PLAYER_COUNT] = [
@@ -129,6 +132,8 @@ pub enum State {
     SelectCardToPlay,
     // Select location to play card
     SelectLocationToPlay,
+    // Select whether or not the current player is winning (when a tying card is played)
+    SelectWinningOrLosing,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -816,5 +821,21 @@ mod tests {
                 scenario.name, game.state, expected_state_after_bid_move,
             );
         }
+    }
+
+    struct PlayCardMoves {
+        expected_move_options_before_move: Vec<i32>,
+        action: i32,
+        expected_current_trick_after_move: [Option<Card>; PLAYER_COUNT],
+        expected_state_after_move: State,
+        expected_player_after_move: usize,
+        expected_winning_player_after_move: usize,
+    }
+
+    struct PlayCardsScenario {
+        name: String,
+        current_trick: [Option<Card>; 4],
+        hand: Vec<Card>,
+        moves_to_play: Vec<PlayCardMoves>,
     }
 }
