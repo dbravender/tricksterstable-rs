@@ -4,7 +4,12 @@ Designer: Jeffrey Allers
 BoardGameGeek: https://boardgamegeek.com/boardgame/37441/pala
 */
 
-use std::{cmp::Ordering, collections::HashMap};
+use once_cell::sync::Lazy;
+
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 use enum_iterator::{all, Sequence};
 use rand::{seq::SliceRandom, thread_rng, Rng};
@@ -12,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 const HAND_SIZE: usize = 11;
 const PASS_BID: i32 = -1;
+const BID_OFFSET: i32 = -10; // -10 first bid slot, -11 second bid slot, etc.
 const POINT_THRESHOLD: i32 = 45;
 const BID_CARDS: [BidSpace; 4] = [
     BidSpace::PlusFace,
@@ -19,6 +25,14 @@ const BID_CARDS: [BidSpace; 4] = [
     BidSpace::PlusOne,
     BidSpace::Cancel,
 ];
+
+static ID_TO_CARD: Lazy<HashMap<i32, Card>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    for card in PalaGame::deck().iter() {
+        m.insert(card.id, *card);
+    }
+    m
+});
 
 #[derive(
     Debug, Clone, Serialize, Sequence, Deserialize, PartialEq, Eq, Copy, Hash, PartialOrd, Ord,
@@ -199,6 +213,8 @@ pub struct PalaGame {
     pub suit_to_bid: HashMap<Suit, BidSpace>,
     // Cards won by each player
     pub cards_won: [Vec<Card>; 4],
+    // Card selected for moves that require multiple actions
+    pub selected_card: Option<Card>,
 }
 
 impl PalaGame {
@@ -301,6 +317,15 @@ impl PalaGame {
         return deck;
     }
 
+    fn pop_card(&mut self, id: i32) -> Card {
+        let pos = self.hands[self.current_player]
+            .iter()
+            .position(|c| c.id == id)
+            .unwrap();
+        let card = self.hands[self.current_player].remove(pos);
+        return card;
+    }
+
     // Intended to be called when all bids are finished
     pub fn set_suit_to_bid(&mut self) {
         self.suit_to_bid = HashMap::new();
@@ -311,12 +336,59 @@ impl PalaGame {
     }
 
     pub fn get_moves(&self) -> Vec<i32> {
-        let moves: Vec<i32> = vec![];
         match self.state {
             State::BidSelectBidCard => self.get_moves_select_bid_card(),
             State::BidSelectBidLocation => self.get_moves_select_bid_location(),
             _ => todo!("Implement remaining states"),
         }
+    }
+
+    fn get_moves_select_bid_card(&self) -> Vec<i32> {
+        let bid_suits: HashSet<Suit> = self.bids.iter().flat_map(|&s| s).collect();
+        let mut options: Vec<i32> = self.hands[self.current_player]
+            .iter()
+            .filter(|c| !bid_suits.contains(&c.suit))
+            .map(|c| c.id)
+            .collect();
+
+        options.push(PASS_BID);
+        options
+    }
+
+    fn get_moves_select_bid_location(&self) -> Vec<i32> {
+        return self
+            .bids
+            .iter()
+            .enumerate()
+            .map(|(b, _)| BID_OFFSET + b as i32)
+            .collect();
+    }
+
+    pub fn apply_move(&mut self, action: i32) {
+        if !self.get_moves().contains(&action) {
+            panic!("Illegal move");
+        }
+        match self.state {
+            State::BidSelectBidCard => self.apply_move_bid_card(action),
+            State::BidSelectBidLocation => self.apply_move_bid_location(action),
+            _ => todo!("Implement remaining states"),
+        }
+    }
+
+    pub fn apply_move_bid_card(&mut self, action: i32) {
+        if action == PASS_BID {
+            self.current_player += 1;
+            return;
+        }
+        self.selected_card = Some(ID_TO_CARD.get(&action).unwrap().clone());
+        self.state = State::BidSelectBidLocation;
+    }
+
+    pub fn apply_move_bid_location(&mut self, action: i32) {
+        let card = self.pop_card(self.selected_card.unwrap().id);
+        self.bids[(action - BID_OFFSET) as usize] = Some(card.suit);
+        // TODO: Animate bid card to position
+        // TODO: switch state, if bid board is filled start the hand, if not continue to the next player
     }
 
     pub fn score_player(&mut self, player: usize) -> i32 {
@@ -572,6 +644,137 @@ mod tests {
                 scenario.name,
                 game.cards_won[0],
                 scenario.expected_score
+            );
+        }
+    }
+
+    struct GetBidMovesScenario {
+        name: String,
+        bids: [Option<Suit>; 4],
+        hand: Vec<Card>,
+        expected_moves_for_card_selection: Vec<i32>,
+        card_selection_move: i32,
+        expected_state_after_apply_move: State,
+        expected_next_player: usize,
+        expected_moves_after_card_selection: Option<Vec<i32>>,
+        bid_offset_move: Option<i32>,
+        expected_bids_after_bid_move: Option<[Option<Suit>; 4]>,
+    }
+
+    #[test]
+    pub fn test_get_moves_bid_phase() {
+        let red7 = Card {
+            id: 0,
+            suit: Suit::Red,
+            value: 7,
+        };
+
+        let orange8 = Card {
+            id: 1,
+            suit: Suit::Orange,
+            value: 8,
+        };
+
+        let purple5 = Card {
+            id: 2,
+            suit: Suit::Purple,
+            value: 5,
+        };
+
+        let scenarios = [
+            GetBidMovesScenario {
+                name: "No bids yet - any suit can be bid".to_string(),
+                bids: [None, None, None, None],
+                hand: vec![red7, orange8, purple5],
+                expected_moves_for_card_selection: vec![red7.id, orange8.id, purple5.id, PASS_BID],
+                card_selection_move: orange8.id,
+                expected_state_after_apply_move: State::BidSelectBidLocation,
+                expected_next_player: 0,
+                expected_moves_after_card_selection: Some(vec![
+                    BID_OFFSET,
+                    BID_OFFSET + 1,
+                    BID_OFFSET + 2,
+                    BID_OFFSET + 3,
+                ]),
+                bid_offset_move: Some(BID_OFFSET + 1),
+                expected_bids_after_bid_move: Some([None, Some(Suit::Orange), None, None]),
+            },
+            GetBidMovesScenario {
+                name: "Cards matching previous bid not available to bid".to_string(),
+                bids: [None, Some(Suit::Orange), None, None],
+                hand: vec![red7, orange8, purple5],
+                expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
+                card_selection_move: red7.id,
+                expected_state_after_apply_move: State::BidSelectBidLocation,
+                expected_next_player: 0,
+                expected_moves_after_card_selection: Some(vec![
+                    BID_OFFSET,
+                    BID_OFFSET + 1,
+                    BID_OFFSET + 2,
+                    BID_OFFSET + 3,
+                ]),
+                bid_offset_move: Some(BID_OFFSET),
+                expected_bids_after_bid_move: Some([
+                    Some(Suit::Red),
+                    Some(Suit::Orange),
+                    None,
+                    None,
+                ]),
+            },
+            GetBidMovesScenario {
+                name: "Pass should move to the next player".to_string(),
+                bids: [None, Some(Suit::Orange), None, None],
+                hand: vec![red7, orange8, purple5],
+                expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
+                card_selection_move: PASS_BID,
+                expected_state_after_apply_move: State::BidSelectBidCard,
+                expected_next_player: 1,
+                expected_moves_after_card_selection: None,
+                bid_offset_move: None,
+                expected_bids_after_bid_move: None,
+            },
+        ];
+
+        for scenario in scenarios {
+            let mut game = PalaGame::new();
+            game.current_player = 0;
+            game.state = State::BidSelectBidCard;
+            game.hands[game.current_player] = scenario.hand;
+            game.bids = scenario.bids;
+            let moves = game.get_moves();
+            assert_eq!(
+                moves, scenario.expected_moves_for_card_selection,
+                "Scenario: {}, Moves: {:?} Expected moves: {:?}",
+                scenario.name, moves, scenario.expected_moves_for_card_selection
+            );
+            game.apply_move(scenario.card_selection_move);
+            assert_eq!(
+                game.current_player, scenario.expected_next_player,
+                "Scenario: {}, Next player: {:?} Expected next player: {:?}",
+                scenario.name, game.current_player, scenario.expected_next_player,
+            );
+            assert_eq!(
+                game.state, scenario.expected_state_after_apply_move,
+                "Scenario: {}, State: {:?} Expected state: {:?}",
+                scenario.name, game.state, scenario.expected_state_after_apply_move,
+            );
+            let moves = game.get_moves();
+            if scenario.expected_moves_after_card_selection.is_none() {
+                continue;
+            }
+            let expected_moves = scenario.expected_moves_after_card_selection.unwrap();
+            assert_eq!(
+                moves, expected_moves,
+                "Scenario: {}, Moves: {:?} Expected moves: {:?}",
+                scenario.name, moves, expected_moves
+            );
+            let bid_offset_move = scenario.bid_offset_move.unwrap();
+            game.apply_move(bid_offset_move);
+            let expected_bids_after_bid_move = scenario.expected_bids_after_bid_move.unwrap();
+            assert_eq!(
+                game.bids, expected_bids_after_bid_move,
+                "Scenario: {}, Bids: {:?} Expected bids: {:?}",
+                scenario.name, game.bids, expected_bids_after_bid_move
             );
         }
     }
