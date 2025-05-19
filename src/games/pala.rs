@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 
 const HAND_SIZE: usize = 11;
 const PASS_BID: i32 = -1;
+// Used when selecting where to play cards (smearing, initial play)
+const PLAY_OFFSET: i32 = -50; // -50 0 player offset, -51 1 player offset, etc.
 const UNDO: i32 = -2; // Only the human player can undo their moves
 const CHOOSE_TO_WIN: i32 = -20; // Player chose to win after playing a tying card
 const CHOOSE_TO_LOSE: i32 = -21; // Player chose to lose after playing a tying card
@@ -221,6 +223,13 @@ pub struct PalaGame {
     pub cards_won: [Vec<Card>; PLAYER_COUNT],
     // Card selected for moves that require multiple actions
     pub selected_card: Option<Card>,
+    // Tracks which player is winning - in Pala ties are possible
+    // and the winning player is selected by the player who played
+    // the tying card
+    // Additionally, players' cards can be smeared by opponents
+    // causing a player who played a non-winning card to become the winner
+    // so we will recalculate the winner after each play
+    pub trick_winning_player: usize,
 }
 
 impl PalaGame {
@@ -251,10 +260,12 @@ impl PalaGame {
     pub fn deal(&mut self) {
         self.state = State::BidSelectBidCard;
         self.hands = [vec![], vec![], vec![], vec![]];
-        self.current_player = self.dealer;
-        self.lead_player = self.current_player;
         self.current_trick = [None; PLAYER_COUNT];
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
+        self.current_player = self.dealer;
+        self.lead_player = self.current_player;
+        // By definition the lead player will start out winning the trick
+        self.trick_winning_player = self.current_player;
         self.voids = [vec![], vec![], vec![], vec![]];
         let mut cards = PalaGame::deck();
         let shuffle_index = self.new_change();
@@ -345,6 +356,8 @@ impl PalaGame {
         match self.state {
             State::BidSelectBidCard => self.get_moves_select_bid_card(),
             State::BidSelectBidLocation => self.get_moves_select_bid_location(),
+            State::SelectCardToPlay => self.get_playable_cards(),
+            State::SelectLocationToPlay => self.get_locations_to_play(),
             _ => todo!("Implement remaining states"),
         }
     }
@@ -369,6 +382,39 @@ impl PalaGame {
             .collect()
     }
 
+    fn get_playable_cards(&self) -> Vec<i32> {
+        let lead_suit = self.get_lead_suit();
+        if lead_suit.is_none() {
+            let moves: Vec<i32> = self.hands[self.current_player]
+                .iter()
+                .filter(|c| Some(c.suit) == lead_suit)
+                .map(|c| c.id)
+                .collect();
+            if !moves.is_empty() {
+                return moves;
+            }
+        }
+        return self.current_player_card_ids();
+    }
+
+    fn get_locations_to_play(&self) -> Vec<i32> {
+        if self.lead_player == self.current_player {
+            return vec![PLAY_OFFSET + self.current_player as i32];
+        }
+        todo!("Need to implement this for non-leads")
+    }
+
+    pub fn get_lead_suit(&self) -> Option<Suit> {
+        self.current_trick[self.lead_player].map(|card| card.suit)
+    }
+
+    pub fn current_player_card_ids(&self) -> Vec<i32> {
+        self.hands[self.current_player]
+            .iter()
+            .map(|c| c.id)
+            .collect()
+    }
+
     pub fn apply_move(&mut self, action: i32) {
         if !self.get_moves().contains(&action) {
             panic!("Illegal move");
@@ -376,6 +422,8 @@ impl PalaGame {
         match self.state {
             State::BidSelectBidCard => self.apply_move_bid_card(action),
             State::BidSelectBidLocation => self.apply_move_bid_location(action),
+            State::SelectCardToPlay => self.apply_move_select_card_to_play(action),
+            State::SelectLocationToPlay => self.apply_move_select_location_to_play(action),
             _ => todo!("Implement remaining states"),
         }
     }
@@ -401,6 +449,25 @@ impl PalaGame {
             self.state = State::BidSelectBidCard;
             self.current_player = (self.current_player + 1) % PLAYER_COUNT;
         }
+    }
+
+    fn apply_move_select_card_to_play(&mut self, action: i32) {
+        self.selected_card = Some(ID_TO_CARD.get(&action).unwrap().clone());
+        self.state = State::SelectLocationToPlay;
+    }
+
+    fn apply_move_select_location_to_play(&mut self, action: i32) {
+        let card = self.pop_card(self.selected_card.unwrap().id);
+        // FIXME: assuming for now that the location is for the current player TDD
+        // in the future this will be
+        self.current_trick[self.current_player] = Some(card);
+        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+        self.state = State::SelectCardToPlay;
+        self.check_end_of_hand();
+    }
+
+    fn check_end_of_hand(&mut self) {
+        // TODO: check if the hand ends will do later TDD
     }
 
     pub fn score_player(&mut self, player: usize) -> i32 {
@@ -824,7 +891,7 @@ mod tests {
     }
 
     struct PlayCardMoves {
-        expected_move_options_before_move: Vec<i32>,
+        expected_moves_before: Vec<i32>,
         action: i32,
         expected_current_trick_after_move: [Option<Card>; PLAYER_COUNT],
         expected_state_after_move: State,
@@ -834,8 +901,101 @@ mod tests {
 
     struct PlayCardsScenario {
         name: String,
-        current_trick: [Option<Card>; 4],
+        current_trick: [Option<Card>; PLAYER_COUNT],
         hand: Vec<Card>,
-        moves_to_play: Vec<PlayCardMoves>,
+        play_card_moves: Vec<PlayCardMoves>,
+    }
+
+    #[test]
+    pub fn test_play_card_phase() {
+        let red7 = Card {
+            id: 0,
+            suit: Suit::Red,
+            value: 7,
+        };
+
+        let orange8 = Card {
+            id: 1,
+            suit: Suit::Orange,
+            value: 8,
+        };
+
+        let purple5 = Card {
+            id: 2,
+            suit: Suit::Purple,
+            value: 5,
+        };
+
+        let scenarios = [PlayCardsScenario {
+            name: "Lead any card".to_string(),
+            current_trick: [None, None, None, None],
+            hand: vec![red7, orange8, purple5],
+            play_card_moves: vec![
+                PlayCardMoves {
+                    expected_moves_before: vec![red7.id, orange8.id, purple5.id],
+                    action: red7.id,
+                    expected_current_trick_after_move: [None, None, None, None],
+                    expected_state_after_move: State::SelectLocationToPlay,
+                    expected_player_after_move: 3,
+                    expected_winning_player_after_move: 3,
+                },
+                PlayCardMoves {
+                    expected_moves_before: vec![PLAY_OFFSET + 3],
+                    action: PLAY_OFFSET + 3,
+                    expected_current_trick_after_move: [None, None, None, Some(red7)],
+                    expected_state_after_move: State::SelectCardToPlay,
+                    expected_player_after_move: 0,
+                    expected_winning_player_after_move: 3,
+                },
+            ],
+        }];
+
+        for scenario in scenarios {
+            let mut game = PalaGame::new();
+            game.current_player = 3;
+            game.lead_player = 3;
+            game.trick_winning_player = 3;
+            game.state = State::SelectCardToPlay;
+            game.hands[3] = scenario.hand;
+            game.current_trick = scenario.current_trick;
+            for pcm in scenario.play_card_moves {
+                let expected_moves = pcm.expected_moves_before;
+                let actual_moves = game.get_moves();
+                assert_eq!(
+                    actual_moves, expected_moves,
+                    "Scenario: {}, Actual moves: {:?} Expected moves: {:?}",
+                    scenario.name, actual_moves, expected_moves,
+                );
+                game.apply_move(pcm.action);
+                let actual_trick = game.current_trick;
+                let expected_trick = pcm.expected_current_trick_after_move;
+                assert_eq!(
+                    actual_trick, expected_trick,
+                    "Scenario: {}, Actual trick: {:?} Expected trick: {:?}",
+                    scenario.name, actual_trick, expected_trick,
+                );
+                let actual_state = game.state.clone();
+                let expected_state = pcm.expected_state_after_move;
+                assert_eq!(
+                    actual_state, expected_state,
+                    "Scenario: {}, Actual state: {:?} Expected state: {:?}",
+                    scenario.name, actual_state, expected_state,
+                );
+                let actual_player = game.current_player;
+                let expected_player = pcm.expected_player_after_move;
+                assert_eq!(
+                    actual_player, expected_player,
+                    "Scenario: {}, Actual player: {:?} Expected player: {:?}",
+                    scenario.name, actual_player, expected_player,
+                );
+                let actual_winning_player = game.trick_winning_player;
+                let expected_winning_player = pcm.expected_winning_player_after_move;
+                assert_eq!(
+                    actual_winning_player, expected_winning_player,
+                    "Scenario: {}, Actual winning player: {:?} Expected winning player: {:?}",
+                    scenario.name, actual_winning_player, expected_winning_player,
+                );
+            }
+        }
     }
 }
