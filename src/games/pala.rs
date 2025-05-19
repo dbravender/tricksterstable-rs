@@ -10,6 +10,7 @@ use std::{
 };
 
 use enum_iterator::{all, Sequence};
+use ismcts::IsmctsHandler;
 use rand::{seq::SliceRandom, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 
@@ -421,24 +422,26 @@ impl PalaGame {
     }
 
     fn cards_playable_as_a_smear(&self) -> Vec<Card> {
+        if self.current_player == self.trick_winning_player {
+            return vec![];
+        }
         let winning_suit = self.current_trick[self.trick_winning_player].unwrap().suit;
         if winning_suit.is_secondary() {
             return vec![];
         }
-        let mut smearable_suits: Vec<Suit> = vec![];
-        for suit in [Suit::Red, Suit::Blue, Suit::Yellow] {
-            if suit == winning_suit {
-                continue;
-            }
-            let smearable_suit = winning_suit.mixed_with(suit);
-            if !smearable_suits.contains(&smearable_suit) {
-                smearable_suits.push(smearable_suit);
-            }
-        }
+        let smearable_suits: HashSet<Suit> = self.hands[self.current_player]
+            .iter()
+            .filter(|c| c.suit.is_secondary())
+            .map(|c| c.suit)
+            .collect();
 
         self.hands[self.current_player]
             .iter()
-            .filter(|c| smearable_suits.contains(&c.suit))
+            .filter(|c| {
+                c.suit.is_primary()
+                    && c.suit != winning_suit
+                    && smearable_suits.contains(&c.suit.mixed_with(winning_suit))
+            })
             .map(|c| *c)
             .collect()
     }
@@ -477,7 +480,8 @@ impl PalaGame {
         if self.lead_player == self.current_player {
             return player_location;
         }
-        if !self.cards_playable_as_a_smear().is_empty() {
+        let selected_card = self.selected_card.unwrap();
+        if self.cards_playable_as_a_smear().contains(&selected_card) {
             return vec![
                 PLAY_OFFSET + self.trick_winning_player as i32,
                 PLAY_OFFSET + self.current_player as i32,
@@ -622,11 +626,38 @@ impl PalaGame {
     }
 
     fn end_of_trick(&mut self) {
-        // TODO: end the trick
+        self.lead_player = self.trick_winning_player;
+        self.current_player = self.lead_player;
+        let mut taken: Vec<Card> = self.current_trick.iter().filter_map(|&c| c).collect();
+        self.cards_won[self.trick_winning_player].append(&mut taken);
+        self.current_trick = [None; 4];
+        self.state = State::SelectCardToPlay;
+        if self.hands[self.lead_player].is_empty() {
+            self.end_of_hand();
+        }
     }
 
     fn end_of_hand(&mut self) {
-        // TODO: end the hand
+        self.set_suit_to_bid();
+        for player in 0..PLAYER_COUNT {
+            self.scores[player] += self.score_player(player);
+        }
+        self.cards_won = [vec![], vec![], vec![], vec![]];
+        let max_score = self.scores.iter().max().unwrap();
+        let min_score = self.scores.iter().min().unwrap();
+        if *max_score >= POINT_THRESHOLD {
+            // UI - emit game over
+            for player in 0..PLAYER_COUNT {
+                // Ties go to human player because they are 0
+                if self.scores[player] == *min_score {
+                    self.winner = Some(player);
+                    break;
+                }
+            }
+            return;
+        }
+        // Start a new hand if the game isn't over
+        self.deal();
     }
 
     pub fn score_player(&mut self, player: usize) -> i32 {
@@ -638,6 +669,9 @@ impl PalaGame {
                 .unwrap_or(&BidSpace::Missing)
                 .score_for_card(&card);
         }
+        // UI - animate and emit scoring per suit group
+        // TODO - automatically cancel highest point cards
+        // and animate the cancel card away with those cards
         return score;
     }
 
@@ -794,6 +828,66 @@ fn human_card_sorter(a: &Card, b: &Card) -> Ordering {
         Ordering::Greater => Ordering::Greater,
         Ordering::Equal => a.value.cmp(&b.value),
     }
+}
+
+impl ismcts::Game for PalaGame {
+    type Move = i32;
+    type PlayerTag = usize;
+    type MoveList = Vec<i32>;
+
+    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        // FIXME: implement determination for Pala
+    }
+
+    fn current_player(&self) -> Self::PlayerTag {
+        self.current_player
+    }
+
+    fn next_player(&self) -> Self::PlayerTag {
+        (self.current_player + 1) % PLAYER_COUNT
+    }
+
+    fn available_moves(&self) -> Self::MoveList {
+        self.get_moves()
+    }
+
+    fn make_move(&mut self, mov: &Self::Move) {
+        self.apply_move(*mov);
+    }
+
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        if self.scores == [0; 4] {
+            None
+        } else {
+            // High scores are bad
+            // Worst score for a single hand appears to be 60
+            // +FACE secondary (9 8 7 6 5 4 3 2) = 44
+            // +1 (8) +1 (8) = 16
+
+            let raw_score = self.scores[player] as f64;
+            let normalized = raw_score / 60.0; // [0.0 (best), 1.0 (worst)]
+
+            // Flip and apply exponential decay
+            let shaped = 1.0 - normalized.powf(2.0); // You can tune the exponent (e.g., 1.5, 2.0)
+
+            // Map to [-1.0, 1.0]
+            return Some((shaped * 2.0) - 1.0);
+        }
+    }
+}
+
+pub fn get_mcts_move(game: &PalaGame, iterations: i32, debug: bool) -> i32 {
+    let mut new_game = game.clone();
+    new_game.no_changes = true;
+    // reset scores for the simulation
+    new_game.scores = [0; 4];
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 8;
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
+    ismcts.best_move().expect("should have a move to make")
 }
 
 #[cfg(test)]
@@ -1169,7 +1263,7 @@ mod tests {
                         expected_winning_player_after_move: 2,
                     },
                     PlayCardMoves {
-                        expected_moves_before: vec![PLAY_OFFSET + 2, PLAY_OFFSET + 3],
+                        expected_moves_before: vec![PLAY_OFFSET + 3],
                         action: PLAY_OFFSET + 3,
                         expected_current_trick_after_move: [None, None, Some(red7), Some(red3)],
                         expected_state_after_move: State::SelectCardToPlay,
