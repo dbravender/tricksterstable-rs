@@ -4,8 +4,6 @@ Designer: Jeffrey Allers
 BoardGameGeek: https://boardgamegeek.com/boardgame/37441/pala
 */
 
-use once_cell::sync::Lazy;
-
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -32,14 +30,6 @@ const BID_CARDS: [BidSpace; PLAYER_COUNT] = [
     BidSpace::PlusOne,
     BidSpace::Cancel,
 ];
-
-static ID_TO_CARD: Lazy<HashMap<i32, Card>> = Lazy::new(|| {
-    let mut m = HashMap::new();
-    for card in PalaGame::deck().iter() {
-        m.insert(card.id, *card);
-    }
-    m
-});
 
 #[derive(
     Debug, Clone, Serialize, Sequence, Deserialize, PartialEq, Eq, Copy, Hash, PartialOrd, Ord,
@@ -526,7 +516,7 @@ impl PalaGame {
             self.advance_player();
             return;
         }
-        self.selected_card = Some(ID_TO_CARD.get(&action).unwrap().clone());
+        self.selected_card = Some(self.peek_card(action));
         self.state = State::BidSelectBidLocation;
     }
 
@@ -546,7 +536,6 @@ impl PalaGame {
     fn apply_move_select_card_to_play(&mut self, action: i32) {
         if action == SKIP_MIX {
             self.advance_player();
-            self.check_end_of_hand();
             return;
         }
         self.selected_card = Some(self.peek_card(action));
@@ -567,6 +556,16 @@ impl PalaGame {
             };
             self.next_id += 1;
             self.current_trick[self.trick_winning_player] = Some(new_card);
+            // Check if existing played cards beat the new smeared card
+            let start_winning_player = self.trick_winning_player;
+            for i in 1..=3 {
+                let index = (start_winning_player + i) % PLAYER_COUNT;
+                if let Some(card) = self.current_trick[index] {
+                    if card.beats(self.current_trick[self.trick_winning_player].unwrap()) {
+                        self.trick_winning_player = index;
+                    }
+                }
+            }
             // UI - emit animate current cards to smaller locations
             // UI - Create new smeared card of the secondary color
             self.state = State::SelectCardToPlay;
@@ -586,6 +585,8 @@ impl PalaGame {
                 value: target_card.value + card.value,
             };
             self.next_id += 1;
+            // UI - emit animate current cards to smaller locations
+            // UI - Create new smeared card of the secondary color
         }
 
         self.current_trick[self.current_player] = Some(card);
@@ -597,7 +598,6 @@ impl PalaGame {
                 self.state = State::SelectWinningOrLosing;
                 return;
             }
-            // FIXME: smeared card might not actually be winning, need to recalculate winner after smear
             if card.beats(target_card) {
                 self.trick_winning_player = self.current_player;
             }
@@ -606,9 +606,8 @@ impl PalaGame {
             self.state = State::SelectCardToPlay;
             return;
         }
-        self.advance_player();
         self.state = State::SelectCardToPlay;
-        self.check_end_of_hand();
+        self.advance_player();
     }
 
     fn apply_move_select_winning_or_losing(&mut self, action: i32) {
@@ -618,13 +617,16 @@ impl PalaGame {
             }
             _ => {}
         }
-        self.advance_player();
         self.state = State::SelectCardToPlay;
-        self.check_end_of_hand();
+        self.advance_player();
     }
 
-    fn check_end_of_hand(&mut self) {
-        // TODO: check if the hand ends will do later TDD
+    fn end_of_trick(&mut self) {
+        // TODO: end the trick
+    }
+
+    fn end_of_hand(&mut self) {
+        // TODO: end the hand
     }
 
     pub fn score_player(&mut self, player: usize) -> i32 {
@@ -647,7 +649,24 @@ impl PalaGame {
 
     #[inline]
     fn advance_player(&mut self) {
-        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+        let cards_per_player = self.hands.iter().map(|h| h.len());
+        if cards_per_player.filter(|c| *c > 0).count() <= 1 {
+            self.end_of_hand();
+            return;
+        }
+        let start_player = self.current_player;
+        loop {
+            self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+            if self.current_player == start_player {
+                self.end_of_trick();
+                break;
+            }
+            if self.hands[self.current_player].len() > 0
+                && self.current_trick[self.current_player].is_none()
+            {
+                break;
+            }
+        }
     }
 
     #[inline]
@@ -1096,8 +1115,14 @@ mod tests {
             value: 8,
         };
 
-        let blue5 = Card {
+        let purple9 = Card {
             id: 4,
+            suit: Suit::Purple,
+            value: 9,
+        };
+
+        let blue5 = Card {
+            id: 5,
             suit: Suit::Blue,
             value: 5,
         };
@@ -1260,6 +1285,57 @@ mod tests {
                         expected_state_after_move: State::SelectCardToPlay,
                         expected_player_after_move: 0,
                         expected_winning_player_after_move: 3,
+                    },
+                ],
+            },
+            PlayCardsScenario {
+                name: "Can and does smear - previously played card is higher".to_string(),
+                current_trick: [None, Some(purple9), Some(red3), None],
+                hand: vec![blue5, purple8],
+                lead_player: 2,
+                trick_winning_player: 2,
+                play_card_moves: vec![
+                    PlayCardMoves {
+                        expected_moves_before: vec![blue5.id, purple8.id],
+                        action: blue5.id,
+                        expected_current_trick_after_move: [None, Some(purple9), Some(red3), None],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![PLAY_OFFSET + 2, PLAY_OFFSET + 3],
+                        action: PLAY_OFFSET + 2,
+                        expected_current_trick_after_move: [
+                            None,
+                            Some(purple9),
+                            Some(Card {
+                                id: 100,
+                                value: 8,
+                                suit: Suit::Purple,
+                            }),
+                            None,
+                        ],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 1,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![purple8.id],
+                        action: purple8.id,
+                        expected_current_trick_after_move: [
+                            None,
+                            Some(purple9),
+                            Some(Card {
+                                id: 100,
+                                value: 8,
+                                suit: Suit::Purple,
+                            }),
+                            None,
+                        ],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 1,
                     },
                 ],
             },
