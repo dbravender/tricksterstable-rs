@@ -264,6 +264,7 @@ impl PalaGame {
     // Called at the start of a game and when a new hand is dealt
     pub fn deal(&mut self) {
         self.state = State::BidSelectBidCard;
+        self.bids = [None; PLAYER_COUNT];
         self.hands = [vec![], vec![], vec![], vec![]];
         self.current_trick = [None; PLAYER_COUNT];
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
