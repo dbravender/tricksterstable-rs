@@ -230,6 +230,9 @@ pub struct PalaGame {
     // causing a player who played a non-winning card to become the winner
     // so we will recalculate the winner after each play
     pub trick_winning_player: usize,
+    // When cards are smeared or mixed a new card object is spawned
+    // to track animations
+    pub next_id: i32,
 }
 
 impl PalaGame {
@@ -264,6 +267,7 @@ impl PalaGame {
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
+        self.next_id = 100;
         // By definition the lead player will start out winning the trick
         self.trick_winning_player = self.current_player;
         self.voids = [vec![], vec![], vec![], vec![]];
@@ -488,10 +492,25 @@ impl PalaGame {
 
     fn apply_move_select_location_to_play(&mut self, action: i32) {
         let card = self.pop_card(self.selected_card.unwrap().id);
-        // FIXME: assuming for now that the location is for the current player TDD
-        // in the future this will be
+        if self.trick_winning_player != self.current_player
+            && action - PLAY_OFFSET == self.trick_winning_player as i32
+        {
+            // Smearing
+            let target_card = self.current_trick[self.trick_winning_player].unwrap();
+            let new_card = Card {
+                id: self.next_id,
+                suit: target_card.suit.mixed_with(card.suit),
+                value: card.value + target_card.value,
+            };
+            self.current_trick[self.trick_winning_player] = Some(new_card);
+            // UI - emit animate current cards to smaller locations
+            // UI - Create new smeared card of the secondary color
+            self.state = State::SelectCardToPlay;
+            return;
+        }
         self.current_trick[self.current_player] = Some(card);
         self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+        // FIXME: this is where we need to allow mixes
         self.state = State::SelectCardToPlay;
         self.check_end_of_hand();
     }
@@ -1042,6 +1061,40 @@ mod tests {
                         expected_current_trick_after_move: [None, None, Some(red7), Some(blue5)],
                         expected_state_after_move: State::SelectCardToPlay,
                         expected_player_after_move: 0,
+                        expected_winning_player_after_move: 2,
+                    },
+                ],
+            },
+            PlayCardsScenario {
+                name: "Can and does smear".to_string(),
+                current_trick: [None, None, Some(red3), None],
+                hand: vec![blue5, purple8],
+                lead_player: 2,
+                trick_winning_player: 2,
+                play_card_moves: vec![
+                    PlayCardMoves {
+                        expected_moves_before: vec![blue5.id, purple8.id],
+                        action: blue5.id,
+                        expected_current_trick_after_move: [None, None, Some(red3), None],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![PLAY_OFFSET + 2, PLAY_OFFSET + 3],
+                        action: PLAY_OFFSET + 2,
+                        expected_current_trick_after_move: [
+                            None,
+                            None,
+                            Some(Card {
+                                id: 100,
+                                value: 8,
+                                suit: Suit::Purple,
+                            }),
+                            None,
+                        ],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 3,
                         expected_winning_player_after_move: 2,
                     },
                 ],
