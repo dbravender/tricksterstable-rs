@@ -122,6 +122,16 @@ pub struct Card {
     value: i32,
 }
 
+impl Card {
+    fn ties(&self, other: Card) -> bool {
+        self.suit == other.suit && self.value == other.value
+    }
+
+    fn beats(&self, other: Card) -> bool {
+        self.suit == other.suit && self.value > other.value
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum State {
@@ -362,6 +372,7 @@ impl PalaGame {
             State::BidSelectBidLocation => self.get_moves_select_bid_location(),
             State::SelectCardToPlay => self.get_playable_cards(),
             State::SelectLocationToPlay => self.get_locations_to_play(),
+            State::SelectWinningOrLosing => vec![CHOOSE_TO_WIN, CHOOSE_TO_LOSE],
             _ => todo!("Implement remaining states"),
         }
     }
@@ -458,6 +469,7 @@ impl PalaGame {
             State::BidSelectBidLocation => self.apply_move_bid_location(action),
             State::SelectCardToPlay => self.apply_move_select_card_to_play(action),
             State::SelectLocationToPlay => self.apply_move_select_location_to_play(action),
+            State::SelectWinningOrLosing => self.apply_move_select_winning_or_losing(action),
             _ => todo!("Implement remaining states"),
         }
     }
@@ -475,7 +487,6 @@ impl PalaGame {
         let card = self.pop_card(self.selected_card.unwrap().id);
         self.bids[(action - BID_OFFSET) as usize] = Some(card.suit);
         // TODO: Animate bid card to position
-        // TODO: switch state, if bid board is filled start the hand, if not continue to the next player
         if self.bids.iter().all(|x| x.is_some()) {
             self.state = State::SelectCardToPlay;
             self.current_player = self.dealer;
@@ -508,9 +519,34 @@ impl PalaGame {
             self.state = State::SelectCardToPlay;
             return;
         }
+        // UI - animate card to play location
         self.current_trick[self.current_player] = Some(card);
+        if self.trick_winning_player != self.current_player {
+            // When a tie occurs the player has to select if they are winning or losing
+            let target_card = self.current_trick[self.trick_winning_player].unwrap();
+            if target_card.ties(card) {
+                self.state = State::SelectWinningOrLosing;
+                return;
+            }
+            // FIXME: smeared card might not actually be winning, need to recalculate winner after smear
+            if card.beats(target_card) {
+                self.trick_winning_player = self.current_player;
+            }
+        }
         self.current_player = (self.current_player + 1) % PLAYER_COUNT;
         // FIXME: this is where we need to allow mixes
+        self.state = State::SelectCardToPlay;
+        self.check_end_of_hand();
+    }
+
+    fn apply_move_select_winning_or_losing(&mut self, action: i32) {
+        match action {
+            CHOOSE_TO_WIN => {
+                self.trick_winning_player = self.current_player;
+            }
+            _ => {}
+        }
+        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
         self.state = State::SelectCardToPlay;
         self.check_end_of_hand();
     }
@@ -1096,6 +1132,57 @@ mod tests {
                         expected_state_after_move: State::SelectCardToPlay,
                         expected_player_after_move: 3,
                         expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![purple8.id],
+                        action: purple8.id,
+                        expected_current_trick_after_move: [
+                            None,
+                            None,
+                            Some(Card {
+                                id: 100,
+                                value: 8,
+                                suit: Suit::Purple,
+                            }),
+                            None,
+                        ],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![PLAY_OFFSET + 3],
+                        action: PLAY_OFFSET + 3,
+                        expected_current_trick_after_move: [
+                            None,
+                            None,
+                            Some(Card {
+                                id: 100,
+                                value: 8,
+                                suit: Suit::Purple,
+                            }),
+                            Some(purple8),
+                        ],
+                        expected_state_after_move: State::SelectWinningOrLosing,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![CHOOSE_TO_WIN, CHOOSE_TO_LOSE],
+                        action: CHOOSE_TO_WIN,
+                        expected_current_trick_after_move: [
+                            None,
+                            None,
+                            Some(Card {
+                                id: 100,
+                                value: 8,
+                                suit: Suit::Purple,
+                            }),
+                            Some(purple8),
+                        ],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 0,
+                        expected_winning_player_after_move: 3,
                     },
                 ],
             },
