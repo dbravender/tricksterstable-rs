@@ -471,12 +471,11 @@ impl PalaGame {
             }
             let mixable_suit = base_suit.mixed_with(suit);
             if mixable_suit == winning_suit {
-                let x = self.hands[self.current_player]
+                return self.hands[self.current_player]
                     .iter()
                     .filter(|c| c.suit == suit)
                     .map(|c| *c)
                     .collect();
-                return x;
             }
         }
 
@@ -555,7 +554,7 @@ impl PalaGame {
     }
 
     fn apply_move_select_location_to_play(&mut self, action: i32) {
-        let card = self.pop_card(self.selected_card.unwrap().id);
+        let original_card = self.pop_card(self.selected_card.unwrap().id);
         if self.trick_winning_player != self.current_player
             && action - PLAY_OFFSET == self.trick_winning_player as i32
         {
@@ -563,9 +562,10 @@ impl PalaGame {
             let target_card = self.current_trick[self.trick_winning_player].unwrap();
             let new_card = Card {
                 id: self.next_id,
-                suit: target_card.suit.mixed_with(card.suit),
-                value: card.value + target_card.value,
+                suit: target_card.suit.mixed_with(original_card.suit),
+                value: original_card.value + target_card.value,
             };
+            self.next_id += 1;
             self.current_trick[self.trick_winning_player] = Some(new_card);
             // UI - emit animate current cards to smaller locations
             // UI - Create new smeared card of the secondary color
@@ -573,7 +573,23 @@ impl PalaGame {
             return;
         }
         // UI - animate card to play location
+        let mut card = original_card;
+
+        if self.current_trick[self.current_player].is_some()
+            && action - PLAY_OFFSET == self.current_player as i32
+        {
+            // Mixing
+            let target_card = self.current_trick[self.current_player].unwrap();
+            card = Card {
+                id: self.next_id,
+                suit: target_card.suit.mixed_with(card.suit),
+                value: target_card.value + card.value,
+            };
+            self.next_id += 1;
+        }
+
         self.current_trick[self.current_player] = Some(card);
+
         if self.trick_winning_player != self.current_player {
             // When a tie occurs the player has to select if they are winning or losing
             let target_card = self.current_trick[self.trick_winning_player].unwrap();
@@ -591,7 +607,6 @@ impl PalaGame {
             return;
         }
         self.advance_player();
-        // FIXME: this is where we need to allow mixes
         self.state = State::SelectCardToPlay;
         self.check_end_of_hand();
     }
@@ -1278,6 +1293,56 @@ mod tests {
                         expected_state_after_move: State::SelectCardToPlay,
                         expected_player_after_move: 0,
                         expected_winning_player_after_move: 2,
+                    },
+                ],
+            },
+            PlayCardsScenario {
+                name: "Can and does mix".to_string(),
+                current_trick: [None, None, Some(purple8), None],
+                hand: vec![blue5, red7],
+                lead_player: 2,
+                trick_winning_player: 2,
+                play_card_moves: vec![
+                    PlayCardMoves {
+                        expected_moves_before: vec![blue5.id, red7.id],
+                        action: blue5.id,
+                        expected_current_trick_after_move: [None, None, Some(purple8), None],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![PLAY_OFFSET + 3],
+                        action: PLAY_OFFSET + 3,
+                        expected_current_trick_after_move: [None, None, Some(purple8), Some(blue5)],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![red7.id, SKIP_MIX],
+                        action: red7.id,
+                        expected_current_trick_after_move: [None, None, Some(purple8), Some(blue5)],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 3,
+                        expected_winning_player_after_move: 2,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![PLAY_OFFSET + 3],
+                        action: PLAY_OFFSET + 3,
+                        expected_current_trick_after_move: [
+                            None,
+                            None,
+                            Some(purple8),
+                            Some(Card {
+                                id: 100,
+                                value: 12,
+                                suit: Suit::Purple,
+                            }),
+                        ],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 0,
+                        expected_winning_player_after_move: 3,
                     },
                 ],
             },
