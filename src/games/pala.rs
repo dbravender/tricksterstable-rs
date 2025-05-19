@@ -476,7 +476,7 @@ impl PalaGame {
 
     pub fn apply_move_bid_card(&mut self, action: i32) {
         if action == PASS_BID {
-            self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+            self.advance_player();
             return;
         }
         self.selected_card = Some(ID_TO_CARD.get(&action).unwrap().clone());
@@ -492,7 +492,7 @@ impl PalaGame {
             self.current_player = self.dealer;
         } else {
             self.state = State::BidSelectBidCard;
-            self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+            self.advance_player()
         }
     }
 
@@ -533,7 +533,7 @@ impl PalaGame {
                 self.trick_winning_player = self.current_player;
             }
         }
-        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+        self.advance_player();
         // FIXME: this is where we need to allow mixes
         self.state = State::SelectCardToPlay;
         self.check_end_of_hand();
@@ -546,7 +546,7 @@ impl PalaGame {
             }
             _ => {}
         }
-        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+        self.advance_player();
         self.state = State::SelectCardToPlay;
         self.check_end_of_hand();
     }
@@ -571,6 +571,11 @@ impl PalaGame {
     fn new_change(&mut self) -> usize {
         self.changes.push(vec![]);
         self.changes.len() - 1
+    }
+
+    #[inline]
+    fn advance_player(&mut self) {
+        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
     }
 
     #[inline]
