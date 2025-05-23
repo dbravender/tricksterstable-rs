@@ -3,6 +3,7 @@ pub mod hotdog;
 pub mod kaibosh;
 pub mod kansascity;
 pub mod pala;
+pub mod otter1p;
 pub mod so8;
 pub mod szs;
 pub mod torchlit;
