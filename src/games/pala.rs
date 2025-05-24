@@ -686,9 +686,54 @@ impl PalaGame {
         self.deal();
     }
 
+    fn reduce_with_cancel(&self, cards: &Vec<Card>) -> Vec<Card> {
+        let mut cancel_cards: Vec<Card> = vec![];
+        let mut other_cards: Vec<Card> = vec![];
+
+        for card in cards {
+            let bid_space = self
+                .suit_to_bid
+                .get(&card.suit)
+                .unwrap_or(&BidSpace::Missing);
+            match *bid_space {
+                BidSpace::Missing => {}
+                BidSpace::Cancel => cancel_cards.push(*card),
+                _ => other_cards.push(*card),
+            }
+        }
+
+        // Sort descending by score
+        other_cards.sort_by_key(|c| {
+            let score = self
+                .suit_to_bid
+                .get(&c.suit)
+                .unwrap_or(&BidSpace::Missing)
+                .score_for_card(c);
+            score
+        });
+
+        // Remove one card for each cancel
+        for _ in 0..cancel_cards.len() {
+            if other_cards.is_empty() {
+                // No more cards on which to apply cancel cards
+                break;
+            }
+            // Each cancel card removes the highest other card and is itself removed
+            cancel_cards.pop();
+            other_cards.pop();
+        }
+
+        // Add remaining cancel cards back
+        other_cards.extend(cancel_cards);
+
+        other_cards
+    }
+
     pub fn score_player(&mut self, player: usize) -> i32 {
+        let remaining_cards = self.reduce_with_cancel(&self.cards_won[player]);
+
         let mut score: i32 = 0;
-        for card in self.cards_won[player].iter() {
+        for card in remaining_cards.iter() {
             score += self
                 .suit_to_bid
                 .get(&card.suit)
@@ -1012,6 +1057,116 @@ mod tests {
                     value: 5,
                 }],
                 expected_score: -1,
+            },
+            ScoreScenario {
+                name: "cancel removes highest scoring card".to_string(),
+                cards_won: vec![
+                    Card {
+                        id: 0,
+                        suit: Suit::Green,
+                        value: 1,
+                    }, // cancel
+                    Card {
+                        id: 1,
+                        suit: Suit::Orange,
+                        value: 9,
+                    }, // +face
+                    Card {
+                        id: 2,
+                        suit: Suit::Red,
+                        value: 4,
+                    }, // +1
+                ],
+                expected_score: 1, // Orange 9 is canceled, Red gives +1, cancel is consumed (0)
+            },
+            ScoreScenario {
+                name: "cancel removes highest of multiple +face".to_string(),
+                cards_won: vec![
+                    Card {
+                        id: 0,
+                        suit: Suit::Green,
+                        value: 1,
+                    }, // cancel
+                    Card {
+                        id: 1,
+                        suit: Suit::Orange,
+                        value: 7,
+                    }, // +face
+                    Card {
+                        id: 2,
+                        suit: Suit::Orange,
+                        value: 5,
+                    }, // +face
+                ],
+                expected_score: 5, // 7 is canceled, 5 is scored
+            },
+            ScoreScenario {
+                name: "unused cancel scores -1".to_string(),
+                cards_won: vec![
+                    Card {
+                        id: 0,
+                        suit: Suit::Green,
+                        value: 1,
+                    }, // cancel
+                    Card {
+                        id: 1,
+                        suit: Suit::Blue,
+                        value: 2,
+                    }, // unbid
+                ],
+                expected_score: -1, // cancel is not used, unbid scores 0
+            },
+            ScoreScenario {
+                name: "two cancels remove top two".to_string(),
+                cards_won: vec![
+                    Card {
+                        id: 0,
+                        suit: Suit::Green,
+                        value: 1,
+                    }, // cancel
+                    Card {
+                        id: 1,
+                        suit: Suit::Green,
+                        value: 2,
+                    }, // cancel
+                    Card {
+                        id: 2,
+                        suit: Suit::Orange,
+                        value: 7,
+                    }, // +face
+                    Card {
+                        id: 3,
+                        suit: Suit::Orange,
+                        value: 6,
+                    }, // +face
+                    Card {
+                        id: 4,
+                        suit: Suit::Red,
+                        value: 3,
+                    }, // +1
+                ],
+                expected_score: 1, // Orange 7 and 6 are canceled, Red gives +1, cancels are consumed
+            },
+            ScoreScenario {
+                name: "more cancels than scoring cards".to_string(),
+                cards_won: vec![
+                    Card {
+                        id: 0,
+                        suit: Suit::Green,
+                        value: 1,
+                    }, // cancel
+                    Card {
+                        id: 1,
+                        suit: Suit::Green,
+                        value: 2,
+                    }, // cancel
+                    Card {
+                        id: 2,
+                        suit: Suit::Red,
+                        value: 3,
+                    }, // +1
+                ],
+                expected_score: -1, // One cancel removes Red, other cancel is unused
             },
         ];
 
