@@ -194,6 +194,7 @@ impl Game {
         self.state = State::Discard;
         self.current_trick = [None, None, None];
         self.draw_players_remaining = (0..3).collect();
+        self.lead_suit = None;
         self.tricks_taken = [0, 0, 0];
         self.hands = [vec![], vec![], vec![]];
         self.draw_decks = [vec![], vec![], vec![]];
