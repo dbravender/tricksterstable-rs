@@ -391,11 +391,16 @@ impl PalaGame {
     }
 
     fn get_moves_select_bid_location(&self) -> Vec<i32> {
-        self.bids
+        let mut bid_locations: Vec<i32> = self
+            .bids
             .iter()
             .enumerate()
             .filter_map(|(i, bid)| bid.is_none().then(|| BID_OFFSET + i as i32))
-            .collect()
+            .collect();
+        if self.human_player == Some(self.current_player) {
+            bid_locations.push(UNDO);
+        }
+        return bid_locations;
     }
 
     fn get_playable_cards(&self) -> Vec<i32> {
@@ -529,6 +534,11 @@ impl PalaGame {
     }
 
     pub fn apply_move_bid_location(&mut self, action: i32) {
+        if action == UNDO {
+            self.selected_card = None;
+            self.state = State::BidSelectBidCard;
+            return;
+        }
         let card = self.pop_card(self.selected_card.unwrap().id);
         self.bids[(action - BID_OFFSET) as usize] = Some(card.suit);
         // TODO: Animate bid card to position
@@ -1021,6 +1031,7 @@ mod tests {
     struct GetBidMovesScenario {
         name: String,
         bids: [Option<Suit>; PLAYER_COUNT],
+        current_player: usize,
         hand: Vec<Card>,
         expected_moves_for_card_selection: Vec<i32>,
         card_selection_move: i32,
@@ -1056,6 +1067,7 @@ mod tests {
             GetBidMovesScenario {
                 name: "No bids yet - any suit can be bid".to_string(),
                 bids: [None, None, None, None],
+                current_player: 3,
                 hand: vec![red7, orange8, purple5],
                 expected_moves_for_card_selection: vec![red7.id, orange8.id, purple5.id, PASS_BID],
                 card_selection_move: orange8.id,
@@ -1074,6 +1086,7 @@ mod tests {
             GetBidMovesScenario {
                 name: "Cards matching previous bid not available to bid".to_string(),
                 bids: [None, Some(Suit::Orange), None, None],
+                current_player: 3,
                 hand: vec![red7, orange8, purple5],
                 expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
                 card_selection_move: red7.id,
@@ -1096,6 +1109,7 @@ mod tests {
             GetBidMovesScenario {
                 name: "Pass should move to the next player".to_string(),
                 bids: [None, Some(Suit::Orange), None, None],
+                current_player: 3,
                 hand: vec![red7, orange8, purple5],
                 expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
                 card_selection_move: PASS_BID,
@@ -1114,6 +1128,7 @@ mod tests {
                     Some(Suit::Yellow),
                     None,
                 ],
+                current_player: 3,
                 hand: vec![red7, orange8, purple5],
                 expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
                 card_selection_move: red7.id,
@@ -1129,11 +1144,35 @@ mod tests {
                 ]),
                 expected_state_after_bid_move: Some(State::SelectCardToPlay),
             },
+            GetBidMovesScenario {
+                name: "Human player can undo bid card selection".to_string(),
+                bids: [
+                    Some(Suit::Green),
+                    Some(Suit::Orange),
+                    Some(Suit::Yellow),
+                    None,
+                ],
+                current_player: 1,
+                hand: vec![red7, orange8, purple5],
+                expected_moves_for_card_selection: vec![red7.id, purple5.id, PASS_BID],
+                card_selection_move: red7.id,
+                expected_state_after_apply_move: State::BidSelectBidLocation,
+                expected_next_player: 1,
+                expected_moves_after_card_selection: Some(vec![BID_OFFSET + 3, UNDO]),
+                bid_offset_move: Some(UNDO),
+                expected_bids_after_bid_move: Some([
+                    Some(Suit::Green),
+                    Some(Suit::Orange),
+                    Some(Suit::Yellow),
+                    None,
+                ]),
+                expected_state_after_bid_move: Some(State::BidSelectBidCard),
+            },
         ];
 
         for scenario in scenarios {
-            let mut game = PalaGame::new();
-            game.current_player = 3;
+            let mut game = PalaGame::new_with_human_player(1);
+            game.current_player = scenario.current_player;
             game.state = State::BidSelectBidCard;
             game.hands[game.current_player] = scenario.hand;
             game.bids = scenario.bids;
