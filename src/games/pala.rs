@@ -406,6 +406,9 @@ impl PalaGame {
                 .map(|&c| c.id)
                 .collect();
             plays.push(SKIP_MIX);
+            if self.human_player == Some(self.current_player) {
+                plays.push(UNDO);
+            }
             return plays;
         }
         let lead_suit = self.get_lead_suit();
@@ -539,6 +542,13 @@ impl PalaGame {
     }
 
     fn apply_move_select_card_to_play(&mut self, action: i32) {
+        if action == UNDO {
+            if let Some(card) = self.current_trick[self.current_player].take() {
+                self.hands[self.current_player].push(card);
+                self.reorder_hand(self.current_player, true);
+            }
+            return;
+        }
         if action == SKIP_MIX {
             self.advance_player();
             return;
@@ -1550,6 +1560,40 @@ mod tests {
                         expected_moves_before: vec![PLAY_OFFSET, PLAY_OFFSET + 1, UNDO],
                         action: UNDO,
                         expected_current_trick_after_move: [Some(red3), None, None, None],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 1,
+                        expected_winning_player_after_move: 0,
+                    },
+                ],
+            },
+            PlayCardsScenario {
+                name: "Human player undo mix".to_string(),
+                current_trick: [Some(purple8), None, None, None],
+                hand: vec![blue5, red7],
+                current_player: 1,
+                lead_player: 0,
+                trick_winning_player: 0,
+                play_card_moves: vec![
+                    PlayCardMoves {
+                        expected_moves_before: vec![blue5.id, red7.id],
+                        action: blue5.id,
+                        expected_current_trick_after_move: [Some(purple8), None, None, None],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 1,
+                        expected_winning_player_after_move: 0,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![PLAY_OFFSET + 1, UNDO],
+                        action: PLAY_OFFSET + 1,
+                        expected_current_trick_after_move: [Some(purple8), Some(blue5), None, None],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 1,
+                        expected_winning_player_after_move: 0,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![red7.id, SKIP_MIX, UNDO],
+                        action: UNDO,
+                        expected_current_trick_after_move: [Some(purple8), None, None, None],
                         expected_state_after_move: State::SelectCardToPlay,
                         expected_player_after_move: 1,
                         expected_winning_player_after_move: 0,
