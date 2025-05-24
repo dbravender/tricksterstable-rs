@@ -477,18 +477,18 @@ impl PalaGame {
     }
 
     fn get_locations_to_play(&self) -> Vec<i32> {
-        let player_location = vec![PLAY_OFFSET + self.current_player as i32];
         if self.lead_player == self.current_player {
-            return player_location;
+            return vec![PLAY_OFFSET + self.current_player as i32];
+        }
+        let mut locations = vec![PLAY_OFFSET + self.current_player as i32];
+        if self.human_player == Some(self.current_player) {
+            locations.push(UNDO);
         }
         let selected_card = self.selected_card.unwrap();
         if self.cards_playable_as_a_smear().contains(&selected_card) {
-            return vec![
-                PLAY_OFFSET + self.trick_winning_player as i32,
-                PLAY_OFFSET + self.current_player as i32,
-            ];
+            locations.insert(0, PLAY_OFFSET + self.trick_winning_player as i32);
         }
-        return player_location;
+        return locations;
     }
 
     pub fn get_lead_suit(&self) -> Option<Suit> {
@@ -548,6 +548,11 @@ impl PalaGame {
     }
 
     fn apply_move_select_location_to_play(&mut self, action: i32) {
+        if action == UNDO {
+            self.selected_card = None;
+            self.state = State::SelectCardToPlay;
+            return;
+        }
         let original_card = self.pop_card(self.selected_card.unwrap().id);
         if self.trick_winning_player != self.current_player
             && action - PLAY_OFFSET == self.trick_winning_player as i32
@@ -1179,6 +1184,7 @@ mod tests {
         name: String,
         current_trick: [Option<Card>; PLAYER_COUNT],
         trick_winning_player: usize,
+        current_player: usize,
         lead_player: usize,
         hand: Vec<Card>,
         play_card_moves: Vec<PlayCardMoves>,
@@ -1227,6 +1233,7 @@ mod tests {
                 name: "Lead any card".to_string(),
                 current_trick: [None, None, None, None],
                 hand: vec![red7, orange8, purple8],
+                current_player: 3,
                 lead_player: 3,
                 trick_winning_player: 3,
                 play_card_moves: vec![
@@ -1252,6 +1259,7 @@ mod tests {
                 name: "Must follow".to_string(),
                 current_trick: [None, None, Some(red7), None],
                 hand: vec![red3, orange8, purple8],
+                current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
@@ -1277,6 +1285,7 @@ mod tests {
                 name: "Can smear but chooses not to".to_string(),
                 current_trick: [None, None, Some(red7), None],
                 hand: vec![blue5, purple8],
+                current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
@@ -1302,6 +1311,7 @@ mod tests {
                 name: "Can and does smear".to_string(),
                 current_trick: [None, None, Some(red3), None],
                 hand: vec![blue5, purple8],
+                current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
@@ -1387,6 +1397,7 @@ mod tests {
                 name: "Can and does smear - previously played card is higher".to_string(),
                 current_trick: [None, Some(purple9), Some(red3), None],
                 hand: vec![blue5, purple8],
+                current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
@@ -1438,6 +1449,7 @@ mod tests {
                 name: "Can mix but chooses not to".to_string(),
                 current_trick: [None, None, Some(purple8), None],
                 hand: vec![blue5, red7],
+                current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
@@ -1471,6 +1483,7 @@ mod tests {
                 name: "Can and does mix".to_string(),
                 current_trick: [None, None, Some(purple8), None],
                 hand: vec![blue5, red7],
+                current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
@@ -1517,15 +1530,41 @@ mod tests {
                     },
                 ],
             },
+            PlayCardsScenario {
+                name: "Human player undo smear".to_string(),
+                current_trick: [Some(red3), None, None, None],
+                hand: vec![blue5, purple8],
+                current_player: 1,
+                lead_player: 0,
+                trick_winning_player: 0,
+                play_card_moves: vec![
+                    PlayCardMoves {
+                        expected_moves_before: vec![blue5.id, purple8.id],
+                        action: blue5.id,
+                        expected_current_trick_after_move: [Some(red3), None, None, None],
+                        expected_state_after_move: State::SelectLocationToPlay,
+                        expected_player_after_move: 1,
+                        expected_winning_player_after_move: 0,
+                    },
+                    PlayCardMoves {
+                        expected_moves_before: vec![PLAY_OFFSET, PLAY_OFFSET + 1, UNDO],
+                        action: UNDO,
+                        expected_current_trick_after_move: [Some(red3), None, None, None],
+                        expected_state_after_move: State::SelectCardToPlay,
+                        expected_player_after_move: 1,
+                        expected_winning_player_after_move: 0,
+                    },
+                ],
+            },
         ];
 
         for scenario in scenarios {
-            let mut game = PalaGame::new();
-            game.current_player = 3;
+            let mut game = PalaGame::new_with_human_player(1);
+            game.current_player = scenario.current_player;
             game.lead_player = scenario.lead_player;
             game.trick_winning_player = scenario.trick_winning_player;
             game.state = State::SelectCardToPlay;
-            game.hands[3] = scenario.hand;
+            game.hands[game.current_player] = scenario.hand;
             game.current_trick = scenario.current_trick;
             for pcm in scenario.play_card_moves {
                 let expected_moves = pcm.expected_moves_before;
