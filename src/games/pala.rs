@@ -197,8 +197,10 @@ pub struct PalaGame {
     pub current_player: usize, // 0 - 3
     // Player who led the current trick
     pub lead_player: usize,
-    // Cards each player has played in the current trick
+    // Cards each player has played in the current trick (includes spawned smeared and mixed cards)
     pub current_trick: [Option<Card>; PLAYER_COUNT],
+    // Actual cards in the trick
+    pub actual_trick_cards: Vec<Card>,
     // Cards in each player's hand
     pub hands: [Vec<Card>; PLAYER_COUNT],
     // Voids revealed when a player couldn't follow a lead card (used during determination)
@@ -574,6 +576,7 @@ impl PalaGame {
             return;
         }
         let original_card = self.pop_card(self.selected_card.unwrap().id);
+        self.actual_trick_cards.push(original_card.clone());
         if self.trick_winning_player != self.current_player
             && action - PLAY_OFFSET == self.trick_winning_player as i32
         {
@@ -666,7 +669,7 @@ impl PalaGame {
     fn end_of_trick(&mut self) {
         self.lead_player = self.trick_winning_player;
         self.current_player = self.lead_player;
-        let mut taken: Vec<Card> = self.current_trick.iter().filter_map(|&c| c).collect();
+        let mut taken: Vec<Card> = self.actual_trick_cards.clone();
         let index = self.new_change();
         for card in taken.iter() {
             self.add_change(
@@ -682,6 +685,7 @@ impl PalaGame {
         }
         self.cards_won[self.trick_winning_player].append(&mut taken);
         self.current_trick = [None; 4];
+        self.actual_trick_cards = vec![];
         self.state = State::SelectCardToPlay;
         if self.hands[self.lead_player].is_empty() {
             self.end_of_hand();
