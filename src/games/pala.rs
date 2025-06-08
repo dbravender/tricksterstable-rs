@@ -647,6 +647,8 @@ impl PalaGame {
             );
         }
 
+        self.reorder_hand(self.current_player, false);
+
         self.current_trick[self.current_player] = Some(card);
 
         if self.trick_winning_player != self.current_player {
