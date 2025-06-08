@@ -73,12 +73,12 @@ impl BidSpace {
 #[serde(rename_all = "camelCase")]
 pub enum Suit {
     #[default]
-    Blue = 0,
-    Red = 1,
+    Red = 0,
+    Orange = 1,
     Yellow = 2,
     Green = 3,
-    Purple = 4,
-    Orange = 5,
+    Blue = 4,
+    Purple = 5,
 }
 
 impl Suit {
