@@ -151,6 +151,7 @@ enum Location {
     Score,
     ReorderHand,
     Message,
+    BurnCards,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -170,6 +171,7 @@ pub enum ChangeType {
     GameOver,
     Reorder,
     Message,
+    BurnCards,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -313,6 +315,17 @@ impl PalaGame {
                 );
                 self.hands[player].push(card);
             }
+        }
+        for card in cards {
+            self.add_change(
+                deal_index,
+                Change {
+                    change_type: ChangeType::BurnCards,
+                    object_id: card.id,
+                    dest: Location::BurnCards,
+                    ..Default::default()
+                },
+            );
         }
         for player in 0..PLAYER_COUNT {
             self.sort_hand(player);
