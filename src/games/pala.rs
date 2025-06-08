@@ -511,6 +511,7 @@ impl PalaGame {
     }
 
     pub fn apply_move(&mut self, action: i32) {
+        self.changes = vec![];
         if !self.get_moves().contains(&action) {
             panic!("Illegal move");
         }
@@ -520,7 +521,6 @@ impl PalaGame {
             State::SelectCardToPlay => self.apply_move_select_card_to_play(action),
             State::SelectLocationToPlay => self.apply_move_select_location_to_play(action),
             State::SelectWinningOrLosing => self.apply_move_select_winning_or_losing(action),
-            _ => todo!("Implement remaining states"),
         }
     }
 
@@ -601,7 +601,8 @@ impl PalaGame {
             self.state = State::SelectCardToPlay;
             return;
         }
-        // UI - animate card to play location
+
+        let index = self.new_change();
         let mut card = original_card;
 
         if self.current_trick[self.current_player].is_some()
@@ -617,6 +618,17 @@ impl PalaGame {
             self.next_id += 1;
             // UI - emit animate current cards to smaller locations
             // UI - Create new smeared card of the secondary color
+        } else {
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::Play,
+                    object_id: card.id,
+                    dest: Location::Play,
+                    player: self.current_player,
+                    ..Default::default()
+                },
+            );
         }
 
         self.current_trick[self.current_player] = Some(card);
@@ -655,6 +667,19 @@ impl PalaGame {
         self.lead_player = self.trick_winning_player;
         self.current_player = self.lead_player;
         let mut taken: Vec<Card> = self.current_trick.iter().filter_map(|&c| c).collect();
+        let index = self.new_change();
+        for card in taken.iter() {
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::TricksToWinner,
+                    dest: Location::TricksTaken,
+                    player: self.trick_winning_player,
+                    object_id: card.id,
+                    ..Default::default()
+                },
+            );
+        }
         self.cards_won[self.trick_winning_player].append(&mut taken);
         self.current_trick = [None; 4];
         self.state = State::SelectCardToPlay;
