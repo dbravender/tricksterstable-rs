@@ -152,6 +152,8 @@ enum Location {
     ReorderHand,
     Message,
     BurnCards,
+    PlayCombine,
+    SpawnNewCard,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -188,6 +190,7 @@ pub struct Change {
     length: usize,
     highlight: bool,
     message: Option<String>,
+    card: Option<Card>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -588,17 +591,17 @@ impl PalaGame {
             self.state = State::SelectCardToPlay;
             return;
         }
-        let original_card = self.pop_card(self.selected_card.unwrap().id);
-        self.actual_trick_cards.push(original_card.clone());
+        let left_card = self.pop_card(self.selected_card.unwrap().id);
+        self.actual_trick_cards.push(left_card.clone());
         if self.trick_winning_player != self.current_player
             && action - PLAY_OFFSET == self.trick_winning_player as i32
         {
             // Smearing
-            let target_card = self.current_trick[self.trick_winning_player].unwrap();
+            let right_card = self.current_trick[self.trick_winning_player].unwrap();
             let new_card = Card {
                 id: self.next_id,
-                suit: target_card.suit.mixed_with(original_card.suit),
-                value: original_card.value + target_card.value,
+                suit: right_card.suit.mixed_with(left_card.suit),
+                value: left_card.value + right_card.value,
             };
             self.next_id += 1;
             self.current_trick[self.trick_winning_player] = Some(new_card);
@@ -612,6 +615,7 @@ impl PalaGame {
                     }
                 }
             }
+            self.animate_combine(self.trick_winning_player, new_card, left_card, right_card);
             // UI - emit animate current cards to smaller locations
             // UI - Create new smeared card of the secondary color
             self.state = State::SelectCardToPlay;
@@ -619,7 +623,7 @@ impl PalaGame {
         }
 
         let index = self.new_change();
-        let mut card = original_card;
+        let mut card = left_card;
 
         if self.current_trick[self.current_player].is_some()
             && action - PLAY_OFFSET == self.current_player as i32
@@ -832,6 +836,65 @@ impl PalaGame {
             return;
         }
         self.hands[player].sort_by(human_card_sorter);
+    }
+
+    pub fn combine_sort(left_card: Card, right_card: Card) -> (Card, Card) {
+        // Make the order of the cards match the text on the cards
+        match (left_card.suit, right_card.suit) {
+            (Suit::Yellow, Suit::Blue) => (right_card, left_card),
+            (Suit::Blue, Suit::Red) => (right_card, left_card),
+            (Suit::Red, Suit::Yellow) => (right_card, left_card),
+            _ => (left_card, right_card),
+        }
+    }
+
+    #[inline]
+    pub fn animate_combine(
+        &mut self,
+        player_offset: usize,
+        new_card: Card,
+        left_card: Card,
+        right_card: Card,
+    ) {
+        let (left_card, right_card) = PalaGame::combine_sort(left_card, right_card);
+        let index = self.new_change();
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Play,
+                dest: Location::PlayCombine,
+                object_id: left_card.id,
+                player: player_offset,
+                offset: 0,
+                length: 2,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Play,
+                dest: Location::PlayCombine,
+                object_id: right_card.id,
+                player: player_offset,
+                offset: 1,
+                length: 2,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Play,
+                dest: Location::SpawnNewCard,
+                object_id: new_card.id,
+                card: Some(new_card),
+                player: player_offset,
+                offset: 0,
+                length: 2,
+                ..Default::default()
+            },
+        );
     }
 
     #[inline]
@@ -1886,6 +1949,73 @@ mod tests {
                     scenario.name, actual_winning_player, expected_winning_player,
                 );
             }
+        }
+    }
+
+    struct CombineSortScenario {
+        name: String,
+        cards: [Card; 2],
+        expected_order: [Card; 2],
+    }
+
+    #[test]
+    fn test_combine_sort() {
+        let red1 = Card {
+            id: 0,
+            suit: Suit::Red,
+            value: 1,
+        };
+        let yellow1 = Card {
+            id: 2,
+            suit: Suit::Yellow,
+            value: 2,
+        };
+        let blue1 = Card {
+            id: 4,
+            suit: Suit::Blue,
+            value: 1,
+        };
+        let scenarios = [
+            CombineSortScenario {
+                name: "GREEN -> BLUE + YELLOW incorrect order".to_string(),
+                cards: [yellow1, blue1],
+                expected_order: [blue1, yellow1],
+            },
+            CombineSortScenario {
+                name: "GREEN -> BLUE + YELLOW correct order".to_string(),
+                cards: [blue1, yellow1],
+                expected_order: [blue1, yellow1],
+            },
+            CombineSortScenario {
+                name: "ORANGE -> YELLOW + RED incorrect order".to_string(),
+                cards: [red1, yellow1],
+                expected_order: [yellow1, red1],
+            },
+            CombineSortScenario {
+                name: "ORANGE -> YELLOW + RED correct order".to_string(),
+                cards: [yellow1, red1],
+                expected_order: [yellow1, red1],
+            },
+            CombineSortScenario {
+                name: "PURPLE -> RED + BLUE incorrect order".to_string(),
+                cards: [blue1, red1],
+                expected_order: [red1, blue1],
+            },
+            CombineSortScenario {
+                name: "PURPLE -> RED + BLUE correct order".to_string(),
+                cards: [red1, blue1],
+                expected_order: [red1, blue1],
+            },
+        ];
+        for scenario in scenarios {
+            let new_cards = PalaGame::combine_sort(scenario.cards[0], scenario.cards[1]);
+            let expected = (scenario.expected_order[0], scenario.expected_order[1]);
+            let actual = new_cards;
+            assert_eq!(
+                actual, expected,
+                "Scenario: {}, Actual player: {:?} Expected player: {:?}",
+                scenario.name, actual, expected,
+            );
         }
     }
 }
