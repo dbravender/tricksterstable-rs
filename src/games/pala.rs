@@ -702,6 +702,21 @@ impl PalaGame {
                 },
             );
         }
+        // Discard spawned combined cards to make it clear that they will not score
+        for card in self.current_trick.clone().iter().filter_map(|c| c.as_ref()) {
+            if card.id < 100 {
+                continue;
+            }
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::BurnCards,
+                    dest: Location::BurnCards,
+                    object_id: card.id,
+                    ..Default::default()
+                },
+            );
+        }
         self.cards_won[self.trick_winning_player].append(&mut taken);
         self.current_trick = [None; 4];
         self.actual_trick_cards = vec![];
