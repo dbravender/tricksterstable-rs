@@ -862,6 +862,19 @@ impl PalaGame {
             index,
             Change {
                 change_type: ChangeType::Play,
+                dest: Location::SpawnNewCard,
+                object_id: new_card.id,
+                card: Some(new_card),
+                player: player_offset,
+                offset: 0,
+                length: 2,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Play,
                 dest: Location::PlayCombine,
                 object_id: left_card.id,
                 player: player_offset,
@@ -878,19 +891,6 @@ impl PalaGame {
                 object_id: right_card.id,
                 player: player_offset,
                 offset: 1,
-                length: 2,
-                ..Default::default()
-            },
-        );
-        self.add_change(
-            index,
-            Change {
-                change_type: ChangeType::Play,
-                dest: Location::SpawnNewCard,
-                object_id: new_card.id,
-                card: Some(new_card),
-                player: player_offset,
-                offset: 0,
                 length: 2,
                 ..Default::default()
             },
