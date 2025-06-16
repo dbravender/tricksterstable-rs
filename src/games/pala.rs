@@ -154,6 +154,7 @@ enum Location {
     BurnCards,
     PlayCombine,
     SpawnNewCard,
+    DeleteCard,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -174,6 +175,7 @@ pub enum ChangeType {
     Reorder,
     Message,
     BurnCards,
+    DeleteCard,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -710,8 +712,8 @@ impl PalaGame {
             self.add_change(
                 index,
                 Change {
-                    change_type: ChangeType::BurnCards,
-                    dest: Location::BurnCards,
+                    change_type: ChangeType::DeleteCard,
+                    dest: Location::DeleteCard,
                     object_id: card.id,
                     ..Default::default()
                 },
