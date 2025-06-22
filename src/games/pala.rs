@@ -394,7 +394,6 @@ impl PalaGame {
             State::SelectCardToPlay => self.get_playable_cards(),
             State::SelectLocationToPlay => self.get_locations_to_play(),
             State::SelectWinningOrLosing => vec![CHOOSE_TO_WIN, CHOOSE_TO_LOSE],
-            _ => todo!("Implement remaining states"),
         }
     }
 
@@ -542,6 +541,9 @@ impl PalaGame {
             State::SelectLocationToPlay => self.apply_move_select_location_to_play(action),
             State::SelectWinningOrLosing => self.apply_move_select_winning_or_losing(action),
         }
+
+        // Redraw playable cards for the current player
+        self.show_playable();
     }
 
     pub fn apply_move_bid_card(&mut self, action: i32) {
@@ -580,6 +582,19 @@ impl PalaGame {
             return;
         }
         if action == SKIP_MIX {
+            // Animate the card that was previously played for CPU players
+            let index = self.new_change();
+            let card = self.current_trick[self.current_player].unwrap();
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::Play,
+                    object_id: card.id,
+                    dest: Location::Play,
+                    player: self.current_player,
+                    ..Default::default()
+                },
+            );
             self.advance_player();
             return;
         }
@@ -589,6 +604,7 @@ impl PalaGame {
 
     fn apply_move_select_location_to_play(&mut self, action: i32) {
         if action == UNDO {
+            self.current_trick[self.current_player] = None;
             self.selected_card = None;
             self.state = State::SelectCardToPlay;
             return;
@@ -618,9 +634,8 @@ impl PalaGame {
                 }
             }
             self.animate_combine(self.trick_winning_player, new_card, left_card, right_card);
-            // UI - emit animate current cards to smaller locations
-            // UI - Create new smeared card of the secondary color
             self.state = State::SelectCardToPlay;
+            self.reorder_hand(self.current_player, false);
             return;
         }
 
@@ -638,22 +653,14 @@ impl PalaGame {
                 value: target_card.value + card.value,
             };
             self.next_id += 1;
-            // UI - emit animate current cards to smaller locations
-            // UI - Create new smeared card of the secondary color
-        } else {
-            self.add_change(
-                index,
-                Change {
-                    change_type: ChangeType::Play,
-                    object_id: card.id,
-                    dest: Location::Play,
-                    player: self.current_player,
-                    ..Default::default()
-                },
-            );
+            self.animate_combine(self.current_player, card, left_card, target_card);
         }
 
-        self.reorder_hand(self.current_player, false);
+        if Some(self.current_player) == self.human_player {
+            // Only reorder the human hand so they can see the partial play they made
+            // For CPU players we want the mix animation to happen all at once
+            self.reorder_hand(self.current_player, false);
+        }
 
         self.current_trick[self.current_player] = Some(card);
 
@@ -672,6 +679,17 @@ impl PalaGame {
             self.state = State::SelectCardToPlay;
             return;
         }
+        // No mixing is possible - animate the played card immediately
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Play,
+                object_id: card.id,
+                dest: Location::Play,
+                player: self.current_player,
+                ..Default::default()
+            },
+        );
         self.state = State::SelectCardToPlay;
         self.advance_player();
     }
