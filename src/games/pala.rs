@@ -542,6 +542,8 @@ impl PalaGame {
             State::SelectWinningOrLosing => self.apply_move_select_winning_or_losing(action),
         }
 
+        // Show message for current action
+        self.show_message();
         // Redraw playable cards for the current player
         self.show_playable();
     }
@@ -985,6 +987,17 @@ impl PalaGame {
         let message = match self.state {
             State::BidSelectBidCard | State::BidSelectBidLocation => {
                 Some(format!("{} may bid a card", player_name,))
+            }
+            State::SelectWinningOrLosing => Some(format!(
+                "{} may select to be winning or losing",
+                player_name,
+            )),
+            State::SelectLocationToPlay => {
+                if Some(self.current_player) == self.human_player {
+                    Some("Please select a location to play".to_string())
+                } else {
+                    Some("".to_string())
+                }
             }
             _ => Some("".to_string()),
         };
