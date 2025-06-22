@@ -7,6 +7,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/37441/pala
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    default,
 };
 
 use enum_iterator::{all, Sequence};
@@ -155,6 +156,7 @@ enum Location {
     PlayCombine,
     SpawnNewCard,
     DeleteCard,
+    Bid,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -176,6 +178,7 @@ pub enum ChangeType {
     Message,
     BurnCards,
     DeleteCard,
+    Bid,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -564,8 +567,20 @@ impl PalaGame {
             return;
         }
         let card = self.pop_card(self.selected_card.unwrap().id);
-        self.bids[(action - BID_OFFSET) as usize] = Some(card.suit);
-        // TODO: Animate bid card to position
+        let offset = (action - BID_OFFSET) as usize;
+        self.bids[offset] = Some(card.suit);
+        // Animate bid card to position
+        let index = self.new_change();
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Bid,
+                dest: Location::Bid,
+                object_id: card.id,
+                offset,
+                ..Default::default()
+            },
+        );
         if self.bids.iter().all(|x| x.is_some()) {
             self.state = State::SelectCardToPlay;
             self.current_player = self.dealer;
