@@ -7,7 +7,6 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/37441/pala
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    default,
 };
 
 use enum_iterator::{all, Sequence};
@@ -581,6 +580,9 @@ impl PalaGame {
                 ..Default::default()
             },
         );
+        if Some(self.current_player) == self.human_player {
+            self.reorder_hand(self.current_player, false);
+        }
         if self.bids.iter().all(|x| x.is_some()) {
             self.state = State::SelectCardToPlay;
             self.current_player = self.dealer;
@@ -612,6 +614,9 @@ impl PalaGame {
                     ..Default::default()
                 },
             );
+            if Some(self.current_player) == self.human_player {
+                self.reorder_hand(self.current_player, false);
+            }
             self.advance_player();
             return;
         }
@@ -707,6 +712,9 @@ impl PalaGame {
                 ..Default::default()
             },
         );
+        if Some(self.current_player) == self.human_player {
+            self.reorder_hand(self.current_player, false);
+        }
         self.state = State::SelectCardToPlay;
         self.advance_player();
     }
@@ -723,6 +731,26 @@ impl PalaGame {
     }
 
     fn end_of_trick(&mut self) {
+        // Show the winning card after the play animation of the last card finishes
+        let index = self.new_change();
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::ShowWinningCard,
+                object_id: self.current_trick[self.trick_winning_player].unwrap().id,
+                dest: Location::Play,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::Play,
+                ..Default::default()
+            },
+        );
         self.lead_player = self.trick_winning_player;
         self.current_player = self.lead_player;
         let mut taken: Vec<Card> = self.actual_trick_cards.clone();
@@ -947,6 +975,9 @@ impl PalaGame {
                 ..Default::default()
             },
         );
+        if Some(self.current_player) == self.human_player {
+            self.reorder_hand(self.current_player, false);
+        }
     }
 
     #[inline]
