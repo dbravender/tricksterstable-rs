@@ -691,6 +691,16 @@ impl PalaGame {
             let target_card = self.current_trick[self.trick_winning_player].unwrap();
             if target_card.ties(card) {
                 self.state = State::SelectWinningOrLosing;
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::Play,
+                        object_id: card.id,
+                        dest: Location::Play,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
                 return;
             }
             if card.beats(target_card) {
