@@ -546,6 +546,8 @@ impl PalaGame {
     }
 
     pub fn apply_move(&mut self, action: i32) {
+        self.hide_playable();
+
         self.changes = vec![];
         if !self.get_moves().contains(&action) {
             panic!("Illegal move");
@@ -900,6 +902,7 @@ impl PalaGame {
 
     #[inline]
     fn advance_player(&mut self) {
+        self.hide_playable();
         let cards_per_player = self.hands.iter().map(|h| h.len());
         if cards_per_player.filter(|c| *c > 0).count() <= 1 {
             self.end_of_hand();
@@ -1027,7 +1030,7 @@ impl PalaGame {
 
         self.hide_playable();
 
-        if self.human_player.is_some() && self.current_player == self.human_player.unwrap() {
+        if Some(self.current_player) == self.human_player {
             let moves = self.get_moves();
             for id in moves {
                 self.add_change(
