@@ -1025,6 +1025,8 @@ impl PalaGame {
         }
         let change_index = self.new_change();
 
+        self.hide_playable();
+
         if self.human_player.is_some() && self.current_player == self.human_player.unwrap() {
             let moves = self.get_moves();
             for id in moves {
@@ -1039,8 +1041,6 @@ impl PalaGame {
                     },
                 );
             }
-        } else {
-            self.hide_playable();
         }
     }
 
