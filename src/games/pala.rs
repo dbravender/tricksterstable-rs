@@ -580,9 +580,7 @@ impl PalaGame {
                 ..Default::default()
             },
         );
-        if Some(self.current_player) == self.human_player {
-            self.reorder_hand(self.current_player, false);
-        }
+        self.reorder_hand(self.current_player, false);
         if self.bids.iter().all(|x| x.is_some()) {
             self.state = State::SelectCardToPlay;
             self.current_player = self.dealer;
@@ -614,9 +612,7 @@ impl PalaGame {
                     ..Default::default()
                 },
             );
-            if Some(self.current_player) == self.human_player {
-                self.reorder_hand(self.current_player, false);
-            }
+            self.reorder_hand(self.current_player, false);
             self.advance_player();
             return;
         }
@@ -678,7 +674,7 @@ impl PalaGame {
             self.animate_combine(self.current_player, card, left_card, target_card);
         }
 
-        if Some(self.current_player) == self.human_player {
+        if self.current_player == 0 {
             // Only reorder the human hand so they can see the partial play they made
             // For CPU players we want the mix animation to happen all at once
             self.reorder_hand(self.current_player, false);
@@ -722,9 +718,7 @@ impl PalaGame {
                 ..Default::default()
             },
         );
-        if Some(self.current_player) == self.human_player {
-            self.reorder_hand(self.current_player, false);
-        }
+        self.reorder_hand(self.current_player, false);
         self.state = State::SelectCardToPlay;
         self.advance_player();
     }
@@ -985,9 +979,7 @@ impl PalaGame {
                 ..Default::default()
             },
         );
-        if Some(self.current_player) == self.human_player {
-            self.reorder_hand(self.current_player, false);
-        }
+        self.reorder_hand(self.current_player, false);
     }
 
     #[inline]
