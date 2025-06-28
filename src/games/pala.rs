@@ -23,6 +23,20 @@ const CHOOSE_TO_WIN: i32 = -20; // Player chose to win after playing a tying car
 const CHOOSE_TO_LOSE: i32 = -21; // Player chose to lose after playing a tying card
 const SKIP_MIX: i32 = -200; // Player could mix but chooses not to
 const BID_OFFSET: i32 = -10; // -10 first bid slot, -9 second bid slot, etc.
+const LOCATION_BASED_MOVES: &[i32] = &[
+    PLAY_OFFSET,
+    PLAY_OFFSET + 1,
+    PLAY_OFFSET + 2,
+    PLAY_OFFSET + 3,
+    UNDO,
+    CHOOSE_TO_WIN,
+    CHOOSE_TO_LOSE,
+    SKIP_MIX,
+    BID_OFFSET,
+    BID_OFFSET + 1,
+    BID_OFFSET + 2,
+    BID_OFFSET + 3,
+];
 const PLAYER_COUNT: usize = 4;
 const POINT_THRESHOLD: i32 = 45;
 const BID_CARDS: [BidSpace; PLAYER_COUNT] = [
@@ -1086,6 +1100,19 @@ impl PalaGame {
                 change_index,
                 Change {
                     object_id: card.id,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    player: self.current_player,
+                    ..Default::default()
+                },
+            );
+        }
+
+        for location_based_move in LOCATION_BASED_MOVES {
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: *location_based_move,
                     change_type: ChangeType::HidePlayable,
                     dest: Location::Hand,
                     player: self.current_player,
