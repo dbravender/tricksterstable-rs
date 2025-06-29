@@ -358,7 +358,6 @@ impl PalaGame {
             );
         }
         for player in 0..PLAYER_COUNT {
-            self.sort_hand(player);
             self.reorder_hand(player, player == 0);
         }
         self.show_playable();
@@ -470,9 +469,9 @@ impl PalaGame {
                 .filter(|c| c.suit == lead_suit)
                 .map(|c| c.id)
                 .collect();
-            let mut mixables = self.get_mixable_card_ids(lead_suit);
-            moves.append(&mut mixables);
             if !moves.is_empty() {
+                let mut mixables = self.get_mixable_card_ids(lead_suit);
+                moves.append(&mut mixables);
                 return moves;
             }
         }
@@ -508,7 +507,23 @@ impl PalaGame {
         if target_suit.is_primary() {
             return vec![];
         }
+        // Can't mix when the target suit is already played
+        if self.current_trick[self.current_player].is_some() {
+            if self.current_trick[self.current_player].unwrap().suit == target_suit {
+                return vec![];
+            }
+        }
         let mixing_suits = target_suit.composed_of();
+        // If the player does not have both mixing suits they can't mix
+        if !self.hands[self.current_player]
+            .iter()
+            .any(|c| mixing_suits[0] == c.suit)
+            || !self.hands[self.current_player]
+                .iter()
+                .any(|c| mixing_suits[1] == c.suit)
+        {
+            return vec![];
+        }
         self.hands[self.current_player]
             .iter()
             .filter(|c| mixing_suits[0] == c.suit || mixing_suits[1] == c.suit)
@@ -665,7 +680,10 @@ impl PalaGame {
 
     fn apply_move_select_location_to_play(&mut self, action: i32) {
         if action == UNDO {
-            self.current_trick[self.current_player] = None;
+            if let Some(card) = self.current_trick[self.current_player].take() {
+                self.hands[self.current_player].push(card);
+                self.reorder_hand(self.current_player, true);
+            }
             self.selected_card = None;
             self.state = State::SelectCardToPlay;
             return;
@@ -747,6 +765,19 @@ impl PalaGame {
             }
         }
         if !self.cards_playable_as_a_mix().is_empty() {
+            if Some(self.current_player) == self.human_player {
+                // Move initial mix card to play location immediately for human player
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::Play,
+                        object_id: card.id,
+                        dest: Location::Play,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+            }
             self.state = State::SelectCardToPlay;
             return;
         }
@@ -1031,6 +1062,7 @@ impl PalaGame {
         if self.no_changes {
             return;
         }
+        self.sort_hand(player);
         if self.changes.is_empty() || force_new_animation {
             self.new_change();
         }
