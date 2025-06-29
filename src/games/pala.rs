@@ -565,12 +565,12 @@ impl PalaGame {
     }
 
     fn get_locations_to_play(&self) -> Vec<i32> {
-        if self.lead_player == self.current_player {
-            return vec![PLAY_OFFSET + self.current_player as i32];
-        }
         let mut locations = vec![PLAY_OFFSET + self.current_player as i32];
         if self.human_player == Some(self.current_player) {
             locations.push(UNDO);
+        }
+        if self.lead_player == self.current_player {
+            return locations;
         }
         let selected_card = self.selected_card.unwrap();
         if self.cards_playable_as_a_smear().contains(&selected_card) {
