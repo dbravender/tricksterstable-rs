@@ -716,7 +716,7 @@ impl PalaGame {
                     }
                 }
             }
-            self.animate_combine(self.trick_winning_player, new_card, left_card, right_card);
+            self.animate_combine(start_winning_player, new_card, left_card, right_card);
             self.state = State::SelectCardToPlay;
             self.reorder_hand(self.current_player, false);
             return;
