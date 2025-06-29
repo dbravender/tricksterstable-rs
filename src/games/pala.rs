@@ -107,6 +107,15 @@ impl Suit {
         !self.is_primary()
     }
 
+    pub fn composed_of(&self) -> [Suit; 2] {
+        match self {
+            Suit::Green => [Suit::Blue, Suit::Yellow],
+            Suit::Purple => [Suit::Blue, Suit::Red],
+            Suit::Orange => [Suit::Yellow, Suit::Red],
+            _ => panic!("primary colors are not composed of other colors"),
+        }
+    }
+
     pub fn mixed_with(&self, other: Suit) -> Suit {
         match (self, other) {
             (Suit::Blue, Suit::Yellow) => Suit::Green,
@@ -445,6 +454,8 @@ impl PalaGame {
                 .iter()
                 .map(|&c| c.id)
                 .collect();
+            // FIXME - only allow skipping when the suit of the winning card
+            // is not the suit that is being mixed to
             plays.push(SKIP_MIX);
             if self.human_player == Some(self.current_player) {
                 plays.push(UNDO);
@@ -453,11 +464,14 @@ impl PalaGame {
         }
         let lead_suit = self.get_lead_suit();
         if lead_suit.is_some() {
-            let moves: Vec<i32> = self.hands[self.current_player]
+            let lead_suit = lead_suit.unwrap();
+            let mut moves: Vec<i32> = self.hands[self.current_player]
                 .iter()
-                .filter(|c| Some(c.suit) == lead_suit)
+                .filter(|c| c.suit == lead_suit)
                 .map(|c| c.id)
                 .collect();
+            let mut mixables = self.get_mixable_card_ids(lead_suit);
+            moves.append(&mut mixables);
             if !moves.is_empty() {
                 return moves;
             }
@@ -490,7 +504,20 @@ impl PalaGame {
             .collect()
     }
 
+    fn get_mixable_card_ids(&self, target_suit: Suit) -> Vec<i32> {
+        if target_suit.is_primary() {
+            return vec![];
+        }
+        let mixing_suits = target_suit.composed_of();
+        self.hands[self.current_player]
+            .iter()
+            .filter(|c| mixing_suits[0] == c.suit || mixing_suits[1] == c.suit)
+            .map(|c| c.id)
+            .collect()
+    }
+
     fn cards_playable_as_a_mix(&self) -> Vec<Card> {
+        // Cannot play a mix when leading
         if self.current_trick[self.trick_winning_player].is_none()
             || self.current_trick[self.current_player].is_none()
         {
@@ -1647,20 +1674,26 @@ mod tests {
             value: 8,
         };
 
+        let purple7 = Card {
+            id: 4,
+            suit: Suit::Purple,
+            value: 7,
+        };
+
         let purple8 = Card {
-            id: 3,
+            id: 5,
             suit: Suit::Purple,
             value: 8,
         };
 
         let purple9 = Card {
-            id: 4,
+            id: 6,
             suit: Suit::Purple,
             value: 9,
         };
 
         let blue5 = Card {
-            id: 5,
+            id: 7,
             suit: Suit::Blue,
             value: 5,
         };
@@ -1919,13 +1952,13 @@ mod tests {
             PlayCardsScenario {
                 name: "Can and does mix".to_string(),
                 current_trick: [None, None, Some(purple8), None],
-                hand: vec![blue5, red7],
+                hand: vec![purple7, blue5, red7],
                 current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
                     PlayCardMoves {
-                        expected_moves_before: vec![blue5.id, red7.id],
+                        expected_moves_before: vec![purple7.id, blue5.id, red7.id],
                         action: blue5.id,
                         expected_current_trick_after_move: [None, None, Some(purple8), None],
                         expected_state_after_move: State::SelectLocationToPlay,
