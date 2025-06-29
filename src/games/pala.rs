@@ -24,6 +24,7 @@ const CHOOSE_TO_LOSE: i32 = -21; // Player chose to lose after playing a tying c
 const SKIP_MIX: i32 = -200; // Player could mix but chooses not to
 const BID_OFFSET: i32 = -10; // -10 first bid slot, -9 second bid slot, etc.
 const LOCATION_BASED_MOVES: &[i32] = &[
+    PASS_BID,
     PLAY_OFFSET,
     PLAY_OFFSET + 1,
     PLAY_OFFSET + 2,
