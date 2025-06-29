@@ -453,9 +453,12 @@ impl PalaGame {
                 .iter()
                 .map(|&c| c.id)
                 .collect();
-            // FIXME - only allow skipping when the suit of the winning card
-            // is not the suit that is being mixed to
-            plays.push(SKIP_MIX);
+            if !self.hands[self.current_player]
+                .iter()
+                .any(|c| Some(c.suit) == self.get_lead_suit())
+            {
+                plays.push(SKIP_MIX);
+            }
             if self.human_player == Some(self.current_player) {
                 plays.push(UNDO);
             }
@@ -2006,7 +2009,7 @@ mod tests {
                         expected_winning_player_after_move: 2,
                     },
                     PlayCardMoves {
-                        expected_moves_before: vec![red7.id, SKIP_MIX],
+                        expected_moves_before: vec![red7.id],
                         action: red7.id,
                         expected_current_trick_after_move: [None, None, Some(purple8), Some(blue5)],
                         expected_state_after_move: State::SelectLocationToPlay,
