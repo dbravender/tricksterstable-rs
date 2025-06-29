@@ -1033,6 +1033,7 @@ impl PalaGame {
                 ..Default::default()
             },
         );
+        let index = self.new_change();
         self.add_change(
             index,
             Change {
