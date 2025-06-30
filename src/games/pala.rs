@@ -196,6 +196,7 @@ pub enum ChangeType {
     HidePlayable,
     OptionalPause,
     ShowWinningCard,
+    ShowSelected,
     GameOver,
     Reorder,
     Message,
@@ -628,6 +629,7 @@ impl PalaGame {
             return;
         }
         let card = self.pop_card(self.selected_card.unwrap().id);
+        self.selected_card = None;
         let offset = (action - BID_OFFSET) as usize;
         self.bids[offset] = Some(card.suit);
         // Animate bid card to position
@@ -693,6 +695,7 @@ impl PalaGame {
             return;
         }
         let left_card = self.pop_card(self.selected_card.unwrap().id);
+        self.selected_card = None;
         self.actual_trick_cards.push(left_card.clone());
         if self.trick_winning_player != self.current_player
             && action - PLAY_OFFSET == self.trick_winning_player as i32
@@ -1102,6 +1105,18 @@ impl PalaGame {
                     Change {
                         object_id: id,
                         change_type: ChangeType::ShowPlayable,
+                        dest: Location::Hand,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+            }
+            if let Some(card) = self.selected_card {
+                self.add_change(
+                    change_index,
+                    Change {
+                        object_id: card.id,
+                        change_type: ChangeType::ShowSelected,
                         dest: Location::Hand,
                         player: self.current_player,
                         ..Default::default()
