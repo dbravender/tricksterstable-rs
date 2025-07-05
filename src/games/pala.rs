@@ -1019,6 +1019,18 @@ impl PalaGame {
                     break;
                 }
             }
+
+            // Emit GameOver change
+            let game_over_index = self.new_change();
+            self.add_change(
+                game_over_index,
+                Change {
+                    change_type: ChangeType::GameOver,
+                    object_id: 0,
+                    dest: Location::Score,
+                    ..Default::default()
+                },
+            );
             return;
         }
         // Start a new hand if the game isn't over
