@@ -180,6 +180,7 @@ enum Location {
     SpawnNewCard,
     DeleteCard,
     Bid,
+    ScoredCards,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -203,6 +204,7 @@ pub enum ChangeType {
     BurnCards,
     DeleteCard,
     Bid,
+    RevealScoringCards,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -884,9 +886,96 @@ impl PalaGame {
 
     fn end_of_hand(&mut self) {
         self.set_suit_to_bid();
+
+        // Phase 1: Reveal all cards taken by each player
+        let reveal_index = self.new_change();
         for player in 0..PLAYER_COUNT {
-            self.scores[player] += self.score_player(player);
+            let player_cards = self.cards_won[player].clone();
+            if !player_cards.is_empty() {
+                for (offset, card) in player_cards.iter().enumerate() {
+                    self.add_change(
+                        reveal_index,
+                        Change {
+                            change_type: ChangeType::RevealScoringCards,
+                            object_id: card.id,
+                            dest: Location::ScoredCards,
+                            player,
+                            offset,
+                            length: player_cards.len(),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
+
+        // Phase 2: Show cancellation effects
+        let cancel_index = self.new_change();
+        let mut any_cancellations = false;
+        for player in 0..PLAYER_COUNT {
+            let cancelled_cards = self.get_cancelled_cards(&self.cards_won[player]);
+            for card in cancelled_cards {
+                any_cancellations = true;
+                self.add_change(
+                    cancel_index,
+                    Change {
+                        change_type: ChangeType::FadeOut,
+                        object_id: card.id,
+                        dest: Location::ScoredCards,
+                        player,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        // Add pause after cancellation if any occurred
+        if any_cancellations {
+            self.add_change(
+                cancel_index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    object_id: 0,
+                    dest: Location::ScoredCards,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Phase 3: Calculate and animate score changes for each player
+        for player in 0..PLAYER_COUNT {
+            let score_change = self.score_player(player);
+            if score_change != 0 {
+                let score_index = self.new_change();
+                self.add_change(
+                    score_index,
+                    Change {
+                        change_type: ChangeType::Score,
+                        dest: Location::Score,
+                        player,
+                        startscore: self.scores[player],
+                        end_score: self.scores[player] + score_change,
+                        object_id: player as i32,
+                        ..Default::default()
+                    },
+                );
+                // Update the actual score
+                self.scores[player] += score_change;
+            }
+        }
+
+        // Phase 4: Pause to show final scores before next hand
+        let final_pause_index = self.new_change();
+        self.add_change(
+            final_pause_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::Score,
+                ..Default::default()
+            },
+        );
+
         self.cards_won = [vec![], vec![], vec![], vec![]];
         let max_score = self.scores.iter().max().unwrap();
         let min_score = self.scores.iter().min().unwrap();
@@ -946,6 +1035,47 @@ impl PalaGame {
         other_cards.extend(cancel_cards);
 
         other_cards
+    }
+
+    fn get_cancelled_cards(&self, cards: &Vec<Card>) -> Vec<Card> {
+        let mut cancel_cards: Vec<Card> = vec![];
+        let mut other_cards: Vec<Card> = vec![];
+        let mut cancelled_cards: Vec<Card> = vec![];
+
+        for card in cards {
+            let bid_space = self
+                .suit_to_bid
+                .get(&card.suit)
+                .unwrap_or(&BidSpace::Missing);
+            match *bid_space {
+                BidSpace::Missing => {}
+                BidSpace::Cancel => cancel_cards.push(*card),
+                _ => other_cards.push(*card),
+            }
+        }
+
+        // Sort descending by score to cancel highest value cards first
+        other_cards.sort_by_key(|c| {
+            let score = self
+                .suit_to_bid
+                .get(&c.suit)
+                .unwrap_or(&BidSpace::Missing)
+                .score_for_card(c);
+            -score // Negative for descending order
+        });
+
+        // ALL cancel cards get X'd out regardless of whether they cancel other cards
+        for cancel_card in cancel_cards.iter() {
+            cancelled_cards.push(*cancel_card);
+        }
+
+        // Determine which other cards get cancelled by cancel cards
+        let cancellations = cancel_cards.len().min(other_cards.len());
+        for i in 0..cancellations {
+            cancelled_cards.push(other_cards[i]); // The highest scoring card that gets cancelled
+        }
+
+        cancelled_cards
     }
 
     pub fn score_player(&mut self, player: usize) -> i32 {
