@@ -662,8 +662,15 @@ impl PalaGame {
         if action == UNDO {
             if let Some(card) = self.current_trick[self.current_player].take() {
                 self.hands[self.current_player].push(card);
+                let pos = self
+                    .actual_trick_cards
+                    .iter()
+                    .position(|c| c.id == card.id)
+                    .unwrap();
+                self.actual_trick_cards.remove(pos);
                 self.reorder_hand(self.current_player, true);
             }
+            self.selected_card = None;
             return;
         }
         if action == SKIP_MIX {
