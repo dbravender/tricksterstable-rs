@@ -996,6 +996,22 @@ impl PalaGame {
                     },
                 );
             }
+
+            // Phase 4: Move all scored cards to burn cards location
+            if !player_cards.is_empty() {
+                let return_index = self.new_change();
+                for card in player_cards.iter() {
+                    self.add_change(
+                        return_index,
+                        Change {
+                            change_type: ChangeType::BurnCards,
+                            object_id: card.id,
+                            dest: Location::BurnCards,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
         }
 
         self.cards_won = [vec![], vec![], vec![], vec![]];
