@@ -911,7 +911,7 @@ impl PalaGame {
 
         // Show captured cards, cancellations, and score for each player in turn
         for player in 0..PLAYER_COUNT {
-            let player_cards = self.cards_won[player].clone();
+            let mut player_cards = self.cards_won[player].clone();
             let score_change = self.score_player(player);
 
             // Skip players with no cards and no score change
@@ -919,8 +919,11 @@ impl PalaGame {
                 continue;
             }
 
-            // Phase 1: Reveal this player's captured cards
+            // Phase 1: Reveal this player's captured cards (sorted)
             if !player_cards.is_empty() {
+                // Sort cards for display: cancel cards first, then highest point value, then non-scoring by color
+                self.sort_cards_for_scoring(&mut player_cards);
+
                 let reveal_index = self.new_change();
                 for (offset, card) in player_cards.iter().enumerate() {
                     self.add_change(
@@ -954,17 +957,6 @@ impl PalaGame {
                         },
                     );
                 }
-
-                // Pause after showing cancellations
-                self.add_change(
-                    cancel_index,
-                    Change {
-                        change_type: ChangeType::OptionalPause,
-                        object_id: 0,
-                        dest: Location::ScoredCards,
-                        ..Default::default()
-                    },
-                );
             }
 
             // Phase 3: Animate score change for this player
@@ -984,17 +976,6 @@ impl PalaGame {
                 );
                 // Update the actual score
                 self.scores[player] += score_change;
-
-                // Pause after each player's score update
-                self.add_change(
-                    score_index,
-                    Change {
-                        change_type: ChangeType::OptionalPause,
-                        object_id: 0,
-                        dest: Location::Score,
-                        ..Default::default()
-                    },
-                );
             }
 
             // Phase 4: Move all scored cards to burn cards location
@@ -1013,6 +994,18 @@ impl PalaGame {
                 }
             }
         }
+
+        // Single pause at the end of all scoring
+        let final_pause_index = self.new_change();
+        self.add_change(
+            final_pause_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::Score,
+                ..Default::default()
+            },
+        );
 
         self.cards_won = [vec![], vec![], vec![], vec![]];
         let max_score = self.scores.iter().max().unwrap();
@@ -1079,6 +1072,32 @@ impl PalaGame {
         if !self.voids[player].contains(&suit) {
             self.voids[player].push(suit);
         }
+    }
+
+    fn sort_cards_for_scoring(&self, cards: &mut Vec<Card>) {
+        cards.sort_by(|a, b| {
+            let bid_space_a = self.suit_to_bid.get(&a.suit).unwrap_or(&BidSpace::Missing);
+            let bid_space_b = self.suit_to_bid.get(&b.suit).unwrap_or(&BidSpace::Missing);
+
+            match (bid_space_a, bid_space_b) {
+                // Cancel cards come first
+                (BidSpace::Cancel, BidSpace::Cancel) => a.suit.cmp(&b.suit),
+                (BidSpace::Cancel, _) => std::cmp::Ordering::Less,
+                (_, BidSpace::Cancel) => std::cmp::Ordering::Greater,
+
+                // Then scoring cards by point value (highest first)
+                (BidSpace::Missing, BidSpace::Missing) => a.suit.cmp(&b.suit), // Non-scoring by color
+                (BidSpace::Missing, _) => std::cmp::Ordering::Greater,
+                (_, BidSpace::Missing) => std::cmp::Ordering::Less,
+
+                // Both are scoring cards - sort by point value (highest first)
+                _ => {
+                    let score_a = bid_space_a.score_for_card(a);
+                    let score_b = bid_space_b.score_for_card(b);
+                    score_b.cmp(&score_a) // Reverse for highest first
+                }
+            }
+        });
     }
 
     fn get_cancelled_cards(&self, cards: &Vec<Card>) -> Vec<Card> {
