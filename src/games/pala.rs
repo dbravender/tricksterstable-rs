@@ -207,6 +207,7 @@ pub enum ChangeType {
     DeleteCard,
     Bid,
     RevealScoringCards,
+    Cancel,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -940,7 +941,7 @@ impl PalaGame {
                 self.add_change(
                     cancel_index,
                     Change {
-                        change_type: ChangeType::FadeOut,
+                        change_type: ChangeType::Cancel,
                         object_id: card.id,
                         dest: Location::ScoredCards,
                         player,
