@@ -9,6 +9,8 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use crate::utils::shuffle_and_divide_matching_cards;
+
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
 use rand::{seq::SliceRandom, thread_rng, Rng};
@@ -705,6 +707,18 @@ impl PalaGame {
         let left_card = self.pop_card(self.selected_card.unwrap().id);
         self.selected_card = None;
         self.actual_trick_cards.push(left_card.clone());
+
+        // Track voids: if there's a lead suit and the player played a different suit,
+        // they are void in the lead suit (unless they're mixing or the final card matches)
+        if let Some(lead_suit) = self.get_lead_suit() {
+            // If a player is mixing (their trick for this hand already contains a card)
+            // this does not indicate that they are necessarily void in the lead suit
+            if self.current_trick[self.current_player].is_none() {
+                if left_card.suit != lead_suit {
+                    self.record_void_if_not_already_known(self.current_player, lead_suit);
+                }
+            };
+        }
         if self.trick_winning_player != self.current_player
             && action - PLAY_OFFSET == self.trick_winning_player as i32
         {
@@ -1037,6 +1051,12 @@ impl PalaGame {
         other_cards
     }
 
+    fn record_void_if_not_already_known(&mut self, player: usize, suit: Suit) {
+        if !self.voids[player].contains(&suit) {
+            self.voids[player].push(suit);
+        }
+    }
+
     fn get_cancelled_cards(&self, cards: &Vec<Card>) -> Vec<Card> {
         let mut cancel_cards: Vec<Card> = vec![];
         let mut other_cards: Vec<Card> = vec![];
@@ -1360,7 +1380,35 @@ impl ismcts::Game for PalaGame {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
-        // FIXME: implement determination for Pala
+        // Pala uses a standard determination - cards are exchanged between all players
+        // taking into account voids of each player in the exchange
+        for p1 in 0..PLAYER_COUNT {
+            for p2 in 0..PLAYER_COUNT {
+                if p1 == self.current_player() || p2 == self.current_player() || p1 == p2 {
+                    continue;
+                }
+
+                // Get known voids for both players
+                let mut combined_voids: HashSet<Suit> =
+                    HashSet::from_iter(self.voids[p1].iter().cloned());
+                combined_voids.extend(self.voids[p2].iter());
+
+                let mut new_hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
+
+                // Shuffle cards respecting void constraints
+                shuffle_and_divide_matching_cards(
+                    |c: &Card| {
+                        // Don't swap cards of suits that either player is known to be void in
+                        !combined_voids.contains(&c.suit)
+                    },
+                    &mut new_hands,
+                    &mut thread_rng(),
+                );
+
+                self.hands[p1] = new_hands[0].clone();
+                self.hands[p2] = new_hands[1].clone();
+            }
+        }
     }
 
     fn current_player(&self) -> Self::PlayerTag {
