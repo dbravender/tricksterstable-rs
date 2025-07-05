@@ -196,7 +196,7 @@ pub enum ChangeType {
     HidePlayable,
     OptionalPause,
     ShowWinningCard,
-    ShowSelected,
+    FadeOut,
     GameOver,
     Reorder,
     Message,
@@ -1117,17 +1117,22 @@ impl PalaGame {
                     },
                 );
             }
-            if let Some(card) = self.selected_card {
-                self.add_change(
-                    change_index,
-                    Change {
-                        object_id: card.id,
-                        change_type: ChangeType::ShowSelected,
-                        dest: Location::Hand,
-                        player: self.current_player,
-                        ..Default::default()
-                    },
-                );
+            if let Some(selected_card) = self.selected_card {
+                for card in self.hands[self.current_player].clone().iter() {
+                    if *card == selected_card {
+                        continue;
+                    }
+                    self.add_change(
+                        change_index,
+                        Change {
+                            object_id: card.id,
+                            change_type: ChangeType::FadeOut,
+                            dest: Location::Hand,
+                            player: self.current_player,
+                            ..Default::default()
+                        },
+                    );
+                }
             }
         }
     }
