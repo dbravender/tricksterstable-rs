@@ -909,11 +909,19 @@ impl PalaGame {
     fn end_of_hand(&mut self) {
         self.set_suit_to_bid();
 
-        // Phase 1: Reveal all cards taken by each player
-        let reveal_index = self.new_change();
+        // Show captured cards, cancellations, and score for each player in turn
         for player in 0..PLAYER_COUNT {
             let player_cards = self.cards_won[player].clone();
+            let score_change = self.score_player(player);
+
+            // Skip players with no cards and no score change
+            if player_cards.is_empty() && score_change == 0 {
+                continue;
+            }
+
+            // Phase 1: Reveal this player's captured cards
             if !player_cards.is_empty() {
+                let reveal_index = self.new_change();
                 for (offset, card) in player_cards.iter().enumerate() {
                     self.add_change(
                         reveal_index,
@@ -929,44 +937,37 @@ impl PalaGame {
                     );
                 }
             }
-        }
 
-        // Phase 2: Show cancellation effects
-        let cancel_index = self.new_change();
-        let mut any_cancellations = false;
-        for player in 0..PLAYER_COUNT {
+            // Phase 2: Show cancellation effects for this player
             let cancelled_cards = self.get_cancelled_cards(&self.cards_won[player]);
-            for card in cancelled_cards {
-                any_cancellations = true;
+            if !cancelled_cards.is_empty() {
+                let cancel_index = self.new_change();
+                for card in cancelled_cards {
+                    self.add_change(
+                        cancel_index,
+                        Change {
+                            change_type: ChangeType::Cancel,
+                            object_id: card.id,
+                            dest: Location::ScoredCards,
+                            player,
+                            ..Default::default()
+                        },
+                    );
+                }
+
+                // Pause after showing cancellations
                 self.add_change(
                     cancel_index,
                     Change {
-                        change_type: ChangeType::Cancel,
-                        object_id: card.id,
+                        change_type: ChangeType::OptionalPause,
+                        object_id: 0,
                         dest: Location::ScoredCards,
-                        player,
                         ..Default::default()
                     },
                 );
             }
-        }
 
-        // Add pause after cancellation if any occurred
-        if any_cancellations {
-            self.add_change(
-                cancel_index,
-                Change {
-                    change_type: ChangeType::OptionalPause,
-                    object_id: 0,
-                    dest: Location::ScoredCards,
-                    ..Default::default()
-                },
-            );
-        }
-
-        // Phase 3: Calculate and animate score changes for each player
-        for player in 0..PLAYER_COUNT {
-            let score_change = self.score_player(player);
+            // Phase 3: Animate score change for this player
             if score_change != 0 {
                 let score_index = self.new_change();
                 self.add_change(
@@ -983,20 +984,19 @@ impl PalaGame {
                 );
                 // Update the actual score
                 self.scores[player] += score_change;
+
+                // Pause after each player's score update
+                self.add_change(
+                    score_index,
+                    Change {
+                        change_type: ChangeType::OptionalPause,
+                        object_id: 0,
+                        dest: Location::Score,
+                        ..Default::default()
+                    },
+                );
             }
         }
-
-        // Phase 4: Pause to show final scores before next hand
-        let final_pause_index = self.new_change();
-        self.add_change(
-            final_pause_index,
-            Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: 0,
-                dest: Location::Score,
-                ..Default::default()
-            },
-        );
 
         self.cards_won = [vec![], vec![], vec![], vec![]];
         let max_score = self.scores.iter().max().unwrap();
