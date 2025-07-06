@@ -312,6 +312,7 @@ impl PalaGame {
         self.current_player = self.dealer;
         self.lead_player = self.current_player;
         self.next_id = 100;
+        self.suit_to_bid = HashMap::new();
         // By definition the lead player will start out winning the trick
         self.trick_winning_player = self.current_player;
         self.voids = [vec![], vec![], vec![], vec![]];
@@ -412,9 +413,13 @@ impl PalaGame {
     // Intended to be called when all bids are finished
     pub fn set_suit_to_bid(&mut self) {
         self.suit_to_bid = HashMap::new();
-        for i in 0..PLAYER_COUNT {
-            let suit = self.bids[i].unwrap();
-            self.suit_to_bid.insert(suit, BID_CARDS[i]);
+
+        // Only set up the mapping if all bids are complete
+        if self.bids.iter().all(|bid| bid.is_some()) {
+            for i in 0..PLAYER_COUNT {
+                let suit = self.bids[i].unwrap();
+                self.suit_to_bid.insert(suit, BID_CARDS[i]);
+            }
         }
     }
 
@@ -901,7 +906,7 @@ impl PalaGame {
         self.current_trick = [None; 4];
         self.actual_trick_cards = vec![];
         self.state = State::SelectCardToPlay;
-        if self.hands[self.lead_player].is_empty() {
+        if self.hands[self.lead_player].is_empty() || self.hands.iter().all(|h| h.is_empty()) {
             self.end_of_hand();
         }
     }
@@ -964,10 +969,14 @@ impl PalaGame {
                 // Add message showing points scored this round
                 let score_index = self.new_change();
                 let player_name = self.player_name_string(player);
-                let point_or_points = if score_change == 1 { "point" } else { "points" };
+                let point_or_points = if score_change.abs() == 1 {
+                    "point"
+                } else {
+                    "points"
+                };
                 let message = format!(
-                    "{} scored {} {} this round.",
-                    player_name, point_or_points, score_change
+                    "{} scored {} {} this round",
+                    player_name, score_change, point_or_points
                 );
                 self.add_change(
                     score_index,
@@ -1103,30 +1112,61 @@ impl PalaGame {
     }
 
     fn sort_cards_for_scoring(&self, cards: &mut Vec<Card>) {
+        let cancelled_cards_set: HashSet<i32> = self
+            .get_cancelled_cards(cards)
+            .iter()
+            .map(|c| c.id)
+            .collect();
+
         cards.sort_by(|a, b| {
             let bid_space_a = self.suit_to_bid.get(&a.suit).unwrap_or(&BidSpace::Missing);
             let bid_space_b = self.suit_to_bid.get(&b.suit).unwrap_or(&BidSpace::Missing);
 
-            match (bid_space_a, bid_space_b) {
-                // Cancel cards come first
-                (BidSpace::Cancel, BidSpace::Cancel) => a.suit.cmp(&b.suit),
-                (BidSpace::Cancel, _) => std::cmp::Ordering::Less,
-                (_, BidSpace::Cancel) => std::cmp::Ordering::Greater,
+            let is_cancelled_a = cancelled_cards_set.contains(&a.id);
+            let is_cancelled_b = cancelled_cards_set.contains(&b.id);
 
-                // Then scoring cards by point value (highest first)
-                (BidSpace::Missing, BidSpace::Missing) => a.suit.cmp(&b.suit), // Non-scoring by color
-                (BidSpace::Missing, _) => std::cmp::Ordering::Greater,
-                (_, BidSpace::Missing) => std::cmp::Ordering::Less,
-
-                (BidSpace::PlusFace, BidSpace::PlusFace) => a.suit.cmp(&b.suit),
-                (BidSpace::PlusOne, BidSpace::PlusOne) => a.suit.cmp(&b.suit),
-
-                // Both are scoring cards - sort by point value (highest first)
-                _ => {
-                    let score_a = bid_space_a.score_for_card(a);
-                    let score_b = bid_space_b.score_for_card(b);
-                    score_b.cmp(&score_a) // Reverse for highest first
+            // First, group by cancellation status and bid space type
+            let priority_a = if is_cancelled_a {
+                0 // Cancelled cards first
+            } else {
+                match bid_space_a {
+                    BidSpace::Cancel => 1,   // Unused cancel cards
+                    BidSpace::PlusFace => 2, // Then scoring cards
+                    BidSpace::PlusOne => 2,  // (same priority as PlusFace)
+                    BidSpace::Missing => 3,  // Non-scoring cards last
                 }
+            };
+
+            let priority_b = if is_cancelled_b {
+                0
+            } else {
+                match bid_space_b {
+                    BidSpace::Cancel => 1,
+                    BidSpace::PlusFace => 2,
+                    BidSpace::PlusOne => 2,
+                    BidSpace::Missing => 3,
+                }
+            };
+
+            match priority_a.cmp(&priority_b) {
+                std::cmp::Ordering::Equal => {
+                    // Same priority group - sort by suit then rank
+                    match a.suit.cmp(&b.suit) {
+                        std::cmp::Ordering::Equal => {
+                            if priority_a == 2 {
+                                // Both are scoring cards - sort by score (highest first) within same suit
+                                let score_a = bid_space_a.score_for_card(a);
+                                let score_b = bid_space_b.score_for_card(b);
+                                score_b.cmp(&score_a)
+                            } else {
+                                // For all other groups (cancelled, unused cancel, non-scoring), sort by rank within suit
+                                a.value.cmp(&b.value)
+                            }
+                        }
+                        other => other,
+                    }
+                }
+                other => other,
             }
         });
     }
