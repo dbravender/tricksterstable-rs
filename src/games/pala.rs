@@ -53,10 +53,10 @@ const BID_CARDS: [BidSpace; PLAYER_COUNT] = [
     Debug, Clone, Serialize, Sequence, Deserialize, PartialEq, Eq, Copy, Hash, PartialOrd, Ord,
 )]
 pub enum BidSpace {
-    PlusFace,
-    PlusOne,
-    Cancel,
-    Missing,
+    Cancel = 0,
+    PlusFace = 1,
+    PlusOne = 2,
+    Missing = 3,
 }
 
 impl BidSpace {
@@ -916,120 +916,7 @@ impl PalaGame {
 
         // Show captured cards, cancellations, and score for each player in turn
         for player in 0..PLAYER_COUNT {
-            let mut player_cards = self.cards_won[player].clone();
-            let score_change = self.score_player(player);
-
-            // Skip players with no cards and no score change
-            if player_cards.is_empty() && score_change == 0 {
-                continue;
-            }
-
-            // Phase 1: Reveal this player's captured cards (sorted)
-            if !player_cards.is_empty() {
-                // Sort cards for display: cancel cards first, then highest point value, then non-scoring by color
-                self.sort_cards_for_scoring(&mut player_cards);
-
-                let reveal_index = self.new_change();
-                for (offset, card) in player_cards.iter().enumerate() {
-                    self.add_change(
-                        reveal_index,
-                        Change {
-                            change_type: ChangeType::RevealScoringCards,
-                            object_id: card.id,
-                            dest: Location::ScoredCards,
-                            player,
-                            offset,
-                            length: player_cards.len(),
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
-
-            // Phase 2: Show cancellation effects for this player
-            let cancelled_cards = self.get_cancelled_cards(&self.cards_won[player]);
-            if !cancelled_cards.is_empty() {
-                let cancel_index = self.new_change();
-                for card in cancelled_cards {
-                    self.add_change(
-                        cancel_index,
-                        Change {
-                            change_type: ChangeType::Cancel,
-                            object_id: card.id,
-                            dest: Location::ScoredCards,
-                            player,
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
-
-            // Phase 3: Animate score change for this player
-            if score_change != 0 {
-                // Add message showing points scored this round
-                let score_index = self.new_change();
-                let player_name = self.player_name_string(player);
-                let point_or_points = if score_change.abs() == 1 {
-                    "point"
-                } else {
-                    "points"
-                };
-                let message = format!(
-                    "{} scored {} {} this round",
-                    player_name, score_change, point_or_points
-                );
-                self.add_change(
-                    score_index,
-                    Change {
-                        change_type: ChangeType::Message,
-                        message: Some(message),
-                        object_id: -1,
-                        dest: Location::Message,
-                        ..Default::default()
-                    },
-                );
-                self.add_change(
-                    score_index,
-                    Change {
-                        change_type: ChangeType::Score,
-                        dest: Location::Score,
-                        player,
-                        startscore: self.scores[player],
-                        end_score: self.scores[player] + score_change,
-                        object_id: player as i32,
-                        ..Default::default()
-                    },
-                );
-                // Update the actual score
-                self.scores[player] += score_change;
-            }
-
-            let pause_index = self.new_change();
-            self.add_change(
-                pause_index,
-                Change {
-                    change_type: ChangeType::OptionalPause,
-                    object_id: 0,
-                    dest: Location::ScoredCards,
-                    ..Default::default()
-                },
-            );
-
-            // Phase 4: Move all scored cards to burn cards location
-            if !player_cards.is_empty() {
-                let return_index = self.new_change();
-                for card in player_cards.iter() {
-                    self.add_change(
-                        return_index,
-                        Change {
-                            change_type: ChangeType::BurnCards,
-                            object_id: card.id,
-                            dest: Location::BurnCards,
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
+            self.score_player(player);
         }
 
         self.cards_won = [vec![], vec![], vec![], vec![]];
@@ -1062,116 +949,7 @@ impl PalaGame {
         self.deal();
     }
 
-    fn reduce_with_cancel(&self, cards: &Vec<Card>) -> Vec<Card> {
-        let mut cancel_cards: Vec<Card> = vec![];
-        let mut other_cards: Vec<Card> = vec![];
-
-        for card in cards {
-            let bid_space = self
-                .suit_to_bid
-                .get(&card.suit)
-                .unwrap_or(&BidSpace::Missing);
-            match *bid_space {
-                BidSpace::Missing => {}
-                BidSpace::Cancel => cancel_cards.push(*card),
-                _ => other_cards.push(*card),
-            }
-        }
-
-        // Sort descending by score
-        other_cards.sort_by_key(|c| {
-            let score = self
-                .suit_to_bid
-                .get(&c.suit)
-                .unwrap_or(&BidSpace::Missing)
-                .score_for_card(c);
-            score
-        });
-
-        // Remove one card for each cancel
-        for _ in 0..cancel_cards.len() {
-            if other_cards.is_empty() {
-                // No more cards on which to apply cancel cards
-                break;
-            }
-            // Each cancel card removes the highest other card and is itself removed
-            cancel_cards.pop();
-            other_cards.pop();
-        }
-
-        // Add remaining cancel cards back
-        other_cards.extend(cancel_cards);
-
-        other_cards
-    }
-
-    fn record_void_if_not_already_known(&mut self, player: usize, suit: Suit) {
-        if !self.voids[player].contains(&suit) {
-            self.voids[player].push(suit);
-        }
-    }
-
-    fn sort_cards_for_scoring(&self, cards: &mut Vec<Card>) {
-        let cancelled_cards_set: HashSet<i32> = self
-            .get_cancelled_cards(cards)
-            .iter()
-            .map(|c| c.id)
-            .collect();
-
-        cards.sort_by(|a, b| {
-            let bid_space_a = self.suit_to_bid.get(&a.suit).unwrap_or(&BidSpace::Missing);
-            let bid_space_b = self.suit_to_bid.get(&b.suit).unwrap_or(&BidSpace::Missing);
-
-            let is_cancelled_a = cancelled_cards_set.contains(&a.id);
-            let is_cancelled_b = cancelled_cards_set.contains(&b.id);
-
-            // First, group by cancellation status and bid space type
-            let priority_a = if is_cancelled_a {
-                0 // Cancelled cards first
-            } else {
-                match bid_space_a {
-                    BidSpace::Cancel => 1,   // Unused cancel cards
-                    BidSpace::PlusFace => 2, // Then scoring cards
-                    BidSpace::PlusOne => 2,  // (same priority as PlusFace)
-                    BidSpace::Missing => 3,  // Non-scoring cards last
-                }
-            };
-
-            let priority_b = if is_cancelled_b {
-                0
-            } else {
-                match bid_space_b {
-                    BidSpace::Cancel => 1,
-                    BidSpace::PlusFace => 2,
-                    BidSpace::PlusOne => 2,
-                    BidSpace::Missing => 3,
-                }
-            };
-
-            match priority_a.cmp(&priority_b) {
-                std::cmp::Ordering::Equal => {
-                    // Same priority group - sort by suit then rank
-                    match a.suit.cmp(&b.suit) {
-                        std::cmp::Ordering::Equal => {
-                            if priority_a == 2 {
-                                // Both are scoring cards - sort by score (highest first) within same suit
-                                let score_a = bid_space_a.score_for_card(a);
-                                let score_b = bid_space_b.score_for_card(b);
-                                score_b.cmp(&score_a)
-                            } else {
-                                // For all other groups (cancelled, unused cancel, non-scoring), sort by rank within suit
-                                a.value.cmp(&b.value)
-                            }
-                        }
-                        other => other,
-                    }
-                }
-                other => other,
-            }
-        });
-    }
-
-    fn get_cancelled_cards(&self, cards: &Vec<Card>) -> Vec<Card> {
+    fn reduce_with_cancel(&self, cards: &Vec<Card>) -> (Vec<Card>, Vec<Card>) {
         let mut cancel_cards: Vec<Card> = vec![];
         let mut other_cards: Vec<Card> = vec![];
         let mut cancelled_cards: Vec<Card> = vec![];
@@ -1183,37 +961,76 @@ impl PalaGame {
                 .unwrap_or(&BidSpace::Missing);
             match *bid_space {
                 BidSpace::Missing => {}
-                BidSpace::Cancel => cancel_cards.push(*card),
+                BidSpace::Cancel => {
+                    cancelled_cards.push(*card);
+                    cancel_cards.push(*card);
+                }
                 _ => other_cards.push(*card),
             }
         }
 
-        // Sort descending by score to cancel highest value cards first
-        other_cards.sort_by_key(|c| {
-            let score = self
-                .suit_to_bid
-                .get(&c.suit)
-                .unwrap_or(&BidSpace::Missing)
-                .score_for_card(c);
-            -score // Negative for descending order
+        cancel_cards.sort_by(|a, b| b.value.cmp(&a.value));
+
+        // Sort descending by score
+        other_cards.sort_by(|a, b| {
+            {
+                let score_a = self
+                    .suit_to_bid
+                    .get(&a.suit)
+                    .unwrap_or(&BidSpace::Missing)
+                    .score_for_card(a);
+                let score_b = self
+                    .suit_to_bid
+                    .get(&b.suit)
+                    .unwrap_or(&BidSpace::Missing)
+                    .score_for_card(b);
+                score_b.cmp(&score_a)
+            }
+            .then_with(|| a.suit.cmp(&b.suit))
+            .then_with(|| b.value.cmp(&a.value))
         });
 
-        // ALL cancel cards get X'd out regardless of whether they cancel other cards
-        for cancel_card in cancel_cards.iter() {
-            cancelled_cards.push(*cancel_card);
+        // Remove one card for each cancel
+        for _ in 0..cancel_cards.len() {
+            if other_cards.is_empty() {
+                // No more cards on which to apply cancel cards
+                break;
+            }
+            // Each cancel card removes the highest other card and is itself removed
+            cancel_cards.remove(0);
+            cancelled_cards.push(other_cards.remove(0));
         }
 
-        // Determine which other cards get cancelled by cancel cards
-        let cancellations = cancel_cards.len().min(other_cards.len());
-        for i in 0..cancellations {
-            cancelled_cards.push(other_cards[i]); // The highest scoring card that gets cancelled
-        }
+        // Add remaining cancel cards back
+        other_cards.extend(cancel_cards);
 
-        cancelled_cards
+        (other_cards, cancelled_cards)
+    }
+
+    fn record_void_if_not_already_known(&mut self, player: usize, suit: Suit) {
+        if !self.voids[player].contains(&suit) {
+            self.voids[player].push(suit);
+        }
+    }
+
+    fn sort_cards_for_scoring(&self, cards: &mut Vec<Card>) {
+        cards.sort_by(|a, b| {
+            let a_bid_space = self.suit_to_bid.get(&a.suit).unwrap_or(&BidSpace::Missing);
+            let b_bid_space = self.suit_to_bid.get(&b.suit).unwrap_or(&BidSpace::Missing);
+            a_bid_space
+                .cmp(b_bid_space)
+                .then_with(|| {
+                    b_bid_space
+                        .score_for_card(b)
+                        .cmp(&a_bid_space.score_for_card(a))
+                })
+                .then_with(|| b.suit.cmp(&a.suit))
+                .then_with(|| b.value.cmp(&a.value))
+        });
     }
 
     pub fn score_player(&mut self, player: usize) -> i32 {
-        let remaining_cards = self.reduce_with_cancel(&self.cards_won[player]);
+        let (remaining_cards, cancelled_cards) = self.reduce_with_cancel(&self.cards_won[player]);
 
         let mut score: i32 = 0;
         for card in remaining_cards.iter() {
@@ -1223,10 +1040,118 @@ impl PalaGame {
                 .unwrap_or(&BidSpace::Missing)
                 .score_for_card(&card);
         }
-        // UI - animate and emit scoring per suit group
-        // TODO - automatically cancel highest point cards
-        // and animate the cancel card away with those cards
+        self.animate_score(player, score, remaining_cards, cancelled_cards);
         return score;
+    }
+
+    fn animate_score(
+        &mut self,
+        player: usize,
+        score: i32,
+        remaining_cards: Vec<Card>,
+        cancelled_cards: Vec<Card>,
+    ) {
+        let mut player_cards = cancelled_cards.clone();
+        player_cards.extend(remaining_cards.iter());
+
+        // Phase 1: Reveal this player's captured cards (sorted)
+        if !player_cards.is_empty() {
+            let reveal_index = self.new_change();
+            for (offset, card) in player_cards.iter().enumerate() {
+                self.add_change(
+                    reveal_index,
+                    Change {
+                        change_type: ChangeType::RevealScoringCards,
+                        object_id: card.id,
+                        dest: Location::ScoredCards,
+                        player,
+                        offset,
+                        length: player_cards.len(),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        // Phase 2: Show cancellation effects for this player
+        if !cancelled_cards.is_empty() {
+            let cancel_index = self.new_change();
+            for card in cancelled_cards {
+                self.add_change(
+                    cancel_index,
+                    Change {
+                        change_type: ChangeType::Cancel,
+                        object_id: card.id,
+                        dest: Location::ScoredCards,
+                        player,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        // Phase 3: Animate score change for this player
+        if score != 0 {
+            // Add message showing points scored this round
+            let score_index = self.new_change();
+            let player_name = self.player_name_string(player);
+            let point_or_points = if score.abs() == 1 { "point" } else { "points" };
+            let message = format!(
+                "{} scored {} {} this round",
+                player_name, score, point_or_points
+            );
+            self.add_change(
+                score_index,
+                Change {
+                    change_type: ChangeType::Message,
+                    message: Some(message),
+                    object_id: -1,
+                    dest: Location::Message,
+                    ..Default::default()
+                },
+            );
+            self.add_change(
+                score_index,
+                Change {
+                    change_type: ChangeType::Score,
+                    dest: Location::Score,
+                    player,
+                    startscore: self.scores[player],
+                    end_score: self.scores[player] + score,
+                    object_id: player as i32,
+                    ..Default::default()
+                },
+            );
+            // Update the actual score
+            self.scores[player] += score;
+        }
+
+        let pause_index = self.new_change();
+        self.add_change(
+            pause_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::ScoredCards,
+                ..Default::default()
+            },
+        );
+
+        // Phase 4: Move all scored cards to burn cards location
+        if !player_cards.is_empty() {
+            let return_index = self.new_change();
+            for card in player_cards.iter() {
+                self.add_change(
+                    return_index,
+                    Change {
+                        change_type: ChangeType::BurnCards,
+                        object_id: card.id,
+                        dest: Location::BurnCards,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
     }
 
     #[inline]
