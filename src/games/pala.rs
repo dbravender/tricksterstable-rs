@@ -939,6 +939,17 @@ impl PalaGame {
                         },
                     );
                 }
+
+                // Pause after showing captured cards
+                self.add_change(
+                    reveal_index,
+                    Change {
+                        change_type: ChangeType::OptionalPause,
+                        object_id: 0,
+                        dest: Location::ScoredCards,
+                        ..Default::default()
+                    },
+                );
             }
 
             // Phase 2: Show cancellation effects for this player
