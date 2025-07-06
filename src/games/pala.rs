@@ -43,10 +43,10 @@ const LOCATION_BASED_MOVES: &[i32] = &[
 const PLAYER_COUNT: usize = 4;
 const POINT_THRESHOLD: i32 = 45;
 const BID_CARDS: [BidSpace; PLAYER_COUNT] = [
-    BidSpace::PlusFace,
-    BidSpace::PlusOne,
-    BidSpace::PlusOne,
     BidSpace::Cancel,
+    BidSpace::PlusOne,
+    BidSpace::PlusOne,
+    BidSpace::PlusFace,
 ];
 
 #[derive(
@@ -939,17 +939,6 @@ impl PalaGame {
                         },
                     );
                 }
-
-                // Pause after showing captured cards
-                self.add_change(
-                    reveal_index,
-                    Change {
-                        change_type: ChangeType::OptionalPause,
-                        object_id: 0,
-                        dest: Location::ScoredCards,
-                        ..Default::default()
-                    },
-                );
             }
 
             // Phase 2: Show cancellation effects for this player
@@ -972,7 +961,24 @@ impl PalaGame {
 
             // Phase 3: Animate score change for this player
             if score_change != 0 {
+                // Add message showing points scored this round
                 let score_index = self.new_change();
+                let player_name = self.player_name_string(player);
+                let point_or_points = if score_change == 1 { "point" } else { "points" };
+                let message = format!(
+                    "{} scored {} {} this round.",
+                    player_name, point_or_points, score_change
+                );
+                self.add_change(
+                    score_index,
+                    Change {
+                        change_type: ChangeType::Message,
+                        message: Some(message),
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    },
+                );
                 self.add_change(
                     score_index,
                     Change {
@@ -987,21 +993,18 @@ impl PalaGame {
                 );
                 // Update the actual score
                 self.scores[player] += score_change;
-
-                // Add message showing points scored this round
-                let player_name = self.player_name_string(player);
-                let message = format!("{} scored {} points this round.", player_name, score_change);
-                self.add_change(
-                    score_index,
-                    Change {
-                        change_type: ChangeType::Message,
-                        message: Some(message),
-                        object_id: -1,
-                        dest: Location::Message,
-                        ..Default::default()
-                    },
-                );
             }
+
+            let pause_index = self.new_change();
+            self.add_change(
+                pause_index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    object_id: 0,
+                    dest: Location::ScoredCards,
+                    ..Default::default()
+                },
+            );
 
             // Phase 4: Move all scored cards to burn cards location
             if !player_cards.is_empty() {
@@ -1019,18 +1022,6 @@ impl PalaGame {
                 }
             }
         }
-
-        // Single pause at the end of all scoring
-        let final_pause_index = self.new_change();
-        self.add_change(
-            final_pause_index,
-            Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: 0,
-                dest: Location::Score,
-                ..Default::default()
-            },
-        );
 
         self.cards_won = [vec![], vec![], vec![], vec![]];
         let max_score = self.scores.iter().max().unwrap();
@@ -1126,6 +1117,9 @@ impl PalaGame {
                 (BidSpace::Missing, BidSpace::Missing) => a.suit.cmp(&b.suit), // Non-scoring by color
                 (BidSpace::Missing, _) => std::cmp::Ordering::Greater,
                 (_, BidSpace::Missing) => std::cmp::Ordering::Less,
+
+                (BidSpace::PlusFace, BidSpace::PlusFace) => a.suit.cmp(&b.suit),
+                (BidSpace::PlusOne, BidSpace::PlusOne) => a.suit.cmp(&b.suit),
 
                 // Both are scoring cards - sort by point value (highest first)
                 _ => {
@@ -1591,13 +1585,13 @@ mod tests {
         let mut game = PalaGame::new();
 
         game.bids = [
-            // BidSpace::PlusFace,
+            // BidSpace::Cancel,
             Some(Suit::Orange),
             // BidSpace::PlusOne,
             Some(Suit::Purple),
             // BidSpace::PlusOne,
             Some(Suit::Red),
-            // BidSpace::Cancel,
+            // BidSpace::PlusFace,
             Some(Suit::Green),
         ];
         game.set_suit_to_bid();
@@ -1616,7 +1610,7 @@ mod tests {
                 name: "face suits score face value".to_string(),
                 cards_won: vec![Card {
                     id: 0,
-                    suit: Suit::Orange,
+                    suit: Suit::Green,
                     value: 7,
                 }],
                 expected_score: 7,
@@ -1634,7 +1628,7 @@ mod tests {
                 name: "cancel suits score -1 point".to_string(),
                 cards_won: vec![Card {
                     id: 0,
-                    suit: Suit::Green,
+                    suit: Suit::Orange,
                     value: 5,
                 }],
                 expected_score: -1,
@@ -1644,12 +1638,12 @@ mod tests {
                 cards_won: vec![
                     Card {
                         id: 0,
-                        suit: Suit::Green,
+                        suit: Suit::Orange,
                         value: 1,
                     }, // cancel
                     Card {
                         id: 1,
-                        suit: Suit::Orange,
+                        suit: Suit::Green,
                         value: 9,
                     }, // +face
                     Card {
@@ -1658,24 +1652,24 @@ mod tests {
                         value: 4,
                     }, // +1
                 ],
-                expected_score: 1, // Orange 9 is canceled, Red gives +1, cancel is consumed (0)
+                expected_score: 1, // Green 9 is canceled, Red gives +1, cancel is consumed (0)
             },
             ScoreScenario {
                 name: "cancel removes highest of multiple +face".to_string(),
                 cards_won: vec![
                     Card {
                         id: 0,
-                        suit: Suit::Green,
+                        suit: Suit::Orange,
                         value: 1,
                     }, // cancel
                     Card {
                         id: 1,
-                        suit: Suit::Orange,
+                        suit: Suit::Green,
                         value: 7,
                     }, // +face
                     Card {
                         id: 2,
-                        suit: Suit::Orange,
+                        suit: Suit::Green,
                         value: 5,
                     }, // +face
                 ],
@@ -1686,7 +1680,7 @@ mod tests {
                 cards_won: vec![
                     Card {
                         id: 0,
-                        suit: Suit::Green,
+                        suit: Suit::Orange,
                         value: 1,
                     }, // cancel
                     Card {
@@ -1702,22 +1696,22 @@ mod tests {
                 cards_won: vec![
                     Card {
                         id: 0,
-                        suit: Suit::Green,
+                        suit: Suit::Orange,
                         value: 1,
                     }, // cancel
                     Card {
                         id: 1,
-                        suit: Suit::Green,
+                        suit: Suit::Orange,
                         value: 2,
                     }, // cancel
                     Card {
                         id: 2,
-                        suit: Suit::Orange,
+                        suit: Suit::Green,
                         value: 7,
                     }, // +face
                     Card {
                         id: 3,
-                        suit: Suit::Orange,
+                        suit: Suit::Green,
                         value: 6,
                     }, // +face
                     Card {
@@ -1726,19 +1720,19 @@ mod tests {
                         value: 3,
                     }, // +1
                 ],
-                expected_score: 1, // Orange 7 and 6 are canceled, Red gives +1, cancels are consumed
+                expected_score: 1, // Green 7 and 6 are canceled, Red gives +1, cancels are consumed
             },
             ScoreScenario {
                 name: "more cancels than scoring cards".to_string(),
                 cards_won: vec![
                     Card {
                         id: 0,
-                        suit: Suit::Green,
+                        suit: Suit::Orange,
                         value: 1,
                     }, // cancel
                     Card {
                         id: 1,
-                        suit: Suit::Green,
+                        suit: Suit::Orange,
                         value: 2,
                     }, // cancel
                     Card {
