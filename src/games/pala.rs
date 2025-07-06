@@ -987,6 +987,20 @@ impl PalaGame {
                 );
                 // Update the actual score
                 self.scores[player] += score_change;
+
+                // Add message showing points scored this round
+                let player_name = self.player_name_string(player);
+                let message = format!("{} scored {} points this round.", player_name, score_change);
+                self.add_change(
+                    score_index,
+                    Change {
+                        change_type: ChangeType::Message,
+                        message: Some(message),
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    },
+                );
             }
 
             // Phase 4: Move all scored cards to burn cards location
