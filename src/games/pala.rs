@@ -592,7 +592,7 @@ impl PalaGame {
     }
 
     pub fn get_lead_suit(&self) -> Option<Suit> {
-        self.current_trick[self.lead_player].map(|card| card.suit)
+        self.current_trick[self.trick_winning_player].map(|card| card.suit)
     }
 
     pub fn current_player_card_ids(&self) -> Vec<i32> {
