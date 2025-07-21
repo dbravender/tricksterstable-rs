@@ -1126,19 +1126,18 @@ impl PalaGame {
             self.scores[player] += score;
         }
 
-        let pause_index = self.new_change();
-        self.add_change(
-            pause_index,
-            Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: 0,
-                dest: Location::ScoredCards,
-                ..Default::default()
-            },
-        );
-
         // Phase 4: Move all scored cards to burn cards location
         if !player_cards.is_empty() {
+            let pause_index = self.new_change();
+            self.add_change(
+                pause_index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    object_id: 0,
+                    dest: Location::ScoredCards,
+                    ..Default::default()
+                },
+            );
             let return_index = self.new_change();
             for card in player_cards.iter() {
                 self.add_change(
@@ -1163,16 +1162,16 @@ impl PalaGame {
     #[inline]
     fn advance_player(&mut self) {
         self.hide_playable();
-        let cards_per_player = self.hands.iter().map(|h| h.len());
-        if cards_per_player.filter(|c| *c > 0).count() <= 1 {
-            self.end_of_hand();
-            return;
-        }
         let start_player = self.current_player;
         loop {
             self.current_player = (self.current_player + 1) % PLAYER_COUNT;
             if self.current_player == start_player {
                 self.end_of_trick();
+                let cards_per_player = self.hands.iter().map(|h| h.len());
+                if cards_per_player.filter(|c| *c > 0).count() <= 1 {
+                    self.end_of_hand();
+                    return;
+                }
                 break;
             }
             if self.hands[self.current_player].len() > 0
