@@ -1013,22 +1013,6 @@ impl PalaGame {
         }
     }
 
-    fn sort_cards_for_scoring(&self, cards: &mut Vec<Card>) {
-        cards.sort_by(|a, b| {
-            let a_bid_space = self.suit_to_bid.get(&a.suit).unwrap_or(&BidSpace::Missing);
-            let b_bid_space = self.suit_to_bid.get(&b.suit).unwrap_or(&BidSpace::Missing);
-            a_bid_space
-                .cmp(b_bid_space)
-                .then_with(|| {
-                    b_bid_space
-                        .score_for_card(b)
-                        .cmp(&a_bid_space.score_for_card(a))
-                })
-                .then_with(|| b.suit.cmp(&a.suit))
-                .then_with(|| b.value.cmp(&a.value))
-        });
-    }
-
     pub fn score_player(&mut self, player: usize) -> i32 {
         let (remaining_cards, cancelled_cards) = self.reduce_with_cancel(&self.cards_won[player]);
 
@@ -1054,9 +1038,10 @@ impl PalaGame {
         let mut player_cards = cancelled_cards.clone();
         player_cards.extend(remaining_cards.iter());
 
+        let reveal_index = self.new_change();
+
         // Phase 1: Reveal this player's captured cards (sorted)
         if !player_cards.is_empty() {
-            let reveal_index = self.new_change();
             for (offset, card) in player_cards.iter().enumerate() {
                 self.add_change(
                     reveal_index,
@@ -1075,10 +1060,9 @@ impl PalaGame {
 
         // Phase 2: Show cancellation effects for this player
         if !cancelled_cards.is_empty() {
-            let cancel_index = self.new_change();
             for card in cancelled_cards {
                 self.add_change(
-                    cancel_index,
+                    reveal_index,
                     Change {
                         change_type: ChangeType::Cancel,
                         object_id: card.id,
@@ -1091,7 +1075,7 @@ impl PalaGame {
         }
 
         // Phase 3: Animate score change for this player
-        if score != 0 {
+        if !player_cards.is_empty() {
             // Add message showing points scored this round
             let score_index = self.new_change();
             let player_name = self.player_name_string(player);
@@ -2059,13 +2043,13 @@ mod tests {
             PlayCardsScenario {
                 name: "Can and does smear".to_string(),
                 current_trick: [None, None, Some(red3), None],
-                hand: vec![blue5, purple8],
+                hand: vec![blue5, purple8, orange8],
                 current_player: 3,
                 lead_player: 2,
                 trick_winning_player: 2,
                 play_card_moves: vec![
                     PlayCardMoves {
-                        expected_moves_before: vec![blue5.id, purple8.id],
+                        expected_moves_before: vec![blue5.id, purple8.id, orange8.id],
                         action: blue5.id,
                         expected_current_trick_after_move: [None, None, Some(red3), None],
                         expected_state_after_move: State::SelectLocationToPlay,
