@@ -914,6 +914,11 @@ impl PalaGame {
     fn end_of_hand(&mut self) {
         self.set_suit_to_bid();
 
+        // Add remaining cards in hand to cards_won (they score against the player)
+        for player in 0..PLAYER_COUNT {
+            self.cards_won[player].extend(self.hands[player].clone());
+        }
+
         // Show captured cards, cancellations, and score for each player in turn
         for player in 0..PLAYER_COUNT {
             self.score_player(player);
