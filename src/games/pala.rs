@@ -1006,8 +1006,8 @@ impl PalaGame {
             cancelled_cards.push(other_cards.remove(0));
         }
 
-        // Add remaining cancel cards back
-        other_cards.extend(cancel_cards);
+        // Add remaining cancel cards back (to front)
+        let other_cards = cancel_cards.into_iter().chain(other_cards).collect();
 
         (other_cards, cancelled_cards)
     }
