@@ -132,18 +132,74 @@ pub enum State {
     GameOverLose,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Location {
+    #[default]
+    Deck,
+    Hand,
+    TummyCards,
+    HeadCards,
+    Piles,
+    Score,
+    Message,
+    LuckyStones,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeType {
+    #[default]
+    Deal,
+    Play,
+    Shuffle,
+    ShowPlayable,
+    HidePlayable,
+    Message,
+    Score,
+    GameOver,
+    FlipHead,
+    SwapHeads,
+    MoveToTummy,
+    UpdateLuckyStones,
+    BurnCard,
+    UpdateStackCount,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct Change {
+    #[serde(rename(serialize = "type", deserialize = "type"))]
+    pub change_type: ChangeType,
+    pub object_id: i32,
+    pub dest: Location,
+    pub startscore: i32,
+    pub end_score: i32,
+    pub offset: usize,
+    pub player: usize,
+    pub length: usize,
+    pub highlight: bool,
+    pub message: Option<String>,
+    pub card: Option<Card>,
+    pub head_card: Option<HeadCard>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct OtterGame {
-    head_cards: [HeadCard; 3],
-    tummy_cards: [Card; 3],
-    piles: [Vec<Card>; 4],
+    pub head_cards: [HeadCard; 3],
+    pub tummy_cards: [Card; 3],
+    pub piles: [Vec<Card>; 4],
     last_played_head_card_index: usize,
     last_played_pile_index: usize,
     pub state: State,
     selected_pile_offset: Option<usize>,
     selected_head_offset: Option<usize>,
     pub lucky_stones: i32,
+    pub changes: Vec<Vec<Change>>,
+    pub no_changes: bool,
+    pub score: i32,
+    pub winner: Option<bool>, // true = win, false = lose
 }
 
 impl OtterGame {
@@ -156,7 +212,7 @@ impl OtterGame {
             .try_into()
             .expect("wrong length");
 
-        return OtterGame {
+        let mut game = OtterGame {
             head_cards: OtterGame::head_deck().try_into().expect("wrong length"),
             piles: [
                 tummy_deck.drain(..15).collect::<Vec<_>>(),
@@ -171,7 +227,15 @@ impl OtterGame {
             selected_head_offset: None,
             selected_pile_offset: None,
             lucky_stones: 4,
+            changes: Vec::new(),
+            no_changes: false,
+            score: 0,
+            winner: None,
         };
+
+        // Generate initial setup animation
+        game.generate_setup_animation();
+        game
     }
 
     pub fn find_head_offset(&self, card_id: i32) -> Option<usize> {
@@ -195,6 +259,9 @@ impl OtterGame {
         if !self.get_moves().contains(&card_id) {
             panic!("invalid move");
         }
+
+        self.changes.clear(); // Clear previous animations
+
         match self.state {
             State::GameOverLose => panic!("moves can't be made when the game is over"),
             State::GameOverWin => panic!("moves can't be made when the game is over"),
@@ -203,10 +270,12 @@ impl OtterGame {
                     self.selected_head_offset = self.find_head_offset(card_id);
                     self.selected_pile_offset = None;
                     self.state = State::SelectHead;
+                    self.generate_show_playable_heads_animation();
                 } else {
                     self.selected_head_offset = None;
                     self.selected_pile_offset = self.find_pile_offset(card_id);
                     self.state = State::SelectTummy;
+                    self.generate_show_playable_tummy_animation();
                 }
             }
             State::SelectHead => {
@@ -214,13 +283,22 @@ impl OtterGame {
                 let second_head_card_offset = self.find_head_offset(card_id).unwrap();
                 let mut first_head_card = self.head_cards[first_head_card_offset];
                 let second_head_card = self.head_cards[second_head_card_offset];
+
                 if first_head_card.id == second_head_card.id {
                     first_head_card.flip();
+                    self.head_cards[first_head_card_offset] = first_head_card;
+                    self.generate_flip_head_animation(first_head_card_offset);
                 } else {
                     self.head_cards
                         .swap(first_head_card_offset, second_head_card_offset);
+                    self.generate_swap_heads_animation(
+                        first_head_card_offset,
+                        second_head_card_offset,
+                    );
                 }
+
                 self.lucky_stones -= 1;
+                self.generate_update_lucky_stones_animation();
                 self.selected_head_offset = None;
                 self.selected_pile_offset = None;
                 self.state = State::SelectTummyOrHead;
@@ -235,25 +313,39 @@ impl OtterGame {
                 let card = self.piles[self.selected_pile_offset.unwrap()]
                     .pop()
                     .unwrap();
+
+                // Update stack counts after moving a card from pile
+                self.generate_stack_count_updates();
+
+                self.generate_move_to_tummy_animation(
+                    card,
+                    self.selected_pile_offset.unwrap(),
+                    tummy_offset,
+                );
+
                 self.tummy_cards[tummy_offset] = card;
                 self.last_played_head_card_index = tummy_offset;
                 self.last_played_pile_index = self.selected_pile_offset.unwrap();
                 self.selected_head_offset = None;
                 self.selected_pile_offset = None;
                 self.state = State::SelectTummyOrHead;
+
                 self.check_end();
             }
         }
-        return;
     }
 
     fn check_end(&mut self) {
         if self.get_moves().is_empty() {
             // No moves
-            self.state = if self.piles.iter().all(|p| p.is_empty()) {
-                State::GameOverWin
+            if self.piles.iter().all(|p| p.is_empty()) {
+                self.state = State::GameOverWin;
+                self.winner = Some(true);
+                self.generate_game_over_animation(true);
             } else {
-                State::GameOverLose
+                self.state = State::GameOverLose;
+                self.winner = Some(false);
+                self.generate_game_over_animation(false);
             }
         }
     }
@@ -393,6 +485,276 @@ impl OtterGame {
         deck.shuffle(&mut thread_rng());
 
         return deck;
+    }
+
+    // Animation generation methods
+    fn generate_setup_animation(&mut self) {
+        if self.no_changes {
+            return;
+        }
+
+        let mut setup_changes = Vec::new();
+
+        // Show initial tummy cards
+        for (i, card) in self.tummy_cards.iter().enumerate() {
+            setup_changes.push(Change {
+                change_type: ChangeType::Deal,
+                object_id: card.id,
+                dest: Location::TummyCards,
+                offset: i,
+                player: 0,
+                length: 3,
+                card: Some(*card),
+                ..Default::default()
+            });
+        }
+
+        // Show head cards
+        for (i, head_card) in self.head_cards.iter().enumerate() {
+            setup_changes.push(Change {
+                change_type: ChangeType::Deal,
+                object_id: head_card.id,
+                dest: Location::HeadCards,
+                offset: i,
+                player: 0,
+                length: 3,
+                head_card: Some(*head_card),
+                ..Default::default()
+            });
+        }
+
+        // Show all pile cards (deal all cards to their pile positions)
+        for (pile_idx, pile) in self.piles.iter().enumerate() {
+            for (card_idx, card) in pile.iter().enumerate() {
+                setup_changes.push(Change {
+                    change_type: ChangeType::Deal,
+                    object_id: card.id,
+                    dest: Location::Piles,
+                    offset: pile_idx,
+                    player: 0,
+                    length: pile.len(),
+                    card: Some(*card),
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Show lucky stones
+        setup_changes.push(Change {
+            change_type: ChangeType::UpdateLuckyStones,
+            object_id: -1,
+            dest: Location::LuckyStones,
+            end_score: self.lucky_stones,
+            ..Default::default()
+        });
+
+        self.changes.push(setup_changes);
+
+        // After setup, burn unused head cards
+        self.generate_burn_unused_head_cards_animation();
+
+        // Update stack counts
+        self.generate_stack_count_updates();
+    }
+
+    fn generate_show_playable_heads_animation(&mut self) {
+        if self.no_changes {
+            return;
+        }
+
+        let mut changes = Vec::new();
+        for head_card in &self.head_cards {
+            changes.push(Change {
+                change_type: ChangeType::ShowPlayable,
+                object_id: head_card.id,
+                dest: Location::HeadCards,
+                highlight: true,
+                head_card: Some(*head_card),
+                ..Default::default()
+            });
+        }
+        self.changes.push(changes);
+    }
+
+    fn generate_show_playable_tummy_animation(&mut self) {
+        if self.no_changes {
+            return;
+        }
+
+        let mut changes = Vec::new();
+        let moves = self.get_tummy_moves();
+
+        for tummy_card in &self.tummy_cards {
+            if moves.contains(&tummy_card.id) {
+                changes.push(Change {
+                    change_type: ChangeType::ShowPlayable,
+                    object_id: tummy_card.id,
+                    dest: Location::TummyCards,
+                    highlight: true,
+                    card: Some(*tummy_card),
+                    ..Default::default()
+                });
+            }
+        }
+        self.changes.push(changes);
+    }
+
+    fn generate_flip_head_animation(&mut self, head_offset: usize) {
+        if self.no_changes {
+            return;
+        }
+
+        let changes = vec![Change {
+            change_type: ChangeType::FlipHead,
+            object_id: self.head_cards[head_offset].id,
+            dest: Location::HeadCards,
+            offset: head_offset,
+            head_card: Some(self.head_cards[head_offset]),
+            ..Default::default()
+        }];
+        self.changes.push(changes);
+    }
+
+    fn generate_swap_heads_animation(&mut self, offset1: usize, offset2: usize) {
+        if self.no_changes {
+            return;
+        }
+
+        let changes = vec![
+            Change {
+                change_type: ChangeType::SwapHeads,
+                object_id: self.head_cards[offset1].id,
+                dest: Location::HeadCards,
+                offset: offset2,
+                head_card: Some(self.head_cards[offset1]),
+                ..Default::default()
+            },
+            Change {
+                change_type: ChangeType::SwapHeads,
+                object_id: self.head_cards[offset2].id,
+                dest: Location::HeadCards,
+                offset: offset1,
+                head_card: Some(self.head_cards[offset2]),
+                ..Default::default()
+            },
+        ];
+        self.changes.push(changes);
+    }
+
+    fn generate_move_to_tummy_animation(&mut self, card: Card, pile_idx: usize, tummy_idx: usize) {
+        if self.no_changes {
+            return;
+        }
+
+        let changes = vec![Change {
+            change_type: ChangeType::MoveToTummy,
+            object_id: card.id,
+            dest: Location::TummyCards,
+            offset: tummy_idx,
+            card: Some(card),
+            ..Default::default()
+        }];
+        self.changes.push(changes);
+    }
+
+    fn generate_update_lucky_stones_animation(&mut self) {
+        if self.no_changes {
+            return;
+        }
+
+        let changes = vec![Change {
+            change_type: ChangeType::UpdateLuckyStones,
+            object_id: -1,
+            dest: Location::LuckyStones,
+            end_score: self.lucky_stones,
+            ..Default::default()
+        }];
+        self.changes.push(changes);
+    }
+
+    fn generate_game_over_animation(&mut self, won: bool) {
+        if self.no_changes {
+            return;
+        }
+
+        let message = if won {
+            "You Win! All piles cleared!".to_string()
+        } else {
+            "Game Over! No more valid moves.".to_string()
+        };
+
+        let changes = vec![
+            Change {
+                change_type: ChangeType::Message,
+                object_id: -1,
+                dest: Location::Message,
+                message: Some(message),
+                ..Default::default()
+            },
+            Change {
+                change_type: ChangeType::GameOver,
+                object_id: -1,
+                dest: Location::Score,
+                end_score: if won { 1 } else { 0 },
+                ..Default::default()
+            },
+        ];
+        self.changes.push(changes);
+    }
+
+    fn generate_burn_unused_head_cards_animation(&mut self) {
+        if self.no_changes {
+            return;
+        }
+
+        let mut burn_changes = Vec::new();
+
+        // Get all possible head cards (we create 5, but only use 3)
+        let all_head_cards = Self::head_deck();
+        let active_head_ids: std::collections::HashSet<i32> =
+            self.head_cards.iter().map(|hc| hc.id).collect();
+
+        // Burn (hide) head cards that are not in the active game
+        for head_card in all_head_cards {
+            if !active_head_ids.contains(&head_card.id) {
+                burn_changes.push(Change {
+                    change_type: ChangeType::BurnCard,
+                    object_id: head_card.id,
+                    dest: Location::HeadCards,
+                    head_card: Some(head_card),
+                    ..Default::default()
+                });
+            }
+        }
+
+        if !burn_changes.is_empty() {
+            self.changes.push(burn_changes);
+        }
+    }
+
+    fn generate_stack_count_updates(&mut self) {
+        if self.no_changes {
+            return;
+        }
+
+        let mut stack_changes = Vec::new();
+
+        // Update pile stack counts
+        for (pile_index, pile) in self.piles.iter().enumerate() {
+            stack_changes.push(Change {
+                change_type: ChangeType::UpdateStackCount,
+                object_id: pile_index as i32,
+                dest: Location::Piles,
+                offset: pile_index,
+                length: pile.len(),
+                end_score: pile.len() as i32,
+                ..Default::default()
+            });
+        }
+
+        if !stack_changes.is_empty() {
+            self.changes.push(stack_changes);
+        }
     }
 }
 
