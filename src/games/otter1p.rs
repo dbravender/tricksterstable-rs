@@ -31,7 +31,8 @@ pub enum Suit {
     Finstin = 0,
     Stardon = 1,
     Clawson = 2,
-    Todd = 3,
+    Shelldon = 3,
+    Todd = 4,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -166,7 +167,7 @@ pub enum ChangeType {
     UpdateStackCount,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     #[serde(rename(serialize = "type", deserialize = "type"))]
@@ -182,6 +183,25 @@ pub struct Change {
     pub message: Option<String>,
     pub card: Option<Card>,
     pub head_card: Option<HeadCard>,
+}
+
+impl Default for Change {
+    fn default() -> Self {
+        Self {
+            change_type: ChangeType::default(),
+            object_id: 0,
+            dest: Location::default(),
+            startscore: 0,
+            end_score: 0,
+            offset: 0,
+            player: 0,
+            length: 0,
+            highlight: false,
+            message: None,
+            card: None,
+            head_card: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -221,8 +241,8 @@ impl OtterGame {
                 tummy_deck,
             ],
             tummy_cards: start_tummy_cards,
-            last_played_pile_index: 100, // intentionally invalid index
-            last_played_head_card_index: 100, // intentionally invalid index
+            last_played_pile_index: 100, // intentionally invalid index - any pile can be played at the start
+            last_played_head_card_index: 100, // intentionally invalid index - any head can be played to at the start
             state: State::SelectTummyOrHead,
             selected_head_offset: None,
             selected_pile_offset: None,
@@ -476,7 +496,7 @@ impl OtterGame {
         let mut id = 0;
 
         for suit in all::<Suit>() {
-            for value in 0..=13 {
+            for value in 1..=13 {
                 deck.push(Card { id, value, suit });
                 id += 1;
             }
