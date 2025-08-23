@@ -585,25 +585,6 @@ impl OtterGame {
         self.generate_stack_count_updates();
     }
 
-    fn generate_show_playable_heads_animation(&mut self) {
-        if self.no_changes {
-            return;
-        }
-
-        let mut changes = Vec::new();
-        for head_card in &self.head_cards {
-            changes.push(Change {
-                change_type: ChangeType::ShowPlayable,
-                object_id: head_card.id,
-                dest: Location::HeadCards,
-                highlight: true,
-                head_card: Some(*head_card),
-                ..Default::default()
-            });
-        }
-        self.changes.push(changes);
-    }
-
     fn generate_playable_animations(&mut self) {
         if self.no_changes {
             return;
