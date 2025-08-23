@@ -578,9 +578,6 @@ impl OtterGame {
 
         self.changes.push(setup_changes);
 
-        // After setup, burn unused head cards
-        self.generate_burn_unused_head_cards_animation();
-
         // Update stack counts
         self.generate_stack_count_updates();
     }
@@ -685,36 +682,6 @@ impl OtterGame {
             },
         ];
         self.changes.push(changes);
-    }
-
-    fn generate_burn_unused_head_cards_animation(&mut self) {
-        if self.no_changes {
-            return;
-        }
-
-        let mut burn_changes = Vec::new();
-
-        // Get all possible head cards (we create 5, but only use 3)
-        let all_head_cards = Self::head_deck();
-        let active_head_ids: std::collections::HashSet<i32> =
-            self.head_cards.iter().map(|hc| hc.id).collect();
-
-        // Burn (hide) head cards that are not in the active game
-        for head_card in all_head_cards {
-            if !active_head_ids.contains(&head_card.id) {
-                burn_changes.push(Change {
-                    change_type: ChangeType::BurnCard,
-                    object_id: head_card.id,
-                    dest: Location::HeadCards,
-                    head_card: Some(head_card),
-                    ..Default::default()
-                });
-            }
-        }
-
-        if !burn_changes.is_empty() {
-            self.changes.push(burn_changes);
-        }
     }
 
     fn generate_stack_count_updates(&mut self) {
