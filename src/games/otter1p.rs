@@ -564,7 +564,7 @@ impl OtterGame {
             change_type: ChangeType::UpdateLuckyStones,
             object_id: -1,
             dest: Location::LuckyStones,
-            end_score: self.lucky_stones,
+            length: self.lucky_stones as usize,
             ..Default::default()
         });
 
@@ -686,7 +686,7 @@ impl OtterGame {
             change_type: ChangeType::UpdateLuckyStones,
             object_id: -1,
             dest: Location::LuckyStones,
-            end_score: self.lucky_stones,
+            length: self.lucky_stones as usize,
             ..Default::default()
         }];
         self.changes.push(changes);
