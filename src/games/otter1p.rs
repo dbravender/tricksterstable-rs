@@ -180,6 +180,7 @@ pub struct Change {
     pub player: usize,
     pub length: usize,
     pub highlight: bool,
+    pub xout: bool,
     pub message: Option<String>,
     pub card: Option<Card>,
     pub head_card: Option<HeadCard>,
@@ -197,6 +198,7 @@ impl Default for Change {
             player: 0,
             length: 0,
             highlight: false,
+            xout: false,
             message: None,
             card: None,
             head_card: None,
@@ -312,6 +314,7 @@ impl OtterGame {
             change_type: ChangeType::HidePlayable,
             object_id: -1,
             highlight: false,
+            xout: false,
             ..Default::default()
         });
         self.changes.push(changes);
@@ -639,6 +642,31 @@ impl OtterGame {
                 ..Default::default()
             });
         }
+
+        // Cross out last played pile
+        if let Some(pile) = self.piles.get(self.last_played_pile_index) {
+            if let Some(card) = pile.last() {
+                changes.push(Change {
+                    change_type: ChangeType::ShowPlayable,
+                    object_id: card.id,
+                    highlight: false,
+                    xout: true,
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Cross out last played head
+        if let Some(card) = self.tummy_cards.get(self.last_played_head_card_index) {
+            changes.push(Change {
+                change_type: ChangeType::ShowPlayable,
+                object_id: card.id,
+                highlight: false,
+                xout: true,
+                ..Default::default()
+            });
+        }
+
         self.changes.push(changes);
     }
 
