@@ -282,6 +282,18 @@ impl OtterGame {
 
         self.changes.clear(); // Clear previous animations
 
+        // Clear old plays out
+        if !self.no_changes {
+            let mut changes = Vec::new();
+            changes.push(Change {
+                change_type: ChangeType::HidePlayable,
+                object_id: -1,
+                highlight: false,
+                ..Default::default()
+            });
+            self.changes.push(changes);
+        }
+
         match self.state {
             State::GameOverLose => panic!("moves can't be made when the game is over"),
             State::GameOverWin => panic!("moves can't be made when the game is over"),
@@ -290,13 +302,12 @@ impl OtterGame {
                     self.selected_head_offset = self.find_head_offset(card_id);
                     self.selected_pile_offset = None;
                     self.state = State::SelectHead;
-                    self.generate_show_playable_heads_animation();
                 } else {
                     self.selected_head_offset = None;
                     self.selected_pile_offset = self.find_pile_offset(card_id);
                     self.state = State::SelectTummy;
-                    self.generate_show_playable_tummy_animation();
                 }
+                self.generate_playable_animations();
             }
             State::SelectHead => {
                 let first_head_card_offset = self.selected_head_offset.unwrap();
@@ -596,25 +607,21 @@ impl OtterGame {
         self.changes.push(changes);
     }
 
-    fn generate_show_playable_tummy_animation(&mut self) {
+    fn generate_playable_animations(&mut self) {
         if self.no_changes {
             return;
         }
 
         let mut changes = Vec::new();
-        let moves = self.get_tummy_moves();
 
-        for tummy_card in &self.tummy_cards {
-            if moves.contains(&tummy_card.id) {
-                changes.push(Change {
-                    change_type: ChangeType::ShowPlayable,
-                    object_id: tummy_card.id,
-                    dest: Location::TummyCards,
-                    highlight: true,
-                    card: Some(*tummy_card),
-                    ..Default::default()
-                });
-            }
+        for action in self.get_moves() {
+            changes.push(Change {
+                change_type: ChangeType::ShowPlayable,
+                object_id: action,
+                dest: Location::TummyCards,
+                highlight: true,
+                ..Default::default()
+            });
         }
         self.changes.push(changes);
     }
