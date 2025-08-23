@@ -318,15 +318,12 @@ impl OtterGame {
                 if first_head_card.id == second_head_card.id {
                     first_head_card.flip();
                     self.head_cards[first_head_card_offset] = first_head_card;
-                    self.generate_flip_head_animation(first_head_card_offset);
                 } else {
                     self.head_cards
                         .swap(first_head_card_offset, second_head_card_offset);
-                    self.generate_swap_heads_animation(
-                        first_head_card_offset,
-                        second_head_card_offset,
-                    );
                 }
+
+                self.generate_show_heads_animation();
 
                 self.lucky_stones -= 1;
                 self.generate_update_lucky_stones_animation();
@@ -626,45 +623,25 @@ impl OtterGame {
         self.changes.push(changes);
     }
 
-    fn generate_flip_head_animation(&mut self, head_offset: usize) {
+    fn generate_show_heads_animation(&mut self) {
         if self.no_changes {
             return;
         }
 
-        let changes = vec![Change {
-            change_type: ChangeType::FlipHead,
-            object_id: self.head_cards[head_offset].id,
-            dest: Location::HeadCards,
-            offset: head_offset,
-            head_card: Some(self.head_cards[head_offset]),
-            ..Default::default()
-        }];
-        self.changes.push(changes);
-    }
+        let mut changes = Vec::new();
 
-    fn generate_swap_heads_animation(&mut self, offset1: usize, offset2: usize) {
-        if self.no_changes {
-            return;
+        for (idx, card) in self.head_cards.iter().enumerate() {
+            changes.push(Change {
+                change_type: ChangeType::Deal,
+                object_id: card.id,
+                dest: Location::HeadCards,
+                offset: idx,
+                player: 0,
+                length: 3,
+                ..Default::default()
+            })
         }
 
-        let changes = vec![
-            Change {
-                change_type: ChangeType::SwapHeads,
-                object_id: self.head_cards[offset1].id,
-                dest: Location::HeadCards,
-                offset: offset2,
-                head_card: Some(self.head_cards[offset1]),
-                ..Default::default()
-            },
-            Change {
-                change_type: ChangeType::SwapHeads,
-                object_id: self.head_cards[offset2].id,
-                dest: Location::HeadCards,
-                offset: offset1,
-                head_card: Some(self.head_cards[offset2]),
-                ..Default::default()
-            },
-        ];
         self.changes.push(changes);
     }
 
