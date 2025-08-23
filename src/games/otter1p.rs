@@ -277,6 +277,7 @@ impl OtterGame {
 
         // Generate initial setup animation
         game.generate_setup_animation();
+        game.generate_playable_animations();
         game
     }
 
@@ -305,16 +306,15 @@ impl OtterGame {
         self.changes.clear(); // Clear previous animations
 
         // Clear old plays out
-        if !self.no_changes {
-            let mut changes = Vec::new();
-            changes.push(Change {
-                change_type: ChangeType::HidePlayable,
-                object_id: -1,
-                highlight: false,
-                ..Default::default()
-            });
-            self.changes.push(changes);
-        }
+
+        let mut changes = Vec::new();
+        changes.push(Change {
+            change_type: ChangeType::HidePlayable,
+            object_id: -1,
+            highlight: false,
+            ..Default::default()
+        });
+        self.changes.push(changes);
 
         match self.state {
             State::GameOverLose => panic!("moves can't be made when the game is over"),
@@ -329,7 +329,6 @@ impl OtterGame {
                     self.selected_pile_offset = self.find_pile_offset(card_id);
                     self.state = State::SelectTummy;
                 }
-                self.generate_playable_animations();
             }
             State::SelectHead => {
                 let first_head_card_offset = self.selected_head_offset.unwrap();
@@ -384,6 +383,8 @@ impl OtterGame {
                 self.check_end();
             }
         }
+
+        self.generate_playable_animations();
     }
 
     fn check_end(&mut self) {
@@ -598,10 +599,35 @@ impl OtterGame {
         self.generate_stack_count_updates();
     }
 
+    fn animate_top_stack(&mut self) {
+        if self.no_changes {
+            return;
+        }
+
+        // We don't know the new card at the top of the deck until after the played card is moved
+        if self.changes.is_empty() {
+            self.changes.push(vec![]);
+        }
+
+        for pile in self.piles.iter() {
+            if let Some(card) = pile.last() {
+                self.changes[0].push(Change {
+                    change_type: ChangeType::ShowPlayable,
+                    object_id: card.id,
+                    dest: Location::Piles,
+                    highlight: false,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
     fn generate_playable_animations(&mut self) {
         if self.no_changes {
             return;
         }
+
+        self.animate_top_stack();
 
         let mut changes = Vec::new();
 
@@ -609,7 +635,6 @@ impl OtterGame {
             changes.push(Change {
                 change_type: ChangeType::ShowPlayable,
                 object_id: action,
-                dest: Location::TummyCards,
                 highlight: true,
                 ..Default::default()
             });
