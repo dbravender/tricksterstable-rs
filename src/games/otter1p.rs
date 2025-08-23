@@ -253,6 +253,28 @@ impl OtterGame {
             winner: None,
         };
 
+        let card_ids_to_flip: Vec<_> = game
+            .head_cards
+            .iter_mut()
+            .filter_map(|card| {
+                if rand::random::<bool>() {
+                    Some(card.id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for card_id in &card_ids_to_flip {
+            game.flip_head_card_animation(*card_id);
+        }
+
+        for card in game.head_cards.iter_mut() {
+            if card_ids_to_flip.contains(&card.id) {
+                card.flip();
+            }
+        }
+
         // Generate initial setup animation
         game.generate_setup_animation();
         game
@@ -318,6 +340,7 @@ impl OtterGame {
                 if first_head_card.id == second_head_card.id {
                     first_head_card.flip();
                     self.head_cards[first_head_card_offset] = first_head_card;
+                    self.flip_head_card_animation(first_head_card.id);
                 } else {
                     self.head_cards
                         .swap(first_head_card_offset, second_head_card_offset);
@@ -462,8 +485,8 @@ impl OtterGame {
         let mut head_cards = vec![
             HeadCard {
                 id: 100,
-                front: HeadType::Lower,
-                back: HeadType::Higher,
+                front: HeadType::Higher,
+                back: HeadType::Lower,
             },
             HeadCard {
                 id: 101,
@@ -488,13 +511,6 @@ impl OtterGame {
         ];
 
         head_cards.shuffle(&mut thread_rng());
-
-        for card in head_cards.iter_mut() {
-            // 50% chance of flipping
-            if rand::random::<bool>() {
-                card.flip();
-            }
-        }
 
         return head_cards[..3].to_vec();
     }
@@ -598,6 +614,24 @@ impl OtterGame {
                 ..Default::default()
             });
         }
+        self.changes.push(changes);
+    }
+
+    fn flip_head_card_animation(&mut self, card_id: i32) {
+        if self.no_changes {
+            return;
+        }
+
+        let mut changes = Vec::new();
+
+        changes.push(Change {
+            change_type: ChangeType::FlipHead,
+            object_id: card_id,
+            dest: Location::HeadCards,
+            player: 0,
+            ..Default::default()
+        });
+
         self.changes.push(changes);
     }
 
