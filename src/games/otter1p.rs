@@ -355,7 +355,10 @@ impl OtterGame {
                 self.selected_head_offset = None;
                 self.selected_pile_offset = None;
                 self.state = State::SelectTummyOrHead;
-                self.check_end();
+
+                if self.check_end() {
+                    return;
+                }
             }
             State::SelectTummy => {
                 let tummy_offset = self
@@ -383,26 +386,30 @@ impl OtterGame {
                 self.selected_pile_offset = None;
                 self.state = State::SelectTummyOrHead;
 
-                self.check_end();
+                if self.check_end() {
+                    return;
+                }
             }
         }
 
         self.generate_playable_animations();
     }
 
-    fn check_end(&mut self) {
+    fn check_end(&mut self) -> bool {
+        if self.piles.iter().all(|p| p.is_empty()) {
+            self.state = State::GameOverWin;
+            self.winner = Some(true);
+            self.generate_game_over_animation(true);
+            return true;
+        }
         if self.get_moves().is_empty() {
             // No moves
-            if self.piles.iter().all(|p| p.is_empty()) {
-                self.state = State::GameOverWin;
-                self.winner = Some(true);
-                self.generate_game_over_animation(true);
-            } else {
-                self.state = State::GameOverLose;
-                self.winner = Some(false);
-                self.generate_game_over_animation(false);
-            }
+            self.state = State::GameOverLose;
+            self.winner = Some(false);
+            self.generate_game_over_animation(false);
+            return true;
         }
+        return false;
     }
 
     pub fn get_moves(&self) -> Vec<i32> {
@@ -731,14 +738,18 @@ impl OtterGame {
             return;
         }
 
-        let changes = vec![Change {
+        if self.changes.is_empty() {
+            self.changes.push(vec![]);
+        }
+
+        let offset = self.changes.len() - 1;
+        self.changes[offset].push(Change {
             change_type: ChangeType::UpdateLuckyStones,
             object_id: -1,
             dest: Location::LuckyStones,
             length: self.lucky_stones as usize,
             ..Default::default()
-        }];
-        self.changes.push(changes);
+        });
     }
 
     fn generate_game_over_animation(&mut self, won: bool) {
@@ -752,6 +763,8 @@ impl OtterGame {
             "Game Over! No more valid moves.".to_string()
         };
 
+        let score: i32 = self.piles.iter().map(|pile| pile.len()).sum::<usize>() as i32;
+
         let changes = vec![
             Change {
                 change_type: ChangeType::Message,
@@ -764,7 +777,7 @@ impl OtterGame {
                 change_type: ChangeType::GameOver,
                 object_id: -1,
                 dest: Location::Score,
-                end_score: if won { 1 } else { 0 },
+                end_score: score,
                 ..Default::default()
             },
         ];
