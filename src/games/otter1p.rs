@@ -1002,6 +1002,6 @@ mod tests {
         ];
 
         let tummy_moves = game.get_moves();
-        assert_eq!(tummy_moves, vec![2]); // Only card 1 should be a legal play
+        assert_eq!(tummy_moves, vec![2, -2]); // Card 2 is legal play, plus undo option
     }
 }
