@@ -133,6 +133,9 @@ pub enum State {
     GameOverLose,
 }
 
+// Undo functionality constants
+const UNDO: i32 = -2;
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Location {
@@ -319,6 +322,15 @@ impl OtterGame {
         });
         self.changes.push(changes);
 
+        // Handle undo move
+        if card_id == UNDO {
+            self.selected_head_offset = None;
+            self.selected_pile_offset = None;
+            self.state = State::SelectTummyOrHead;
+            self.generate_playable_animations();
+            return;
+        }
+
         match self.state {
             State::GameOverLose => panic!("moves can't be made when the game is over"),
             State::GameOverWin => panic!("moves can't be made when the game is over"),
@@ -413,13 +425,20 @@ impl OtterGame {
     }
 
     pub fn get_moves(&self) -> Vec<i32> {
-        match self.state {
+        let mut moves = match self.state {
             State::SelectTummyOrHead => self.get_pile_or_head_moves(),
             State::SelectHead => self.head_cards.map(|c| c.id).to_vec(),
             State::SelectTummy => self.get_tummy_moves(),
             State::GameOverLose => vec![],
             State::GameOverWin => vec![],
+        };
+
+        // Add undo move when there's a selection
+        if matches!(self.state, State::SelectHead | State::SelectTummy) {
+            moves.push(UNDO);
         }
+
+        moves
     }
 
     fn get_pile_or_head_moves(&self) -> Vec<i32> {
