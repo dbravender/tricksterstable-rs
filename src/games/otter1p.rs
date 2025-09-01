@@ -185,6 +185,7 @@ pub struct Change {
     pub length: usize,
     pub highlight: bool,
     pub xout: bool,
+    pub selected: bool,
     pub message: Option<String>,
     pub card: Option<Card>,
     pub head_card: Option<HeadCard>,
@@ -203,6 +204,7 @@ impl Default for Change {
             length: 0,
             highlight: false,
             xout: false,
+            selected: false,
             message: None,
             card: None,
             head_card: None,
@@ -660,6 +662,24 @@ impl OtterGame {
         self.animate_top_stack();
 
         let mut changes = Vec::new();
+
+        if let Some(offset) = self.selected_pile_offset {
+            changes.push(Change {
+                change_type: ChangeType::ShowPlayable,
+                object_id: self.piles[offset].last().unwrap().id,
+                selected: true,
+                ..Default::default()
+            });
+        }
+
+        if let Some(offset) = self.selected_head_offset {
+            changes.push(Change {
+                change_type: ChangeType::ShowPlayable,
+                object_id: self.head_cards[offset].id,
+                selected: true,
+                ..Default::default()
+            });
+        }
 
         for action in self.get_moves() {
             changes.push(Change {
