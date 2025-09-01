@@ -168,6 +168,7 @@ pub enum ChangeType {
     UpdateLuckyStones,
     BurnCard,
     UpdateStackCount,
+    OptionalPause,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -776,6 +777,8 @@ impl OtterGame {
             return;
         }
 
+        self.generate_playable_animations();
+
         let message = if won {
             "You Win! All piles cleared!".to_string()
         } else {
@@ -790,6 +793,12 @@ impl OtterGame {
                 object_id: -1,
                 dest: Location::Message,
                 message: Some(message),
+                ..Default::default()
+            },
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: -1,
+                dest: Location::Score,
                 ..Default::default()
             },
             Change {
