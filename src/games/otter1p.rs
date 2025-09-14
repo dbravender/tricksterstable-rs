@@ -760,16 +760,17 @@ impl OtterGame {
 
         for action in self.get_moves() {
             let is_head_card = action >= 100;
-            let is_selected_head = self
-                .selected_head_offset
-                .map(|offset| self.head_cards[offset].id == action)
-                .unwrap_or(false);
+            if let Some(selected_head_offset) = self.selected_head_offset {
+                if self.head_cards[selected_head_offset].id == action {
+                    continue;
+                }
+            }
 
             changes.push(Change {
                 change_type: ChangeType::ShowPlayable,
                 object_id: action,
                 highlight: true,
-                show_swap: self.state == State::SelectHead && is_head_card && !is_selected_head,
+                show_swap: self.state == State::SelectHead && is_head_card,
                 ..Default::default()
             });
         }
