@@ -121,6 +121,10 @@ impl HeadCard {
     pub fn flip(&mut self) {
         (self.front, self.back) = (self.back, self.front);
     }
+
+    pub fn name(&self) -> String {
+        format!("{}/{}", self.front.name(), self.back.name())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -546,6 +550,46 @@ impl OtterGame {
         head_cards.shuffle(&mut thread_rng());
 
         return head_cards[..3].to_vec();
+    }
+
+    pub fn head_scenarios() -> [[HeadCard; 3]; 10] {
+        let higher_lower = HeadCard {
+            id: 100,
+            front: HeadType::Higher,
+            back: HeadType::Lower,
+        };
+        let near_far = HeadCard {
+            id: 101,
+            front: HeadType::Near,
+            back: HeadType::Far,
+        };
+        let odd_even = HeadCard {
+            id: 102,
+            front: HeadType::Odd,
+            back: HeadType::Even,
+        };
+        let inside_outside = HeadCard {
+            id: 103,
+            front: HeadType::Inside,
+            back: HeadType::Outside,
+        };
+        let shallow_deep = HeadCard {
+            id: 104,
+            front: HeadType::Shallow,
+            back: HeadType::Deep,
+        };
+        [
+            [higher_lower, near_far, odd_even],
+            [higher_lower, near_far, inside_outside],
+            [higher_lower, near_far, shallow_deep],
+            [higher_lower, odd_even, inside_outside],
+            [higher_lower, odd_even, shallow_deep],
+            [higher_lower, inside_outside, shallow_deep],
+            [near_far, odd_even, inside_outside],
+            [near_far, odd_even, shallow_deep],
+            [near_far, inside_outside, shallow_deep],
+            [odd_even, inside_outside, shallow_deep],
+        ]
     }
 
     pub fn tummy_deck() -> Vec<Card> {
