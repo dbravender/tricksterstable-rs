@@ -769,7 +769,7 @@ impl OtterGame {
                 change_type: ChangeType::ShowPlayable,
                 object_id: action,
                 highlight: true,
-                show_swap: is_head_card && !is_selected_head,
+                show_swap: self.state == State::SelectHead && is_head_card && !is_selected_head,
                 ..Default::default()
             });
         }
