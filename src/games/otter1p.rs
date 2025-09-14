@@ -191,6 +191,8 @@ pub struct Change {
     pub highlight: bool,
     pub xout: bool,
     pub selected: bool,
+    pub show_flip: bool,
+    pub show_swap: bool,
     pub message: Option<String>,
     pub card: Option<Card>,
     pub head_card: Option<HeadCard>,
@@ -210,6 +212,8 @@ impl Default for Change {
             highlight: false,
             xout: false,
             selected: false,
+            show_flip: false,
+            show_swap: false,
             message: None,
             card: None,
             head_card: None,
@@ -749,15 +753,23 @@ impl OtterGame {
                 change_type: ChangeType::ShowPlayable,
                 object_id: self.head_cards[offset].id,
                 selected: true,
+                show_flip: true,
                 ..Default::default()
             });
         }
 
         for action in self.get_moves() {
+            let is_head_card = action >= 100;
+            let is_selected_head = self
+                .selected_head_offset
+                .map(|offset| self.head_cards[offset].id == action)
+                .unwrap_or(false);
+
             changes.push(Change {
                 change_type: ChangeType::ShowPlayable,
                 object_id: action,
                 highlight: true,
+                show_swap: is_head_card && !is_selected_head,
                 ..Default::default()
             });
         }
