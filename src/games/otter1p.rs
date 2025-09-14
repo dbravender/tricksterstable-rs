@@ -237,20 +237,17 @@ pub struct OtterGame {
 
 impl OtterGame {
     pub fn new() -> Self {
-        Self::new_with_options(None, None).unwrap()
+        Self::new_with_options(None, None)
     }
 
-    pub fn new_with_options(
-        seed: Option<u64>,
-        head_scenario_index: Option<usize>,
-    ) -> Result<Self, String> {
+    pub fn new_with_options(seed: Option<u64>, head_scenario_index: Option<usize>) -> Self {
         // If no parameters provided, generate a random seed
         let actual_seed = seed.unwrap_or_else(|| rand::random::<u64>());
 
         // Validate head_scenario_index if provided
         if let Some(index) = head_scenario_index {
             if index >= 10 {
-                return Err("head_scenario_index must be between 0 and 9".to_string());
+                panic!("head_scenario_index must be between 0 and 9");
             }
         }
 
@@ -319,7 +316,7 @@ impl OtterGame {
         game.generate_setup_animation();
         game.generate_playable_animations();
 
-        Ok(game)
+        game
     }
 
     pub fn find_head_offset(&self, card_id: i32) -> Option<usize> {
