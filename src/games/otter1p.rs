@@ -8,7 +8,8 @@ use std::cmp::{max, min};
 
 use enum_iterator::{all, Sequence};
 use rand::prelude::SliceRandom;
-use rand::thread_rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -236,7 +237,24 @@ pub struct OtterGame {
 
 impl OtterGame {
     pub fn new() -> Self {
-        let mut tummy_deck = OtterGame::tummy_deck();
+        Self::new_with_options(None, None).unwrap()
+    }
+
+    pub fn new_with_options(
+        seed: Option<u64>,
+        head_scenario_index: Option<usize>,
+    ) -> Result<Self, String> {
+        // If no parameters provided, generate a random seed
+        let actual_seed = seed.unwrap_or_else(|| rand::random::<u64>());
+
+        // Validate head_scenario_index if provided
+        if let Some(index) = head_scenario_index {
+            if index >= 10 {
+                return Err("head_scenario_index must be between 0 and 9".to_string());
+            }
+        }
+
+        let mut tummy_deck = OtterGame::tummy_deck(actual_seed);
 
         let start_tummy_cards: [Card; 3] = tummy_deck
             .drain(..3)
@@ -244,8 +262,16 @@ impl OtterGame {
             .try_into()
             .expect("wrong length");
 
+        let head_cards = if let Some(index) = head_scenario_index {
+            OtterGame::head_scenarios()[index]
+        } else {
+            OtterGame::head_deck(actual_seed)
+                .try_into()
+                .expect("wrong length")
+        };
+
         let mut game = OtterGame {
-            head_cards: OtterGame::head_deck().try_into().expect("wrong length"),
+            head_cards,
             piles: [
                 tummy_deck.drain(..15).collect::<Vec<_>>(),
                 tummy_deck.drain(..15).collect::<Vec<_>>(),
@@ -265,11 +291,13 @@ impl OtterGame {
             winner: None,
         };
 
+        // Handle card flipping with seed
+        let mut rng = StdRng::seed_from_u64(actual_seed);
         let card_ids_to_flip: Vec<_> = game
             .head_cards
             .iter_mut()
             .filter_map(|card| {
-                if rand::random::<bool>() {
+                if rng.gen::<bool>() {
                     Some(card.id)
                 } else {
                     None
@@ -290,7 +318,8 @@ impl OtterGame {
         // Generate initial setup animation
         game.generate_setup_animation();
         game.generate_playable_animations();
-        game
+
+        Ok(game)
     }
 
     pub fn find_head_offset(&self, card_id: i32) -> Option<usize> {
@@ -518,7 +547,7 @@ impl OtterGame {
         return moves;
     }
 
-    pub fn head_deck() -> Vec<HeadCard> {
+    pub fn head_deck(seed: u64) -> Vec<HeadCard> {
         let mut head_cards = vec![
             HeadCard {
                 id: 100,
@@ -547,7 +576,8 @@ impl OtterGame {
             },
         ];
 
-        head_cards.shuffle(&mut thread_rng());
+        let mut rng = StdRng::seed_from_u64(seed);
+        head_cards.shuffle(&mut rng);
 
         return head_cards[..3].to_vec();
     }
@@ -592,7 +622,7 @@ impl OtterGame {
         ]
     }
 
-    pub fn tummy_deck() -> Vec<Card> {
+    pub fn tummy_deck(seed: u64) -> Vec<Card> {
         let mut deck = Vec::new();
         let mut id = 0;
 
@@ -603,7 +633,8 @@ impl OtterGame {
             }
         }
 
-        deck.shuffle(&mut thread_rng());
+        let mut rng = StdRng::seed_from_u64(seed);
+        deck.shuffle(&mut rng);
 
         return deck;
     }
