@@ -1,0 +1,6 @@
+pre-commit:
+  commands:
+    test:
+      run: cargo test
+      fail_text: "Tests failed. Fix failing tests before committing."
+      stage_fixed: false
