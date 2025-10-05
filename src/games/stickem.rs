@@ -200,6 +200,18 @@ impl StickEmGame {
         self.hands[self.current_player].remove(pos)
     }
 
+    pub fn score_cards_won(pain_card: Card, cards_won: Vec<Card>) -> i32 {
+        let mut score = -pain_card.value;
+        for card in cards_won {
+            score += if card.suit == pain_card.suit {
+                -card.value
+            } else {
+                1
+            }
+        }
+        score
+    }
+
     pub fn trick_winner(
         lead_player: usize,
         current_hand: [Option<Card>; PLAYER_COUNT],
@@ -517,6 +529,149 @@ mod tests {
                 "score hand for scenario {}",
                 scenario.name
             );
+        }
+    }
+
+    struct ScoreScenario {
+        pain_card: Card,
+        cards_won: Vec<Card>,
+        expected_score: i32,
+    }
+
+    #[test]
+    fn test_score() {
+        let scenarios = [
+            // Jillian selected the Yellow 2 at the beginning of the round as her Pain Color. She
+            // receives 11 negative points (2+5+4). For the other six cards, she receives one point
+            // each for a total of 6 positive points. Jillian’s point total is -5.
+            ScoreScenario {
+                pain_card: Card {
+                    id: 0,
+                    suit: Suit::Yellow,
+                    value: 2,
+                },
+                cards_won: vec![
+                    Card {
+                        id: 1,
+                        suit: Suit::Yellow,
+                        value: 5,
+                    },
+                    Card {
+                        id: 2,
+                        suit: Suit::Yellow,
+                        value: 4,
+                    },
+                    Card {
+                        id: 3,
+                        suit: Suit::Red,
+                        value: 5,
+                    },
+                    Card {
+                        id: 4,
+                        suit: Suit::Purple,
+                        value: 11,
+                    },
+                    Card {
+                        id: 5,
+                        suit: Suit::Green,
+                        value: 11,
+                    },
+                    Card {
+                        id: 6,
+                        suit: Suit::Green,
+                        value: 8,
+                    },
+                    Card {
+                        id: 7,
+                        suit: Suit::Green,
+                        value: 2,
+                    },
+                    Card {
+                        id: 8,
+                        suit: Suit::Blue,
+                        value: 1,
+                    },
+                ],
+                expected_score: -5,
+            },
+            // Andrew selected the Red 0 at the beginning of the round as his Pain Color. He
+            // receives 7 negative points (0+2+4+1). For the other nine cards, he receives one
+            // point each for a total of 9 positive points. Andrew’s point total is +2.
+            ScoreScenario {
+                pain_card: Card {
+                    id: 0,
+                    suit: Suit::Red,
+                    value: 0,
+                },
+                cards_won: vec![
+                    Card {
+                        id: 1,
+                        suit: Suit::Red,
+                        value: 2,
+                    },
+                    Card {
+                        id: 2,
+                        suit: Suit::Red,
+                        value: 4,
+                    },
+                    Card {
+                        id: 3,
+                        suit: Suit::Red,
+                        value: 1,
+                    },
+                    Card {
+                        id: 4,
+                        suit: Suit::Yellow,
+                        value: 0,
+                    },
+                    Card {
+                        id: 5,
+                        suit: Suit::Blue,
+                        value: 3,
+                    },
+                    Card {
+                        id: 6,
+                        suit: Suit::Blue,
+                        value: 7,
+                    },
+                    Card {
+                        id: 7,
+                        suit: Suit::Blue,
+                        value: 10,
+                    },
+                    Card {
+                        id: 8,
+                        suit: Suit::Blue,
+                        value: 6,
+                    },
+                    Card {
+                        id: 9,
+                        suit: Suit::Purple,
+                        value: 9,
+                    },
+                    Card {
+                        id: 10,
+                        suit: Suit::Purple,
+                        value: 8,
+                    },
+                    Card {
+                        id: 11,
+                        suit: Suit::Purple,
+                        value: 0,
+                    },
+                    Card {
+                        id: 12,
+                        suit: Suit::Green,
+                        value: 6,
+                    },
+                ],
+                expected_score: 2,
+            },
+        ];
+
+        for scenario in scenarios {
+            let actual_score = StickEmGame::score_cards_won(scenario.pain_card, scenario.cards_won);
+            assert_eq!(actual_score, scenario.expected_score);
         }
     }
 }
