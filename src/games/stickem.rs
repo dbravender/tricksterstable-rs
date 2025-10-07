@@ -4,13 +4,13 @@ Designer:  Klaus Palesch
 BoardGameGeek: https://boardgamegeek.com/boardgame/354/stick-em
 */
 
-use std::cmp::{max, min};
-
 use enum_iterator::{all, Sequence};
+use ismcts::IsmctsHandler;
 use rand::prelude::SliceRandom;
-use rand::rngs::StdRng;
-use rand::{thread_rng, Rng, SeedableRng};
+use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
+
+use crate::utils::shuffle_and_divide_matching_cards;
 
 const PLAYER_COUNT: usize = 4;
 
@@ -117,6 +117,8 @@ pub struct StickEmGame {
     pub dealer: usize,
     pub current_hand: [Option<Card>; PLAYER_COUNT],
     pub round: i32,
+    pub cards_won: [Vec<Card>; PLAYER_COUNT],
+    pub experiment: bool, // Set to true when testing new reward functions
 }
 
 impl StickEmGame {
@@ -132,6 +134,12 @@ impl StickEmGame {
 
     fn deal(&mut self) {
         let mut deck = StickEmGame::deck();
+        self.cards_won = [vec![], vec![], vec![], vec![]];
+        self.pain_cards = [None; PLAYER_COUNT];
+        self.state = State::SelectPainColor;
+        self.dealer = (self.dealer + 1) % PLAYER_COUNT;
+        self.current_player = self.dealer;
+        self.lead_player = self.dealer;
         self.hands = [
             deck.drain(..15).collect::<Vec<_>>(),
             deck.drain(..15).collect::<Vec<_>>(),
@@ -183,13 +191,57 @@ impl StickEmGame {
         let card = self.pop_card(card_id);
         self.pain_cards[self.current_player] = Some(card);
         // TODO: Animate pain card selection
+        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+        if self.pain_cards.iter().all(|c| c.is_some()) {
+            self.current_player = self.dealer;
+            self.state = State::Play;
+        }
     }
 
     pub fn play(&mut self, card_id: i32) {
         let card = self.pop_card(card_id);
         self.current_hand[self.current_player] = Some(card);
         // TODO: Animate played cards
-        // TODO: Check for the end of the hand and the end of the game
+        if self.current_hand.iter().any(|c| c.is_none()) {
+            self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+            return;
+        }
+        // The trick is over
+        let trick_result = StickEmGame::trick_winner(self.lead_player, self.current_hand);
+        self.current_player = trick_result.winning_player;
+        self.lead_player = self.current_player;
+        if trick_result.score_hand {
+            // Add won cards to the winner's won cards
+            self.cards_won[self.current_player].extend(self.current_hand.iter().flatten().copied())
+            // TODO: Animate trick won to winner
+        } else {
+            // Animate trick off screen - not to winner
+        }
+
+        // Reset the trick
+        self.current_hand = [None; 4];
+
+        if self.hands.iter().any(|h| h.len() > 0) {
+            // Hand continues
+            return;
+        }
+
+        // Round is over
+        for player in 0..PLAYER_COUNT {
+            let score = StickEmGame::score_cards_won(
+                self.pain_cards[player].unwrap(),
+                &self.cards_won[player],
+            );
+            // TODO: animate score for player from scores[player] to score
+            self.scores[player] += score;
+        }
+
+        if self.round >= PLAYER_COUNT as i32 {
+            self.state = State::GameOver;
+            return;
+        } else {
+            self.deal();
+        }
     }
 
     pub fn pop_card(&mut self, card_id: i32) -> Card {
@@ -200,7 +252,7 @@ impl StickEmGame {
         self.hands[self.current_player].remove(pos)
     }
 
-    pub fn score_cards_won(pain_card: Card, cards_won: Vec<Card>) -> i32 {
+    pub fn score_cards_won(pain_card: Card, cards_won: &Vec<Card>) -> i32 {
         let mut score = -pain_card.value;
         for card in cards_won {
             score += if card.suit == pain_card.suit {
@@ -259,6 +311,87 @@ impl StickEmGame {
             winning_player,
         }
     }
+}
+
+impl ismcts::Game for StickEmGame {
+    type Move = i32;
+    type PlayerTag = usize;
+    type MoveList = Vec<i32>;
+
+    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        let rng = &mut thread_rng();
+
+        for p1 in 0..PLAYER_COUNT {
+            for p2 in 0..PLAYER_COUNT {
+                if p1 == p2 {
+                    continue;
+                }
+                if p1 == self.current_player() || p2 == self.current_player() {
+                    // Don't swap current player's cards - player knows exactly what they have
+                    continue;
+                }
+                let mut new_hands = vec![
+                    self.hands[p1 as usize].clone(),
+                    self.hands[p2 as usize].clone(),
+                ];
+
+                shuffle_and_divide_matching_cards(|_: &Card| true, &mut new_hands, rng);
+
+                self.hands[p1 as usize] = new_hands[0].clone();
+                self.hands[p2 as usize] = new_hands[1].clone();
+            }
+        }
+    }
+
+    fn current_player(&self) -> Self::PlayerTag {
+        self.current_player
+    }
+
+    fn next_player(&self) -> Self::PlayerTag {
+        (self.current_player + 1) % 4
+    }
+
+    fn available_moves(&self) -> Self::MoveList {
+        self.get_moves()
+    }
+
+    fn make_move(&mut self, mov: &Self::Move) {
+        self.apply_move(*mov);
+    }
+
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        let _ = player;
+        if self.state != State::GameOver {
+            // the hand is not over
+            None
+        } else {
+            if self.experiment {
+                // TODO actual experiment in reward function
+                let final_score = 0.0;
+
+                Some(final_score)
+            } else {
+                // TODO: initial reward function
+                let raw_score = self.scores[player] as f64 / 20.0;
+
+                Some(raw_score)
+            }
+        }
+    }
+}
+
+pub fn get_mcts_move(game: &StickEmGame, iterations: i32, debug: bool) -> i32 {
+    let mut new_game = game.clone();
+    new_game.no_changes = true;
+    // reset scores for the simulation
+    new_game.scores = [0; 4];
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 8;
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
+    ismcts.best_move().expect("should have a move to make")
 }
 
 #[cfg(test)]
@@ -670,8 +803,159 @@ mod tests {
         ];
 
         for scenario in scenarios {
-            let actual_score = StickEmGame::score_cards_won(scenario.pain_card, scenario.cards_won);
+            let actual_score =
+                StickEmGame::score_cards_won(scenario.pain_card, &scenario.cards_won);
             assert_eq!(actual_score, scenario.expected_score);
         }
+    }
+
+    #[test]
+    fn test_select_final_pain_card() {
+        let mut game = StickEmGame::new();
+        game.current_player = 1;
+        game.dealer = 2;
+        game.hands[1] = vec![Card {
+            id: 4,
+            value: 11,
+            suit: Suit::Purple,
+        }];
+        game.pain_cards = [
+            Some(Card {
+                id: 0,
+                value: 0,
+                suit: Suit::Red,
+            }),
+            None,
+            Some(Card {
+                id: 2,
+                value: 0,
+                suit: Suit::Yellow,
+            }),
+            Some(Card {
+                id: 3,
+                value: 0,
+                suit: Suit::Purple,
+            }),
+        ];
+        game.apply_move(4);
+        assert_eq!(
+            game.current_player, game.dealer,
+            "After last player selects pain suit "
+        );
+        assert_eq!(game.pain_cards[1].unwrap().id, 4);
+        assert_eq!(
+            game.state,
+            State::Play,
+            "Game should transition to play state after all pain cards are selected"
+        );
+    }
+
+    #[test]
+    fn test_play_final_card_in_trick() {
+        let mut game = StickEmGame::new();
+        game.state = State::Play;
+        game.current_player = 1;
+        game.lead_player = 2;
+        game.dealer = 2;
+        game.hands[1] = vec![Card {
+            id: 4,
+            value: 11,
+            suit: Suit::Purple,
+        }];
+        game.current_hand = [
+            Some(Card {
+                id: 0,
+                value: 0,
+                suit: Suit::Red,
+            }),
+            None,
+            Some(Card {
+                id: 2,
+                value: 0,
+                suit: Suit::Yellow,
+            }),
+            Some(Card {
+                id: 3,
+                value: 0,
+                suit: Suit::Purple,
+            }),
+        ];
+        game.apply_move(4);
+        assert_eq!(
+            game.current_player, 1,
+            "Player 1 won by playing the highest off suit card"
+        );
+        assert_eq!(
+            game.current_hand.iter().all(|c| c.is_none()),
+            true,
+            "Hand is reset"
+        );
+    }
+
+    #[test]
+    fn test_play_final_card_in_trick_last_round() {
+        let mut game = StickEmGame::new();
+        game.round = PLAYER_COUNT as i32;
+        game.state = State::Play;
+        game.current_player = 1;
+        game.lead_player = 2;
+        game.dealer = 2;
+        game.pain_cards = [
+            Some(Card {
+                id: 4,
+                value: 1,
+                suit: Suit::Purple,
+            }),
+            Some(Card {
+                id: 4,
+                value: 2,
+                suit: Suit::Purple,
+            }),
+            Some(Card {
+                id: 4,
+                value: 3,
+                suit: Suit::Purple,
+            }),
+            Some(Card {
+                id: 4,
+                value: 4,
+                suit: Suit::Purple,
+            }),
+        ];
+        game.hands = [
+            vec![],
+            vec![Card {
+                id: 4,
+                value: 11,
+                suit: Suit::Purple,
+            }],
+            vec![],
+            vec![],
+        ];
+        game.current_hand = [
+            Some(Card {
+                id: 0,
+                value: 0,
+                suit: Suit::Red,
+            }),
+            None,
+            Some(Card {
+                id: 2,
+                value: 0,
+                suit: Suit::Yellow,
+            }),
+            Some(Card {
+                id: 3,
+                value: 0,
+                suit: Suit::Purple,
+            }),
+        ];
+        game.apply_move(4);
+        assert_eq!(
+            game.current_player, 1,
+            "Player 1 won by playing the highest off suit card"
+        );
+        assert_eq!(game.state, State::GameOver);
+        assert_eq!(game.scores, [-1, -11, -3, -4], "Scores are correct");
     }
 }
