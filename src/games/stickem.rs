@@ -127,7 +127,7 @@ impl StickEmGame {
             ..Default::default()
         };
         // Randomly select a start player each game
-        game.dealer = thread_rng().gen_range(0..=PLAYER_COUNT);
+        game.dealer = thread_rng().gen_range(0..PLAYER_COUNT);
         game.deal();
         game
     }
@@ -238,6 +238,14 @@ impl StickEmGame {
 
         if self.round >= PLAYER_COUNT as i32 {
             self.state = State::GameOver;
+            let max_score = self.scores.iter().max().unwrap();
+            for player in 0..PLAYER_COUNT {
+                if self.scores[player] == *max_score {
+                    // Ties go to player 0 (human player)
+                    self.winner = Some(player);
+                    break;
+                }
+            }
             return;
         } else {
             self.deal();
@@ -360,7 +368,6 @@ impl ismcts::Game for StickEmGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        let _ = player;
         if self.state != State::GameOver {
             // the hand is not over
             None
@@ -885,9 +892,8 @@ mod tests {
             game.current_player, 1,
             "Player 1 won by playing the highest off suit card"
         );
-        assert_eq!(
+        assert!(
             game.current_hand.iter().all(|c| c.is_none()),
-            true,
             "Hand is reset"
         );
     }
@@ -895,6 +901,7 @@ mod tests {
     #[test]
     fn test_play_final_card_in_trick_last_round() {
         let mut game = StickEmGame::new();
+        game.scores = [-50, 0, 0, 0];
         game.round = PLAYER_COUNT as i32;
         game.state = State::Play;
         game.current_player = 1;
@@ -956,6 +963,7 @@ mod tests {
             "Player 1 won by playing the highest off suit card"
         );
         assert_eq!(game.state, State::GameOver);
-        assert_eq!(game.scores, [-1, -11, -3, -4], "Scores are correct");
+        assert_eq!(game.scores, [-51, -11, -3, -4], "Scores are correct");
+        assert_eq!(game.winner, Some(2), "Winner is properly set")
     }
 }
