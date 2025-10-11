@@ -4,6 +4,8 @@ Designer:  Klaus Palesch
 BoardGameGeek: https://boardgamegeek.com/boardgame/354/stick-em
 */
 
+use std::collections::BTreeSet;
+
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
 use rand::prelude::SliceRandom;
@@ -329,6 +331,18 @@ impl ismcts::Game for StickEmGame {
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
 
+        // Pain cards are played face down until all are played
+        let mut pain_card_played = [false; PLAYER_COUNT];
+
+        if self.pain_cards.contains(&None) {
+            for (player, card) in self.pain_cards.iter().enumerate() {
+                if let Some(card) = card {
+                    pain_card_played[player] = true;
+                    self.hands[player].push(*card);
+                }
+            }
+        }
+
         for p1 in 0..PLAYER_COUNT {
             for p2 in 0..PLAYER_COUNT {
                 if p1 == p2 {
@@ -347,6 +361,13 @@ impl ismcts::Game for StickEmGame {
 
                 self.hands[p1 as usize] = new_hands[0].clone();
                 self.hands[p2 as usize] = new_hands[1].clone();
+            }
+        }
+
+        for player in 0..PLAYER_COUNT {
+            if pain_card_played[player] {
+                let card = self.hands[player].pop();
+                self.pain_cards[player] = card;
             }
         }
     }
@@ -372,17 +393,20 @@ impl ismcts::Game for StickEmGame {
             // the hand is not over
             None
         } else {
-            if self.experiment {
-                // TODO actual experiment in reward function
-                let final_score = 0.0;
+            let max_score = *self.scores.iter().max().unwrap() as f64;
+            let min_score = *self.scores.iter().min().unwrap() as f64;
+            let player_score = self.scores[player] as f64;
 
-                Some(final_score)
-            } else {
-                // TODO: initial reward function
-                let raw_score = self.scores[player] as f64 / 20.0;
-
-                Some(raw_score)
+            if max_score == min_score {
+                // Everyone tied - neutral result
+                return Some(0.0);
             }
+
+            // Linear interpolation between worst and best score
+            // Best score = 1.0, worst score = -1.0
+            let normalized = 2.0 * (player_score - min_score) / (max_score - min_score) - 1.0;
+
+            Some(normalized)
         }
     }
 }
@@ -390,8 +414,6 @@ impl ismcts::Game for StickEmGame {
 pub fn get_mcts_move(game: &StickEmGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
-    // reset scores for the simulation
-    new_game.scores = [0; 4];
     let mut ismcts = IsmctsHandler::new(new_game);
     let parallel_threads: usize = 8;
     ismcts.run_iterations(
