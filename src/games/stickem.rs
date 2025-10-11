@@ -402,11 +402,15 @@ impl ismcts::Game for StickEmGame {
                 return Some(0.0);
             }
 
-            // Linear interpolation between worst and best score
-            // Best score = 1.0, worst score = -1.0
-            let normalized = 2.0 * (player_score - min_score) / (max_score - min_score) - 1.0;
+            // Exponential reward function (based on experiments showing improved performance)
+            // Linear interpolation between worst and best score, then apply exponential transformation
+            let linear = 2.0 * (player_score - min_score) / (max_score - min_score) - 1.0;
 
-            Some(normalized)
+            // Apply exponential transformation: sign(x) * (|x|^2)
+            // This amplifies reward differences while preserving direction
+            let exponential_reward = linear.signum() * linear.abs().powf(2.0);
+
+            Some(exponential_reward)
         }
     }
 }
