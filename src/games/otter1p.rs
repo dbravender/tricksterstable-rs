@@ -254,7 +254,7 @@ impl OtterGame {
         Self::new_with_options(None, None)
     }
 
-    pub fn new_with_options(seed: Option<u64>, scenario: Option<ScenarioDifficulty>) -> Self {
+    pub fn new_with_options(seed: Option<u64>, scenario_index: Option<i32>) -> Self {
         // If no parameters provided, generate a random seed
         let actual_seed = seed.unwrap_or_else(|| rand::random::<u64>());
 
@@ -266,7 +266,13 @@ impl OtterGame {
             .try_into()
             .expect("wrong length");
 
-        let head_scenario: (i32, [HeadCard; 3]) = if let Some(scenario) = scenario {
+        let head_scenario: (i32, [HeadCard; 3]) = if let Some(scenario_index) = scenario_index {
+            let scenario = match scenario_index {
+                0 => ScenarioDifficulty::Easy,
+                1 => ScenarioDifficulty::Medium,
+                2 => ScenarioDifficulty::Hard,
+                _ => panic!("invalid scenario"),
+            };
             OtterGame::head_scenarios(scenario)
         } else {
             OtterGame::head_deck(actual_seed)
