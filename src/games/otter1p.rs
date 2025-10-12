@@ -251,14 +251,22 @@ pub struct OtterGame {
 
 impl OtterGame {
     pub fn new() -> Self {
-        Self::new_with_options(None, None)
+        Self::new_with_options(None, None, false)
     }
 
-    pub fn new_with_options(seed: Option<u64>, scenario_index: Option<i32>) -> Self {
+    pub fn new_with_options(
+        seed: Option<u64>,
+        scenario_index: Option<i32>,
+        practice: bool,
+    ) -> Self {
         // If no parameters provided, generate a random seed
         let actual_seed = seed.unwrap_or_else(|| rand::random::<u64>());
 
-        let mut tummy_deck = OtterGame::tummy_deck(actual_seed);
+        let mut tummy_deck = if practice {
+            OtterGame::tummy_deck(rand::random::<u64>())
+        } else {
+            OtterGame::tummy_deck(actual_seed)
+        };
 
         let start_tummy_cards: [Card; 3] = tummy_deck
             .drain(..3)
