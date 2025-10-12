@@ -221,6 +221,15 @@ impl Default for Change {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ScenarioDifficulty {
+    #[default]
+    Easy = 0,
+    Medium = 1,
+    Hard = 2,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct OtterGame {
@@ -237,6 +246,7 @@ pub struct OtterGame {
     pub no_changes: bool,
     pub score: i32,
     pub winner: Option<bool>, // true = win, false = lose
+    pub head_scenario: i32,
 }
 
 impl OtterGame {
@@ -244,16 +254,9 @@ impl OtterGame {
         Self::new_with_options(None, None)
     }
 
-    pub fn new_with_options(seed: Option<u64>, head_scenario_index: Option<usize>) -> Self {
+    pub fn new_with_options(seed: Option<u64>, scenario: Option<ScenarioDifficulty>) -> Self {
         // If no parameters provided, generate a random seed
         let actual_seed = seed.unwrap_or_else(|| rand::random::<u64>());
-
-        // Validate head_scenario_index if provided
-        if let Some(index) = head_scenario_index {
-            if index >= 10 {
-                panic!("head_scenario_index must be between 0 and 9");
-            }
-        }
 
         let mut tummy_deck = OtterGame::tummy_deck(actual_seed);
 
@@ -263,16 +266,15 @@ impl OtterGame {
             .try_into()
             .expect("wrong length");
 
-        let head_cards = if let Some(index) = head_scenario_index {
-            OtterGame::head_scenarios()[index]
+        let head_scenario: (i32, [HeadCard; 3]) = if let Some(scenario) = scenario {
+            OtterGame::head_scenarios(scenario)
         } else {
             OtterGame::head_deck(actual_seed)
-                .try_into()
-                .expect("wrong length")
         };
 
         let mut game = OtterGame {
-            head_cards,
+            head_scenario: head_scenario.0,
+            head_cards: head_scenario.1,
             piles: [
                 tummy_deck.drain(..15).collect::<Vec<_>>(),
                 tummy_deck.drain(..15).collect::<Vec<_>>(),
@@ -548,42 +550,7 @@ impl OtterGame {
         return moves;
     }
 
-    pub fn head_deck(seed: u64) -> Vec<HeadCard> {
-        let mut head_cards = vec![
-            HeadCard {
-                id: 100,
-                front: HeadType::Higher,
-                back: HeadType::Lower,
-            },
-            HeadCard {
-                id: 101,
-                front: HeadType::Near,
-                back: HeadType::Far,
-            },
-            HeadCard {
-                id: 102,
-                front: HeadType::Odd,
-                back: HeadType::Even,
-            },
-            HeadCard {
-                id: 103,
-                front: HeadType::Inside,
-                back: HeadType::Outside,
-            },
-            HeadCard {
-                id: 104,
-                front: HeadType::Shallow,
-                back: HeadType::Deep,
-            },
-        ];
-
-        let mut rng = StdRng::seed_from_u64(seed);
-        head_cards.shuffle(&mut rng);
-
-        return head_cards[..3].to_vec();
-    }
-
-    pub fn head_scenarios() -> [[HeadCard; 3]; 10] {
+    pub fn head_deck(seed: u64) -> (i32, [HeadCard; 3]) {
         let higher_lower = HeadCard {
             id: 100,
             front: HeadType::Higher,
@@ -609,18 +576,72 @@ impl OtterGame {
             front: HeadType::Shallow,
             back: HeadType::Deep,
         };
-        [
-            [higher_lower, near_far, odd_even],
-            [higher_lower, near_far, inside_outside],
-            [higher_lower, near_far, shallow_deep],
-            [higher_lower, odd_even, inside_outside],
-            [higher_lower, odd_even, shallow_deep],
-            [higher_lower, inside_outside, shallow_deep],
-            [near_far, odd_even, inside_outside],
-            [near_far, odd_even, shallow_deep],
-            [near_far, inside_outside, shallow_deep],
-            [odd_even, inside_outside, shallow_deep],
-        ]
+        let mut head_scenarios = [
+            (0, [higher_lower, near_far, odd_even]),
+            (1, [higher_lower, near_far, inside_outside]),
+            (2, [near_far, odd_even, shallow_deep]),
+            (3, [higher_lower, odd_even, inside_outside]),
+            (4, [near_far, odd_even, inside_outside]),
+            (5, [higher_lower, odd_even, shallow_deep]),
+            (6, [higher_lower, near_far, shallow_deep]),
+            (7, [higher_lower, inside_outside, shallow_deep]),
+            (8, [near_far, inside_outside, shallow_deep]),
+            (9, [odd_even, inside_outside, shallow_deep]),
+        ];
+
+        let mut rng = StdRng::seed_from_u64(seed);
+        head_scenarios.shuffle(&mut rng);
+
+        return head_scenarios[0];
+    }
+
+    pub fn head_scenarios(scenario: ScenarioDifficulty) -> (i32, [HeadCard; 3]) {
+        let higher_lower = HeadCard {
+            id: 100,
+            front: HeadType::Higher,
+            back: HeadType::Lower,
+        };
+        let near_far = HeadCard {
+            id: 101,
+            front: HeadType::Near,
+            back: HeadType::Far,
+        };
+        let odd_even = HeadCard {
+            id: 102,
+            front: HeadType::Odd,
+            back: HeadType::Even,
+        };
+        let inside_outside = HeadCard {
+            id: 103,
+            front: HeadType::Inside,
+            back: HeadType::Outside,
+        };
+        let shallow_deep = HeadCard {
+            id: 104,
+            front: HeadType::Shallow,
+            back: HeadType::Deep,
+        };
+        let mut heads: Vec<(i32, [HeadCard; 3])> = match scenario {
+            ScenarioDifficulty::Easy => vec![
+                (0, [higher_lower, near_far, odd_even]),
+                (1, [higher_lower, near_far, inside_outside]),
+                (2, [near_far, odd_even, shallow_deep]),
+            ],
+            ScenarioDifficulty::Medium => vec![
+                (3, [higher_lower, odd_even, inside_outside]),
+                (4, [near_far, odd_even, inside_outside]),
+                (5, [higher_lower, odd_even, shallow_deep]),
+            ],
+            ScenarioDifficulty::Hard => vec![
+                (6, [higher_lower, near_far, shallow_deep]),
+                (7, [higher_lower, inside_outside, shallow_deep]),
+                (8, [near_far, inside_outside, shallow_deep]),
+                (9, [odd_even, inside_outside, shallow_deep]),
+            ],
+        };
+        let mut rng = rand::thread_rng();
+        heads.shuffle(&mut rng);
+        *heads.first().unwrap()
     }
 
     pub fn tummy_deck(seed: u64) -> Vec<Card> {
@@ -678,7 +699,7 @@ impl OtterGame {
 
         // Show all pile cards (deal all cards to their pile positions)
         for (pile_idx, pile) in self.piles.iter().enumerate() {
-            for (card_idx, card) in pile.iter().enumerate() {
+            for (_, card) in pile.iter().enumerate() {
                 setup_changes.push(Change {
                     change_type: ChangeType::Deal,
                     object_id: card.id,
@@ -842,7 +863,7 @@ impl OtterGame {
         self.changes.push(changes);
     }
 
-    fn generate_move_to_tummy_animation(&mut self, card: Card, pile_idx: usize, tummy_idx: usize) {
+    fn generate_move_to_tummy_animation(&mut self, card: Card, _: usize, tummy_idx: usize) {
         if self.no_changes {
             return;
         }
