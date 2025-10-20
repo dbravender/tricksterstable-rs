@@ -237,16 +237,22 @@ pub struct OtterGame {
     pub no_changes: bool,
     pub score: i32,
     pub winner: Option<bool>, // true = win, false = lose
+    pub head_scenario: i32,
 }
 
 impl OtterGame {
     pub fn new() -> Self {
-        Self::new_with_options(None, None)
+        Self::new_with_options(None, None, false)
     }
 
-    pub fn new_with_options(seed: Option<u64>, head_scenario_index: Option<usize>) -> Self {
+    pub fn new_with_options(
+        seed: Option<u64>,
+        head_scenario_index: Option<usize>,
+        practice: bool,
+    ) -> Self {
         // If no parameters provided, generate a random seed
         let actual_seed = seed.unwrap_or_else(|| rand::random::<u64>());
+        let mut rng = StdRng::seed_from_u64(actual_seed);
 
         // Validate head_scenario_index if provided
         if let Some(index) = head_scenario_index {
@@ -263,13 +269,17 @@ impl OtterGame {
             .try_into()
             .expect("wrong length");
 
-        let head_cards = if let Some(index) = head_scenario_index {
-            OtterGame::head_scenarios()[index]
-        } else {
-            OtterGame::head_deck(actual_seed)
-                .try_into()
-                .expect("wrong length")
+        let index = match head_scenario_index {
+            Some(index) => index,
+            None => rng.gen_range(0..=9) as usize,
         };
+
+        let mut head_cards = OtterGame::head_scenarios()[index];
+        head_cards.shuffle(&mut rng);
+
+        if practice {
+            tummy_deck.shuffle(&mut rand::thread_rng());
+        }
 
         let mut game = OtterGame {
             head_cards,
@@ -279,6 +289,7 @@ impl OtterGame {
                 tummy_deck.drain(..16).collect::<Vec<_>>(),
                 tummy_deck,
             ],
+            head_scenario: index as i32,
             tummy_cards: start_tummy_cards,
             last_played_pile_index: 100, // intentionally invalid index - any pile can be played at the start
             last_played_head_card_index: 100, // intentionally invalid index - any head can be played to at the start
@@ -292,8 +303,6 @@ impl OtterGame {
             winner: None,
         };
 
-        // Handle card flipping with seed
-        let mut rng = StdRng::seed_from_u64(actual_seed);
         let card_ids_to_flip: Vec<_> = game
             .head_cards
             .iter_mut()
