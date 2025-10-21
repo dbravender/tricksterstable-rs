@@ -1,7 +1,7 @@
+use ismcts::Game;
 use rand::{seq::SliceRandom, thread_rng};
 use std::collections::HashMap;
 use tricksterstable_rs::games::stickem::{get_mcts_move, State, StickEmGame};
-use ismcts::Game;
 
 // Different reward function experiments
 #[derive(Debug, Clone, Copy)]
@@ -77,7 +77,7 @@ impl Game for ExperimentalStickEmGame {
                 }
                 let normalized = 2.0 * (player_score - min_score) / (max_score - min_score) - 1.0;
                 Some(normalized)
-            },
+            }
             RewardFunction::WinnerTakesAll => {
                 // Simple win/lose
                 if player_score == max_score {
@@ -89,14 +89,14 @@ impl Game for ExperimentalStickEmGame {
                 } else {
                     Some(-1.0) // Lose
                 }
-            },
+            }
             RewardFunction::ScoreDifference => {
                 // Reward based on how much better/worse than average
                 let avg_score: f64 = scores.iter().sum::<i32>() as f64 / scores.len() as f64;
                 let diff = player_score - avg_score;
                 // Normalize by typical score range (observed to be ~50 points)
                 Some(diff / 25.0).map(|x| x.max(-1.0).min(1.0))
-            },
+            }
             RewardFunction::Exponential => {
                 // Exponential amplification of linear normalized
                 if max_score == min_score {
@@ -105,10 +105,11 @@ impl Game for ExperimentalStickEmGame {
                 let linear = 2.0 * (player_score - min_score) / (max_score - min_score) - 1.0;
                 // Apply exponential transformation: sign(x) * (|x|^2)
                 Some(linear.signum() * linear.abs().powf(2.0))
-            },
+            }
             RewardFunction::RankBased => {
                 // Reward based on ranking position
-                let mut score_ranks: Vec<(i32, usize)> = scores.iter().enumerate().map(|(i, &s)| (s, i)).collect();
+                let mut score_ranks: Vec<(i32, usize)> =
+                    scores.iter().enumerate().map(|(i, &s)| (s, i)).collect();
                 score_ranks.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
 
                 let player_rank = score_ranks.iter().position(|(_, p)| *p == player).unwrap();
@@ -124,7 +125,11 @@ impl Game for ExperimentalStickEmGame {
     }
 }
 
-fn run_experiment(reward_function: RewardFunction, games: usize, iterations: i32) -> (f64, HashMap<usize, i32>) {
+fn run_experiment(
+    reward_function: RewardFunction,
+    games: usize,
+    iterations: i32,
+) -> (f64, HashMap<usize, i32>) {
     let mut total_score = 0.0;
     let mut wins = HashMap::new();
     let mut rng = thread_rng();
@@ -160,7 +165,8 @@ fn run_experiment(reward_function: RewardFunction, games: usize, iterations: i32
         }
 
         // Calculate performance of experimental players (1 and 3)
-        let experimental_performance = (game.result(1).unwrap_or(0.0) + game.result(3).unwrap_or(0.0)) / 2.0;
+        let experimental_performance =
+            (game.result(1).unwrap_or(0.0) + game.result(3).unwrap_or(0.0)) / 2.0;
         total_score += experimental_performance;
     }
 
@@ -189,17 +195,26 @@ fn main() {
 
     for &reward_function in &experiments {
         println!("Testing {:?}...", reward_function);
-        let (avg_performance, wins) = run_experiment(reward_function, games_per_experiment, iterations);
+        let (avg_performance, wins) =
+            run_experiment(reward_function, games_per_experiment, iterations);
 
         println!("  Average performance: {:.4}", avg_performance);
         println!("  Win distribution: {:?}", wins);
 
         let experimental_wins = wins.get(&1).unwrap_or(&0) + wins.get(&3).unwrap_or(&0);
         let experimental_win_rate = experimental_wins as f64 / games_per_experiment as f64;
-        println!("  Experimental players win rate: {:.2}%", experimental_win_rate * 100.0);
+        println!(
+            "  Experimental players win rate: {:.2}%",
+            experimental_win_rate * 100.0
+        );
         println!();
 
-        results.push((reward_function, avg_performance, experimental_win_rate, wins));
+        results.push((
+            reward_function,
+            avg_performance,
+            experimental_win_rate,
+            wins,
+        ));
     }
 
     // Find best performing reward function
