@@ -86,6 +86,7 @@ pub enum ChangeType {
     TricksToWinner,
     Reorder,
     ShowScoringCard,
+    HideScoringCards,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -359,18 +360,17 @@ impl StickEmGame {
         }
 
         // Round is over
-        // Show scoring animations for each player
+        // Show scoring animations for each player, interleaved with score updates
         for player in 0..PLAYER_COUNT {
+            // Show this player's captured cards
             self.show_scoring_cards(player);
-        }
 
-        let score_index = self.new_change();
-        for player in 0..PLAYER_COUNT {
+            // Show score modification for this player
+            let score_index = self.new_change();
             let score = StickEmGame::score_cards_won(
                 self.pain_cards[player].unwrap(),
                 &self.cards_won[player],
             );
-            // Animate score for player from scores[player] to score
             self.add_change(
                 score_index,
                 Change {
@@ -382,6 +382,19 @@ impl StickEmGame {
                 },
             );
             self.scores[player] += score;
+
+            // Hide the scoring cards before moving to the next player
+            let hide_index = self.new_change();
+            self.add_change(
+                hide_index,
+                Change {
+                    change_type: ChangeType::HideScoringCards,
+                    object_id: 0,
+                    dest: Location::ScoreCards,
+                    player,
+                    ..Default::default()
+                },
+            );
         }
 
         if self.round >= PLAYER_COUNT as i32 {
@@ -600,7 +613,7 @@ impl StickEmGame {
             .filter(|c| c.suit == pain_card.suit)
             .copied()
             .collect();
-        let other_cards: Vec<Card> = cards_won
+        let mut other_cards: Vec<Card> = cards_won
             .iter()
             .filter(|c| c.suit != pain_card.suit)
             .copied()
@@ -608,6 +621,14 @@ impl StickEmGame {
 
         // Sort pain cards by value (high to low)
         pain_cards_won.sort_by(|a, b| b.value.cmp(&a.value));
+
+        // Sort other cards by suit, then by value (high to low)
+        other_cards.sort_by(|a, b| {
+            match a.suit.cmp(&b.suit) {
+                std::cmp::Ordering::Equal => b.value.cmp(&a.value), // Same suit: high to low
+                other => other,                                     // Different suits: sort by suit
+            }
+        });
 
         // Total cards to display = captured cards + selected pain card
         let total_length = cards_won.len() + 1;
@@ -649,18 +670,6 @@ impl StickEmGame {
             offset += 1;
         }
 
-        // Add optional pause
-        self.add_change(
-            change_index,
-            Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: 0,
-                dest: Location::ScoreCards,
-                player,
-                ..Default::default()
-            },
-        );
-
         // Show the player's selected pain card (it also counts for scoring)
         self.add_change(
             change_index,
@@ -671,6 +680,19 @@ impl StickEmGame {
                 player,
                 offset,
                 length: total_length,
+                ..Default::default()
+            },
+        );
+
+        // Add optional pause after all cards are shown (including pain card)
+        // User can review all cards and the total before score is updated
+        self.add_change(
+            change_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::ScoreCards,
+                player,
                 ..Default::default()
             },
         );
