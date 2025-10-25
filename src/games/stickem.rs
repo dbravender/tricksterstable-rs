@@ -66,6 +66,7 @@ pub enum Location {
     Play,
     TricksTaken,
     ReorderHand,
+    ScoreCards,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -84,6 +85,7 @@ pub enum ChangeType {
     OptionalPause,
     TricksToWinner,
     Reorder,
+    ShowScoringCard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -357,6 +359,11 @@ impl StickEmGame {
         }
 
         // Round is over
+        // Show scoring animations for each player
+        for player in 0..PLAYER_COUNT {
+            self.show_scoring_cards(player);
+        }
+
         let score_index = self.new_change();
         for player in 0..PLAYER_COUNT {
             let score = StickEmGame::score_cards_won(
@@ -581,6 +588,92 @@ impl StickEmGame {
                 },
             );
         }
+    }
+
+    fn show_scoring_cards(&mut self, player: usize) {
+        let pain_card = self.pain_cards[player].unwrap();
+        let cards_won = &self.cards_won[player];
+
+        // Separate pain cards from other cards
+        let mut pain_cards_won: Vec<Card> = cards_won
+            .iter()
+            .filter(|c| c.suit == pain_card.suit)
+            .copied()
+            .collect();
+        let other_cards: Vec<Card> = cards_won
+            .iter()
+            .filter(|c| c.suit != pain_card.suit)
+            .copied()
+            .collect();
+
+        // Sort pain cards by value (high to low)
+        pain_cards_won.sort_by(|a, b| b.value.cmp(&a.value));
+
+        // Total cards to display = captured cards + selected pain card
+        let total_length = cards_won.len() + 1;
+
+        let change_index = self.new_change();
+        let mut offset = 0;
+
+        // Show pain cards first (ordered high to low)
+        for card in pain_cards_won {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::ShowScoringCard,
+                    object_id: card.id,
+                    dest: Location::ScoreCards,
+                    player,
+                    offset,
+                    length: total_length,
+                    ..Default::default()
+                },
+            );
+            offset += 1;
+        }
+
+        // Show other cards
+        for card in other_cards {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::ShowScoringCard,
+                    object_id: card.id,
+                    dest: Location::ScoreCards,
+                    player,
+                    offset,
+                    length: total_length,
+                    ..Default::default()
+                },
+            );
+            offset += 1;
+        }
+
+        // Add optional pause
+        self.add_change(
+            change_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::ScoreCards,
+                player,
+                ..Default::default()
+            },
+        );
+
+        // Show the player's selected pain card (it also counts for scoring)
+        self.add_change(
+            change_index,
+            Change {
+                change_type: ChangeType::ShowScoringCard,
+                object_id: pain_card.id,
+                dest: Location::ScoreCards,
+                player,
+                offset,
+                length: total_length,
+                ..Default::default()
+            },
+        );
     }
 }
 
