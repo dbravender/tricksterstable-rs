@@ -619,7 +619,11 @@ impl StickEmGame {
             .copied()
             .collect();
 
-        // Sort pain cards by value (high to low)
+        // Add the selected pain card to the pain cards list so it's sorted with them
+        pain_cards_won.push(pain_card);
+
+        // Sort ALL pain cards by value (high to low)
+        // This ensures the selected pain card appears in the correct sorted position
         pain_cards_won.sort_by(|a, b| b.value.cmp(&a.value));
 
         // Sort other cards by suit, then by value (high to low)
@@ -636,7 +640,7 @@ impl StickEmGame {
         let change_index = self.new_change();
         let mut offset = 0;
 
-        // Show pain cards first (ordered high to low)
+        // Show all pain cards (including selected) in sorted order (high to low)
         for card in pain_cards_won {
             self.add_change(
                 change_index,
@@ -670,21 +674,7 @@ impl StickEmGame {
             offset += 1;
         }
 
-        // Show the player's selected pain card (it also counts for scoring)
-        self.add_change(
-            change_index,
-            Change {
-                change_type: ChangeType::ShowScoringCard,
-                object_id: pain_card.id,
-                dest: Location::ScoreCards,
-                player,
-                offset,
-                length: total_length,
-                ..Default::default()
-            },
-        );
-
-        // Add optional pause after all cards are shown (including pain card)
+        // Add optional pause after all cards are shown
         // User can review all cards and the total before score is updated
         self.add_change(
             change_index,
