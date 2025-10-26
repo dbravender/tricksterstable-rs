@@ -87,6 +87,7 @@ pub enum ChangeType {
     Reorder,
     ShowScoringCard,
     HideScoringCards,
+    RevealPainCards,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -171,6 +172,12 @@ impl StickEmGame {
             deck,
         ];
 
+        // Sort player 0's hand by suit, then by value (high to low)
+        self.hands[0].sort_by(|a, b| match a.suit.cmp(&b.suit) {
+            std::cmp::Ordering::Equal => b.value.cmp(&a.value), // Same suit: high to low
+            other => other,                                     // Different suits: sort by suit
+        });
+
         // Deal animations
         for hand_index in 0..15 {
             for player in 0..PLAYER_COUNT {
@@ -193,6 +200,10 @@ impl StickEmGame {
         }
 
         self.round += 1;
+
+        // Show playable cards and message after dealing
+        self.show_playable();
+        self.show_message();
     }
 
     pub fn deck() -> Vec<Card> {
@@ -240,7 +251,7 @@ impl StickEmGame {
         let card = self.pop_card(card_id);
         let player = self.current_player;
 
-        // Animate pain card selection
+        // Animate pain card selection (face down initially)
         self.add_change(
             0,
             Change {
@@ -257,7 +268,33 @@ impl StickEmGame {
 
         self.pain_cards[player] = Some(card);
         self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+
+        // If all pain cards have been selected, reveal them all
         if self.pain_cards.iter().all(|c| c.is_some()) {
+            let reveal_index = self.new_change();
+            // Collect pain cards to avoid borrow checker issues
+            let pain_cards_to_reveal: Vec<(usize, Card)> = self
+                .pain_cards
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, card)| card.map(|c| (idx, c)))
+                .collect();
+
+            // Flip all pain cards face up
+            for (player_index, card) in pain_cards_to_reveal {
+                self.add_change(
+                    reveal_index,
+                    Change {
+                        change_type: ChangeType::RevealPainCards,
+                        object_id: card.id,
+                        dest: Location::PainColor,
+                        player: player_index,
+                        offset: player_index,
+                        ..Default::default()
+                    },
+                );
+            }
+
             self.current_player = self.dealer;
             self.state = State::Play;
         }
@@ -607,6 +644,9 @@ impl StickEmGame {
         let pain_card = self.pain_cards[player].unwrap();
         let cards_won = &self.cards_won[player];
 
+        // Calculate score delta for this player
+        let score_delta = StickEmGame::score_cards_won(pain_card, cards_won);
+
         // Separate pain cards from other cards
         let mut pain_cards_won: Vec<Card> = cards_won
             .iter()
@@ -651,6 +691,8 @@ impl StickEmGame {
                     player,
                     offset,
                     length: total_length,
+                    start_score: self.scores[player],
+                    end_score: self.scores[player] + score_delta,
                     ..Default::default()
                 },
             );
@@ -668,6 +710,8 @@ impl StickEmGame {
                     player,
                     offset,
                     length: total_length,
+                    start_score: self.scores[player],
+                    end_score: self.scores[player] + score_delta,
                     ..Default::default()
                 },
             );
@@ -675,7 +719,7 @@ impl StickEmGame {
         }
 
         // Add optional pause after all cards are shown
-        // User can review all cards and the total before score is updated
+        // User can review all cards and the score delta before score is updated
         self.add_change(
             change_index,
             Change {
@@ -683,6 +727,8 @@ impl StickEmGame {
                 object_id: 0,
                 dest: Location::ScoreCards,
                 player,
+                start_score: self.scores[player],
+                end_score: self.scores[player] + score_delta,
                 ..Default::default()
             },
         );
