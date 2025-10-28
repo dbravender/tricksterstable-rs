@@ -493,7 +493,7 @@ impl StickEmGame {
             };
         }
 
-        let mut winning_player = 0;
+        let mut winning_player = lead_player;
         let mut winning_card = current_hand[lead_player].unwrap();
         let lead_suit = winning_card.suit;
         for i in 0..PLAYER_COUNT {
@@ -1091,6 +1091,62 @@ mod tests {
                     }), // lead
                 ],
                 expected_winning_player: 1,
+                expected_score_hand: true,
+            },
+            TrickWinnerScenario {
+                name: "BUG: Lead player 2 has highest card, all same suit - should win".to_string(),
+                lead_player: 2,
+                current_hand: [
+                    Some(Card {
+                        id: 0,
+                        suit: Suit::Blue,
+                        value: 3,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        suit: Suit::Blue,
+                        value: 7,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        suit: Suit::Blue,
+                        value: 11,
+                    }), // lead - highest card
+                    Some(Card {
+                        id: 3,
+                        suit: Suit::Blue,
+                        value: 5,
+                    }),
+                ],
+                expected_winning_player: 2,
+                expected_score_hand: true,
+            },
+            TrickWinnerScenario {
+                name: "BUG: Lead player 3 plays only non-zero card - should win".to_string(),
+                lead_player: 3,
+                current_hand: [
+                    Some(Card {
+                        id: 0,
+                        suit: Suit::Blue,
+                        value: 0,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        suit: Suit::Red,
+                        value: 0,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        suit: Suit::Green,
+                        value: 0,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        suit: Suit::Yellow,
+                        value: 5,
+                    }), // lead - only non-zero
+                ],
+                expected_winning_player: 3,
                 expected_score_hand: true,
             },
         ];
