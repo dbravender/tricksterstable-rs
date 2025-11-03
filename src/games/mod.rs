@@ -8,4 +8,5 @@ pub mod so8;
 pub mod stickem;
 pub mod szs;
 pub mod torchlit;
+pub mod trickorbid;
 pub mod yokai2p;
