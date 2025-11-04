@@ -110,8 +110,8 @@ pub struct Change {
 }
 
 pub struct TrickResult {
-    // Tied tricks accumulate
-    tie: bool,
+    // When true, no one wins - trick accumulates for next winner
+    no_winner: bool,
     winning_player: usize,
 }
 
@@ -131,9 +131,10 @@ pub struct TrickOrBidGame {
     pub current_hand: [Option<Card>; PLAYER_COUNT],
     pub round: i32,
     pub cards_won: [Vec<Card>; PLAYER_COUNT],
-    pub previous_trick_cards: Vec<Card>,
-    pub trump_card: Option<Card>,
-    pub experiment: bool, // Set to true when testing new reward functions
+    pub trump_suit: Option<Suit>,
+    pub accumulated_tricks: Vec<Card>, // Cards from won tricks (for bid selection) or no-winner tricks
+    pub tricks_won_count: [i32; PLAYER_COUNT], // Count of tricks won (not cards)
+    pub experiment: bool,              // Set to true when testing new reward functions
 }
 
 impl TrickOrBidGame {
@@ -151,6 +152,9 @@ impl TrickOrBidGame {
         let mut deck = TrickOrBidGame::deck();
         self.cards_won = [vec![], vec![], vec![], vec![]];
         self.bid_cards = [None; PLAYER_COUNT];
+        self.tricks_won_count = [0; PLAYER_COUNT];
+        self.trump_suit = None;
+        self.accumulated_tricks = vec![];
         self.state = State::Play;
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
         self.current_player = self.dealer;
@@ -231,7 +235,7 @@ impl TrickOrBidGame {
         match self.state {
             State::SelectBidOrPass => {
                 let mut moves = vec![PASS];
-                moves.extend(self.previous_trick_cards.iter().map(|c| c.id));
+                moves.extend(self.accumulated_tricks.iter().map(|c| c.id));
                 moves
             }
             State::Play => self.playable_card_ids(),
@@ -279,15 +283,59 @@ impl TrickOrBidGame {
     }
 
     pub fn select_bid_card_or_pass(&mut self, card_id: i32) {
-        if card_id == PASS {
-            // Player takes the trick and a new hand is started
-            self.end_hand();
-            return;
-        }
-        let card = self.pop_card(card_id);
         let player = self.current_player;
 
-        // Animate pain card selection (face down initially)
+        // Calculate number of tricks won (current trick + any accumulated no-winner tricks)
+        // Each trick is 4 cards, so total tricks = total cards / 4
+        let num_cards = self.accumulated_tricks.len();
+        let tricks_count = (num_cards / 4) as i32;
+
+        if card_id == PASS {
+            // Player takes the trick - add all cards to their won cards
+            self.cards_won[player].extend(self.accumulated_tricks.iter().copied());
+            self.tricks_won_count[player] += tricks_count;
+
+            // Animate cards going to score pile
+            let change_index = self.new_change();
+            let cards_to_animate = self.accumulated_tricks.clone();
+            for card in &cards_to_animate {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::TricksToWinner,
+                        object_id: card.id,
+                        dest: Location::Score,
+                        player,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            self.accumulated_tricks.clear();
+
+            // Continue play or end round
+            if self.hands.iter().any(|h| !h.is_empty()) {
+                self.state = State::Play;
+            } else {
+                self.end_hand();
+            }
+            return;
+        }
+
+        // Player is selecting a bid card from the won trick
+        // Find and remove the selected card from accumulated_tricks
+        let card_pos = self.accumulated_tricks.iter().position(|c| c.id == card_id);
+        if card_pos.is_none() {
+            panic!("Selected bid card not found in won cards");
+        }
+        let card = self.accumulated_tricks.remove(card_pos.unwrap());
+
+        // Set trump suit if this is the first bid card
+        if self.trump_suit.is_none() {
+            self.trump_suit = Some(card.suit);
+        }
+
+        // Animate bid card selection
         self.add_change(
             0,
             Change {
@@ -300,39 +348,34 @@ impl TrickOrBidGame {
             },
         );
 
-        self.reorder_hand(player, false);
+        // Remaining cards go to won cards pile (as tricks taken)
+        self.cards_won[player].extend(self.accumulated_tricks.iter().copied());
+        self.tricks_won_count[player] += tricks_count;
 
+        // Animate remaining cards to score pile
+        let change_index = self.new_change();
+        let cards_to_animate = self.accumulated_tricks.clone();
+        for card in &cards_to_animate {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::TricksToWinner,
+                    object_id: card.id,
+                    dest: Location::Score,
+                    player,
+                    ..Default::default()
+                },
+            );
+        }
+
+        self.accumulated_tricks.clear();
         self.bid_cards[player] = Some(card);
-        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
 
-        // If all pain cards have been selected, reveal them all
-        if self.bid_cards.iter().all(|c| c.is_some()) {
-            let reveal_index = self.new_change();
-            // Collect pain cards to avoid borrow checker issues
-            let pain_cards_to_reveal: Vec<(usize, Card)> = self
-                .bid_cards
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, card)| card.map(|c| (idx, c)))
-                .collect();
-
-            // Flip all pain cards face up
-            for (player_index, card) in pain_cards_to_reveal {
-                self.add_change(
-                    reveal_index,
-                    Change {
-                        change_type: ChangeType::RevealPainCards,
-                        object_id: card.id,
-                        dest: Location::PainColor,
-                        player: player_index,
-                        offset: player_index,
-                        ..Default::default()
-                    },
-                );
-            }
-
-            self.current_player = self.dealer;
+        // Continue play or end round
+        if self.hands.iter().any(|h| !h.is_empty()) {
             self.state = State::Play;
+        } else {
+            self.end_hand();
         }
     }
 
@@ -362,7 +405,42 @@ impl TrickOrBidGame {
         }
 
         // The trick is over
-        let trick_result = TrickOrBidGame::trick_winner(self.lead_player, self.current_hand);
+        let trick_result =
+            TrickOrBidGame::trick_winner(self.lead_player, self.current_hand, self.trump_suit);
+
+        if trick_result.no_winner {
+            // No winner - accumulate these cards for the next winner
+            self.accumulated_tricks
+                .extend(self.current_hand.iter().flatten().copied());
+
+            // Animate trick being burned/discarded
+            let change_index = self.new_change();
+            for card in self.current_hand {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::BurnTrick,
+                        object_id: card.unwrap().id,
+                        dest: Location::TricksBurned,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Reset the trick - lead player stays the same
+            self.current_hand = [None; 4];
+            self.current_player = self.lead_player;
+
+            // Check if this was the last trick
+            if self.hands.iter().all(|h| h.is_empty()) {
+                // Last trick with no winner - discard accumulated tricks
+                self.accumulated_tricks.clear();
+                self.state = State::SelectBidOrPass;
+                self.current_player = self.dealer;
+            }
+            return;
+        }
+
         let trick_winner = trick_result.winning_player;
 
         // Show winning card and pause
@@ -386,65 +464,51 @@ impl TrickOrBidGame {
             },
         );
 
+        // Add current trick cards to accumulated tricks (for bid selection)
+        // accumulated_tricks already contains any no-winner tricks
+        self.accumulated_tricks
+            .extend(self.current_hand.iter().flatten().copied());
+
+        // Animate all tricks (current + accumulated) won to winner
+        let change_index = self.new_change();
+        let cards_to_animate = self.accumulated_tricks.clone();
+        for card in &cards_to_animate {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::TricksToWinner,
+                    object_id: card.id,
+                    dest: Location::TricksTaken,
+                    player: trick_winner,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // accumulated_tricks will be cleared in select_bid_card_or_pass()
+
+        // Reset the current hand
+        self.current_hand = [None; 4];
+
         self.current_player = trick_winner;
         self.lead_player = trick_winner;
 
-        if trick_result.score_hand {
-            // Add won cards to the winner's won cards
-            self.cards_won[trick_winner].extend(self.current_hand.iter().flatten().copied());
+        // Transition to bid selection state
+        self.state = State::SelectBidOrPass;
 
-            // Animate trick won to winner
-            let change_index = self.new_change();
-            for card in self.current_hand {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.unwrap().id,
-                        dest: Location::TricksTaken,
-                        player: trick_winner,
-                        ..Default::default()
-                    },
-                );
-            }
-        } else {
-            // Animate trick off screen - not to winner
-            let change_index = self.new_change();
-            for card in self.current_hand {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.unwrap().id,
-                        dest: Location::TricksTaken,
-                        player: trick_winner,
-                        ..Default::default()
-                    },
-                );
-            }
-        }
-
-        // Reset the trick
-        self.current_hand = [None; 4];
-
-        if self.hands.iter().any(|h| h.len() > 0) {
+        if self.hands.iter().any(|h| !h.is_empty()) {
             // Hand continues
             return;
         }
     }
 
     pub fn end_hand(&mut self) {
-        // Round is over
-        // Show scoring animations for each player, interleaved with score updates
+        // Round is over - calculate scores
         for player in 0..PLAYER_COUNT {
-            // Show this player's captured cards
-            self.show_scoring_cards(player);
-
-            // Show score modification for this player
             let score_index = self.new_change();
-            let score = TrickOrBidGame::score_cards_won(
-                self.bid_cards[player].unwrap(),
-                &self.cards_won[player],
+            let score = TrickOrBidGame::calculate_score(
+                self.bid_cards[player],
+                self.tricks_won_count[player],
             );
             self.add_change(
                 score_index,
@@ -457,19 +521,6 @@ impl TrickOrBidGame {
                 },
             );
             self.scores[player] += score;
-
-            // Hide the scoring cards before moving to the next player
-            let hide_index = self.new_change();
-            self.add_change(
-                hide_index,
-                Change {
-                    change_type: ChangeType::HideScoringCards,
-                    object_id: 0,
-                    dest: Location::ScoreCards,
-                    player,
-                    ..Default::default()
-                },
-            );
         }
 
         if self.round >= PLAYER_COUNT as i32 {
@@ -509,18 +560,22 @@ impl TrickOrBidGame {
     pub fn trick_winner(
         lead_player: usize,
         current_hand: [Option<Card>; PLAYER_COUNT],
+        trump_suit: Option<Suit>,
     ) -> TrickResult {
-        let mut winning_player = lead_player;
-        let mut winning_card = current_hand[lead_player].unwrap();
+        let lead_suit = current_hand[lead_player].unwrap().suit;
+
+        // Get cards that are not tied (appear only once)
         let eligible_cards = TrickOrBidGame::non_matching_cards(current_hand);
 
-        if eligible_cards.len() == 0 {
+        if eligible_cards.is_empty() {
+            // All cards are tied - no winner
             return TrickResult {
-                tie: true,
+                no_winner: true,
                 winning_player: lead_player,
             };
         }
 
+        // Map card IDs to players
         let mut card_id_to_player: HashMap<i32, usize> = HashMap::new();
         for (player, card) in current_hand.iter().enumerate() {
             if let Some(card) = card {
@@ -528,37 +583,66 @@ impl TrickOrBidGame {
             }
         }
 
-        let lead_suit = winning_card.suit;
+        // Find trump cards first (if trump exists)
+        if let Some(trump) = trump_suit {
+            let trump_cards: Vec<Card> = eligible_cards
+                .iter()
+                .filter(|c| c.suit == trump)
+                .copied()
+                .collect();
 
+            if !trump_cards.is_empty() {
+                // Find highest trump card
+                let winning_card = trump_cards.iter().max_by_key(|c| c.value).unwrap();
+                let winning_player = *card_id_to_player.get(&winning_card.id).unwrap();
+                return TrickResult {
+                    no_winner: false,
+                    winning_player,
+                };
+            }
+        }
 
-        eligible_cards.sort_by_key(|c| std::cmp::Reverse(self.value_for_card(lead_suit, c)));
-        *card_id_to_player
-            .get(
-                &eligible_cards
-                    .first()
-                    .expect("there should be a winning card")
-                    .id,
-            )
-            .expect("cards_to_player missing card")
+        // No trump cards (or no trump suit) - find highest lead suit card
+        let lead_cards: Vec<Card> = eligible_cards
+            .iter()
+            .filter(|c| c.suit == lead_suit)
+            .copied()
+            .collect();
 
+        if !lead_cards.is_empty() {
+            // Find highest lead suit card
+            let winning_card = lead_cards.iter().max_by_key(|c| c.value).unwrap();
+            let winning_player = *card_id_to_player.get(&winning_card.id).unwrap();
+            return TrickResult {
+                no_winner: false,
+                winning_player,
+            };
+        }
 
+        // No trump and no lead suit cards remain - no winner
         TrickResult {
-            tie: false,
-            winning_player,
+            no_winner: true,
+            winning_player: lead_player,
         }
     }
 
     fn non_matching_cards(cards: [Option<Card>; 4]) -> Vec<Card> {
-        let mut card_count: HashMap<Card, i32> = HashMap::new();
+        // Count cards by (value, suit) pair to detect ties
+        let mut value_suit_count: HashMap<(i32, Suit), Vec<Card>> = HashMap::new();
         for card in cards {
-            *card_count.entry(card.unwrap()).or_insert(0) += 1;
+            let card = card.unwrap();
+            value_suit_count
+                .entry((card.value, card.suit))
+                .or_insert_with(Vec::new)
+                .push(card);
         }
-        card_count
-            .iter()
-            .filter(|(_, v)| *v == &1)
-            .map(|(k, _)| *k)
-            .collect::<Vec<_>>() // Collect first
-            .into()
+
+        // Only return cards that appear once (not tied)
+        value_suit_count
+            .into_iter()
+            .filter(|(_, cards)| cards.len() == 1)
+            .flat_map(|(_, cards)| cards)
+            .collect()
     }
 
     #[inline]
@@ -631,7 +715,7 @@ impl TrickOrBidGame {
         };
 
         let message = match self.state {
-            State::SelectPainColor => Some(format!("{} must select a pain color", player_name)),
+            State::SelectBidOrPass => Some(format!("{} must select a bid or pass", player_name)),
             State::Play => None,
             State::GameOver => None,
         };
@@ -673,126 +757,61 @@ impl TrickOrBidGame {
         }
     }
 
-    fn show_scoring_cards(&mut self, player: usize) {
-        let bid_card = self.bid_cards[player].unwrap();
-        let cards_won = &self.cards_won[player];
-
-        // Calculate score delta for this player
-        let score_delta = TrickOrBidGame::score_cards_won(bid_card, cards_won);
-
-        // Separate pain cards from other cards
-        let mut pain_cards_won: Vec<Card> = cards_won
-            .iter()
-            .filter(|c| c.suit == bid_card.suit)
-            .copied()
-            .collect();
-        let mut other_cards: Vec<Card> = cards_won
-            .iter()
-            .filter(|c| c.suit != bid_card.suit)
-            .copied()
-            .collect();
-
-        // Add the selected pain card to the pain cards list so it's sorted with them
-        pain_cards_won.push(bid_card);
-
-        // Sort ALL pain cards by value (high to low)
-        // This ensures the selected pain card appears in the correct sorted position
-        pain_cards_won.sort_by(|a, b| b.value.cmp(&a.value));
-
-        // Sort other cards by suit, then by value (high to low)
-        other_cards.sort_by(|a, b| {
-            match a.suit.cmp(&b.suit) {
-                std::cmp::Ordering::Equal => b.value.cmp(&a.value), // Same suit: high to low
-                other => other,                                     // Different suits: sort by suit
-            }
-        });
-
-        // Total cards to display = captured cards + selected pain card
-        let total_length = cards_won.len() + 1;
-
-        // Show other cards
-        for card in other_cards {
-            self.add_change(
-                change_index,
-                Change {
-                    change_type: ChangeType::ShowScoringCard,
-                    object_id: card.id,
-                    dest: Location::ScoreCards,
-                    player,
-                    offset,
-                    length: total_length,
-                    start_score: self.scores[player],
-                    end_score: self.scores[player] + score_delta,
-                    ..Default::default()
-                },
-            );
-            offset += 1;
+    pub fn calculate_score(bid_card: Option<Card>, tricks_won: i32) -> i32 {
+        // If player didn't take a bid card, they score -1
+        if bid_card.is_none() {
+            return -1;
         }
 
-        // Add optional pause after all cards are shown
-        // User can review all cards and the score delta before score is updated
-        self.add_change(
-            change_index,
-            Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: 0,
-                dest: Location::ScoreCards,
-                player,
-                start_score: self.scores[player],
-                end_score: self.scores[player] + score_delta,
-                ..Default::default()
-            },
-        );
+        let bid = bid_card.unwrap().value;
+        let diff = (tricks_won - bid).abs();
+
+        if diff == 0 {
+            // Exact bid: 3 points
+            3
+        } else if diff == 1 {
+            // Off by 1: 1 point
+            1
+        } else {
+            // Otherwise: 0 points
+            0
+        }
     }
 }
 
-impl ismcts::Game for StickEmGame {
+impl ismcts::Game for TrickOrBidGame {
     type Move = i32;
     type PlayerTag = usize;
     type MoveList = Vec<i32>;
 
-    fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+    fn randomize_determination(&mut self, observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
 
-        // Pain cards are played face down until all are played
-        let mut pain_card_played = [false; PLAYER_COUNT];
-
-        if self.bid_cards.contains(&None) {
-            for (player, card) in self.bid_cards.iter().enumerate() {
-                if let Some(card) = card {
-                    pain_card_played[player] = true;
-                    self.hands[player].push(*card);
-                }
-            }
-        }
+        // In Trick or Bid:
+        // - Bid cards are PUBLIC (kept face up) - don't shuffle them
+        // - Only shuffle unknown cards in other players' hands
+        // - Observer knows their own hand and all bid cards
 
         for p1 in 0..PLAYER_COUNT {
             for p2 in 0..PLAYER_COUNT {
                 if p1 == p2 {
                     continue;
                 }
-                if p1 == self.current_player() || p2 == self.current_player() {
-                    // Don't swap current player's cards - player knows exactly what they have
+                if p1 == observer || p2 == observer {
+                    // Don't swap observer's cards - they know exactly what they have
                     continue;
                 }
-                let mut new_hands = vec![
-                    self.hands[p1 as usize].clone(),
-                    self.hands[p2 as usize].clone(),
-                ];
+
+                let mut new_hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
 
                 shuffle_and_divide_matching_cards(|_: &Card| true, &mut new_hands, rng);
 
-                self.hands[p1 as usize] = new_hands[0].clone();
-                self.hands[p2 as usize] = new_hands[1].clone();
+                self.hands[p1] = new_hands[0].clone();
+                self.hands[p2] = new_hands[1].clone();
             }
         }
 
-        for player in 0..PLAYER_COUNT {
-            if pain_card_played[player] {
-                let card = self.hands[player].pop();
-                self.bid_cards[player] = card;
-            }
-        }
+        // Bid cards and trump suit are public knowledge - don't modify them
     }
 
     fn current_player(&self) -> Self::PlayerTag {
@@ -838,7 +857,7 @@ impl ismcts::Game for StickEmGame {
     }
 }
 
-pub fn get_mcts_move(game: &StickEmGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &TrickOrBidGame, iterations: i32, debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     let mut ismcts = IsmctsHandler::new(new_game);
@@ -853,622 +872,1171 @@ pub fn get_mcts_move(game: &StickEmGame, iterations: i32, debug: bool) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ismcts::Game;
 
     #[test]
     fn test_new() {
-        let game = StickEmGame::new();
+        let game = TrickOrBidGame::new();
         assert!(
-            game.hands.iter().all(|h| h.len() == 15),
-            "Every player should have 15 cards in their hand"
+            game.hands.iter().all(|h| h.len() == HAND_SIZE),
+            "Every player should have 13 cards in their hand"
         );
-        assert_eq!(
-            game.state,
-            State::SelectPainColor,
-            "Every player selects a pain color first"
-        );
+        assert_eq!(game.state, State::Play, "Game starts in Play state");
         assert_eq!(game.round, 1, "The game starts in round 1");
     }
 
-    struct TrickWinnerScenario {
-        lead_player: usize,
-        current_hand: [Option<Card>; 4],
-        expected_winning_player: usize,
-        expected_score_hand: bool,
-        name: String,
-    }
-
+    // Test trick winner with no trump - lead suit wins
     #[test]
-    fn test_trick_winner() {
-        let scenarios = [
-            TrickWinnerScenario {
-                name: "All zeroes should skip scoring and keep lead player".to_string(),
-                lead_player: 2,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Purple,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Red,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Green,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Yellow,
-                        value: 0,
-                    }),
-                ],
-                expected_winning_player: 2,
-                expected_score_hand: false,
-            },
-            TrickWinnerScenario {
-                name: "Only non-lead suit should win".to_string(),
-                lead_player: 0,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Purple,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Red,
-                        value: 1,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Purple,
-                        value: 1,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Purple,
-                        value: 2,
-                    }),
-                ],
-                expected_winning_player: 1,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "All lead suit - highest value wins".to_string(),
-                lead_player: 0,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Blue,
-                        value: 3,
-                    }), // lead
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Blue,
-                        value: 10,
-                    }), // winner
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Blue,
-                        value: 7,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Blue,
-                        value: 5,
-                    }),
-                ],
-                expected_winning_player: 1,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "Mix of suits - highest off-suit wins".to_string(),
-                lead_player: 0,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Yellow,
-                        value: 9,
-                    }), // lead
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Green,
-                        value: 5,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Red,
-                        value: 6,
-                    }), // winner (highest off-suit)
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Blue,
-                        value: 4,
-                    }),
-                ],
-                expected_winning_player: 2,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "Tie in off-suit - first played wins".to_string(),
-                lead_player: 0,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Green,
-                        value: 11,
-                    }), // lead
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Red,
-                        value: 5,
-                    }), // winner (first of tied highest)
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Yellow,
-                        value: 5,
-                    }), // same value but played later
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Green,
-                        value: 8,
-                    }),
-                ],
-                expected_winning_player: 1,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "Zeroes ignored - off-suit beats lead suit".to_string(),
-                lead_player: 2,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Purple,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Blue,
-                        value: 7,
-                    }), // winner (only off-suit)
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Green,
-                        value: 11,
-                    }), // lead
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Green,
-                        value: 0,
-                    }),
-                ],
-                expected_winning_player: 1,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "High lead card loses to low off-suit".to_string(),
-                lead_player: 0,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Blue,
-                        value: 14,
-                    }), // lead (highest overall)
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Red,
-                        value: 1,
-                    }), // winner (lowest off-suit)
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Blue,
-                        value: 12,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Blue,
-                        value: 10,
-                    }),
-                ],
-                expected_winning_player: 1,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "Multiple off-suits with zeroes mixed in".to_string(),
-                lead_player: 3,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Yellow,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Red,
-                        value: 8,
-                    }), // winner
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Purple,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Green,
-                        value: 5,
-                    }), // lead
-                ],
-                expected_winning_player: 1,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "BUG: Lead player 2 has highest card, all same suit - should win".to_string(),
-                lead_player: 2,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Blue,
-                        value: 3,
-                    }),
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Blue,
-                        value: 7,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Blue,
-                        value: 11,
-                    }), // lead - highest card
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Blue,
-                        value: 5,
-                    }),
-                ],
-                expected_winning_player: 2,
-                expected_score_hand: true,
-            },
-            TrickWinnerScenario {
-                name: "BUG: Lead player 3 plays only non-zero card - should win".to_string(),
-                lead_player: 3,
-                current_hand: [
-                    Some(Card {
-                        id: 0,
-                        suit: Suit::Blue,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 1,
-                        suit: Suit::Red,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 2,
-                        suit: Suit::Green,
-                        value: 0,
-                    }),
-                    Some(Card {
-                        id: 3,
-                        suit: Suit::Yellow,
-                        value: 5,
-                    }), // lead - only non-zero
-                ],
-                expected_winning_player: 3,
-                expected_score_hand: true,
-            },
-        ];
-        for scenario in scenarios {
-            let trick_result =
-                StickEmGame::trick_winner(scenario.lead_player, scenario.current_hand);
-            assert_eq!(
-                scenario.expected_winning_player, trick_result.winning_player,
-                "winning player for scenario {}",
-                scenario.name
-            );
-            assert_eq!(
-                scenario.expected_score_hand, trick_result.score_hand,
-                "score hand for scenario {}",
-                scenario.name
-            );
-        }
-    }
-
-    struct ScoreScenario {
-        pain_card: Card,
-        cards_won: Vec<Card>,
-        expected_score: i32,
-    }
-
-    #[test]
-    fn test_score() {
-        let scenarios = [
-            // Jillian selected the Yellow 2 at the beginning of the round as her Pain Color. She
-            // receives 11 negative points (2+5+4). For the other six cards, she receives one point
-            // each for a total of 6 positive points. Jillian’s point total is -5.
-            ScoreScenario {
-                pain_card: Card {
-                    id: 0,
-                    suit: Suit::Yellow,
-                    value: 2,
-                },
-                cards_won: vec![
-                    Card {
-                        id: 1,
-                        suit: Suit::Yellow,
-                        value: 5,
-                    },
-                    Card {
-                        id: 2,
-                        suit: Suit::Yellow,
-                        value: 4,
-                    },
-                    Card {
-                        id: 3,
-                        suit: Suit::Red,
-                        value: 5,
-                    },
-                    Card {
-                        id: 4,
-                        suit: Suit::Purple,
-                        value: 11,
-                    },
-                    Card {
-                        id: 5,
-                        suit: Suit::Green,
-                        value: 11,
-                    },
-                    Card {
-                        id: 6,
-                        suit: Suit::Green,
-                        value: 8,
-                    },
-                    Card {
-                        id: 7,
-                        suit: Suit::Green,
-                        value: 2,
-                    },
-                    Card {
-                        id: 8,
-                        suit: Suit::Blue,
-                        value: 1,
-                    },
-                ],
-                expected_score: -5,
-            },
-            // Andrew selected the Red 0 at the beginning of the round as his Pain Color. He
-            // receives 7 negative points (0+2+4+1). For the other nine cards, he receives one
-            // point each for a total of 9 positive points. Andrew’s point total is +2.
-            ScoreScenario {
-                pain_card: Card {
-                    id: 0,
-                    suit: Suit::Red,
-                    value: 0,
-                },
-                cards_won: vec![
-                    Card {
-                        id: 1,
-                        suit: Suit::Red,
-                        value: 2,
-                    },
-                    Card {
-                        id: 2,
-                        suit: Suit::Red,
-                        value: 4,
-                    },
-                    Card {
-                        id: 3,
-                        suit: Suit::Red,
-                        value: 1,
-                    },
-                    Card {
-                        id: 4,
-                        suit: Suit::Yellow,
-                        value: 0,
-                    },
-                    Card {
-                        id: 5,
-                        suit: Suit::Blue,
-                        value: 3,
-                    },
-                    Card {
-                        id: 6,
-                        suit: Suit::Blue,
-                        value: 7,
-                    },
-                    Card {
-                        id: 7,
-                        suit: Suit::Blue,
-                        value: 10,
-                    },
-                    Card {
-                        id: 8,
-                        suit: Suit::Blue,
-                        value: 6,
-                    },
-                    Card {
-                        id: 9,
-                        suit: Suit::Purple,
-                        value: 9,
-                    },
-                    Card {
-                        id: 10,
-                        suit: Suit::Purple,
-                        value: 8,
-                    },
-                    Card {
-                        id: 11,
-                        suit: Suit::Purple,
-                        value: 0,
-                    },
-                    Card {
-                        id: 12,
-                        suit: Suit::Green,
-                        value: 6,
-                    },
-                ],
-                expected_score: 2,
-            },
-        ];
-
-        for scenario in scenarios {
-            let actual_score =
-                StickEmGame::score_cards_won(scenario.pain_card, &scenario.cards_won);
-            assert_eq!(actual_score, scenario.expected_score);
-        }
-    }
-
-    #[test]
-    fn test_select_final_pain_card() {
-        let mut game = StickEmGame::new();
-        game.current_player = 1;
-        game.dealer = 2;
-        game.hands[1] = vec![Card {
-            id: 4,
-            value: 11,
-            suit: Suit::Purple,
-        }];
-        game.bid_cards = [
+    fn test_trick_winner_no_trump_highest_lead_suit() {
+        let hand = [
             Some(Card {
                 id: 0,
-                value: 0,
-                suit: Suit::Red,
+                suit: Suit::Purple,
+                value: 3,
             }),
-            None,
+            Some(Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 7,
+            }),
             Some(Card {
                 id: 2,
-                value: 0,
-                suit: Suit::Yellow,
+                suit: Suit::Purple,
+                value: 5,
             }),
             Some(Card {
                 id: 3,
-                value: 0,
                 suit: Suit::Purple,
+                value: 2,
             }),
         ];
-        game.apply_move(4);
+        let result = TrickOrBidGame::trick_winner(0, hand, None);
+        assert!(!result.no_winner);
         assert_eq!(
-            game.current_player, game.dealer,
-            "After last player selects pain suit "
+            result.winning_player, 1,
+            "Player 1 has highest lead suit card"
         );
-        assert_eq!(game.bid_cards[1].unwrap().id, 4);
+    }
+
+    // Test trump beats lead suit
+    #[test]
+    fn test_trick_winner_trump_beats_lead_suit() {
+        let hand = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 9,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 1,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 7,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Purple,
+                value: 5,
+            }),
+        ];
+        let result = TrickOrBidGame::trick_winner(0, hand, Some(Suit::Green));
+        assert!(!result.no_winner);
+        assert_eq!(result.winning_player, 1, "Trump beats lead suit");
+    }
+
+    // Test highest trump wins
+    #[test]
+    fn test_trick_winner_highest_trump() {
+        let hand = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 9,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 2,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Green,
+                value: 5,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Yellow,
+                value: 8,
+            }),
+        ];
+        let result = TrickOrBidGame::trick_winner(0, hand, Some(Suit::Green));
+        assert!(!result.no_winner);
+        assert_eq!(result.winning_player, 2, "Player 2 has highest trump");
+    }
+
+    // Test ties cancel out
+    #[test]
+    fn test_trick_winner_ties_cancel_out() {
+        let hand = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 3,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 1,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 2,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Purple,
+                value: 3,
+            }),
+        ];
+        let result = TrickOrBidGame::trick_winner(0, hand, None);
+        assert!(!result.no_winner);
+        assert_eq!(result.winning_player, 2, "Two 3s cancel, 2 wins");
+    }
+
+    // Test all cards tied - no winner (all same value AND suit)
+    #[test]
+    fn test_trick_winner_all_tied() {
+        let hand = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 2,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 2,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 2,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Purple,
+                value: 2,
+            }),
+        ];
+        let result = TrickOrBidGame::trick_winner(0, hand, None);
+        assert!(
+            result.no_winner,
+            "All cards tied should result in no winner"
+        );
+        assert_eq!(result.winning_player, 0, "Lead player retained");
+    }
+
+    // Test scoring: exact bid = 3 points
+    #[test]
+    fn test_calculate_score_exact_bid() {
+        let bid_card = Some(Card {
+            id: 0,
+            suit: Suit::Purple,
+            value: 5,
+        });
+        let score = TrickOrBidGame::calculate_score(bid_card, 5);
+        assert_eq!(score, 3);
+    }
+
+    // Test scoring: off by 1 = 1 point
+    #[test]
+    fn test_calculate_score_off_by_one() {
+        let bid_card = Some(Card {
+            id: 0,
+            suit: Suit::Purple,
+            value: 4,
+        });
+        let score = TrickOrBidGame::calculate_score(bid_card, 5);
+        assert_eq!(score, 1);
+
+        let score = TrickOrBidGame::calculate_score(bid_card, 3);
+        assert_eq!(score, 1);
+    }
+
+    // Test scoring: off by 2+ = 0 points
+    #[test]
+    fn test_calculate_score_off_by_two_or_more() {
+        let bid_card = Some(Card {
+            id: 0,
+            suit: Suit::Purple,
+            value: 3,
+        });
+        let score = TrickOrBidGame::calculate_score(bid_card, 5);
+        assert_eq!(score, 0);
+    }
+
+    // Test scoring: no bid = -1 point
+    #[test]
+    fn test_calculate_score_no_bid() {
+        let score = TrickOrBidGame::calculate_score(None, 5);
+        assert_eq!(score, -1);
+    }
+
+    // Test scoring: bid 0 exact = 3 points
+    #[test]
+    fn test_calculate_score_bid_zero_exact() {
+        let bid_card = Some(Card {
+            id: 0,
+            suit: Suit::Purple,
+            value: 0,
+        });
+        let score = TrickOrBidGame::calculate_score(bid_card, 0);
+        assert_eq!(score, 3);
+    }
+
+    // Test non_matching_cards with all different
+    #[test]
+    fn test_non_matching_cards_all_different() {
+        let hand = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 1,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 2,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Yellow,
+                value: 3,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Red,
+                value: 4,
+            }),
+        ];
+        let result = TrickOrBidGame::non_matching_cards(hand);
+        assert_eq!(result.len(), 4);
+    }
+
+    // Test non_matching_cards with ties (same value AND suit)
+    #[test]
+    fn test_non_matching_cards_with_ties() {
+        let hand = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 2,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 2,
+            }), // ties with id 0
+            Some(Card {
+                id: 3,
+                suit: Suit::Red,
+                value: 4,
+            }),
+        ];
+        let result = TrickOrBidGame::non_matching_cards(hand);
+        assert_eq!(
+            result.len(),
+            2,
+            "Two Purple 2s cancel out, leaving Green 3 and Red 4"
+        );
+    }
+
+    // Test deck has correct composition
+    #[test]
+    fn test_deck_composition() {
+        let deck = TrickOrBidGame::deck();
+        assert_eq!(deck.len(), 52);
+
+        let mut value_counts = std::collections::HashMap::new();
+        for card in &deck {
+            *value_counts.entry(card.value).or_insert(0) += 1;
+        }
+
+        // Verify expected counts: 0,1,1,2,2,3,3,4,5,6,7,8,9 per suit
+        assert_eq!(*value_counts.get(&0).unwrap(), 4);
+        assert_eq!(*value_counts.get(&1).unwrap(), 8);
+        assert_eq!(*value_counts.get(&2).unwrap(), 8);
+        assert_eq!(*value_counts.get(&3).unwrap(), 8);
+        assert_eq!(*value_counts.get(&4).unwrap(), 4);
+        assert_eq!(*value_counts.get(&5).unwrap(), 4);
+    }
+
+    // Integration test: Full trick playthrough with bid selection
+    #[test]
+    fn test_play_trick_and_select_bid() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        // Set up a known hand for testing
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 3,
+            },
+        ];
+        game.hands[1] = vec![
+            Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 7,
+            },
+            Card {
+                id: 3,
+                suit: Suit::Green,
+                value: 2,
+            },
+        ];
+        game.hands[2] = vec![
+            Card {
+                id: 4,
+                suit: Suit::Purple,
+                value: 4,
+            },
+            Card {
+                id: 5,
+                suit: Suit::Yellow,
+                value: 1,
+            },
+        ];
+        game.hands[3] = vec![
+            Card {
+                id: 6,
+                suit: Suit::Purple,
+                value: 2,
+            },
+            Card {
+                id: 7,
+                suit: Suit::Red,
+                value: 8,
+            },
+        ];
+
+        game.state = State::Play;
+        game.current_player = 0;
+        game.lead_player = 0;
+
+        // Player 0 leads with Purple 5
+        game.apply_move(0);
+        assert_eq!(game.current_player, 1);
+        assert_eq!(game.state, State::Play);
+
+        // Player 1 plays Purple 7 (highest card)
+        game.apply_move(2);
+        assert_eq!(game.current_player, 2);
+
+        // Player 2 plays Purple 4
+        game.apply_move(4);
+        assert_eq!(game.current_player, 3);
+
+        // Player 3 plays Purple 2 (completes trick)
+        game.apply_move(6);
+
+        // Player 1 should win (Purple 7 is highest)
+        assert_eq!(game.current_player, 1, "Player 1 won the trick");
+        assert_eq!(game.state, State::SelectBidOrPass);
+        assert_eq!(game.accumulated_tricks.len(), 4);
+
+        // Player 1 selects Purple 7 as bid card
+        game.apply_move(2); // card id 2 is Purple 7
+
+        assert_eq!(
+            game.bid_cards[1],
+            Some(Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 7
+            })
+        );
+        assert_eq!(
+            game.trump_suit,
+            Some(Suit::Purple),
+            "Trump suit established"
+        );
+        assert_eq!(game.tricks_won_count[1], 1);
+        assert_eq!(game.cards_won[1].len(), 3, "Other 3 cards go to won pile");
+    }
+
+    // Test passing on bid selection
+    #[test]
+    fn test_pass_on_bid_selection() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.state = State::SelectBidOrPass;
+        game.current_player = 0;
+        game.accumulated_tricks = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Yellow,
+                value: 2,
+            },
+            Card {
+                id: 3,
+                suit: Suit::Red,
+                value: 4,
+            },
+        ];
+        game.hands[0] = vec![Card {
+            id: 10,
+            suit: Suit::Purple,
+            value: 9,
+        }];
+
+        // Player passes (takes trick without bidding)
+        game.apply_move(PASS);
+
+        assert_eq!(game.tricks_won_count[0], 1);
+        assert_eq!(game.cards_won[0].len(), 4);
+        assert_eq!(game.bid_cards[0], None);
+        assert_eq!(game.state, State::Play);
+    }
+
+    // Test accumulated tricks (no winner)
+    #[test]
+    fn test_accumulated_tricks_no_winner() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        // Set up a trick where all cards tie (all same value and suit)
+        game.hands[0] = vec![Card {
+            id: 0,
+            suit: Suit::Purple,
+            value: 3,
+        }];
+        game.hands[1] = vec![Card {
+            id: 1,
+            suit: Suit::Purple,
+            value: 3,
+        }];
+        game.hands[2] = vec![Card {
+            id: 2,
+            suit: Suit::Purple,
+            value: 3,
+        }];
+        game.hands[3] = vec![Card {
+            id: 3,
+            suit: Suit::Purple,
+            value: 3,
+        }];
+
+        game.state = State::Play;
+        game.current_player = 0;
+        game.lead_player = 0;
+
+        // Play all cards
+        game.apply_move(0);
+        game.apply_move(1);
+        game.apply_move(2);
+        game.apply_move(3);
+
+        // Last trick with no winner - cards are discarded per rules
+        assert_eq!(
+            game.accumulated_tricks.len(),
+            0,
+            "Last trick with no winner is discarded"
+        );
         assert_eq!(
             game.state,
-            State::Play,
-            "Game should transition to play state after all pain cards are selected"
+            State::SelectBidOrPass,
+            "Last trick ends round even with no winner"
         );
+        assert_eq!(game.current_player, game.dealer);
     }
 
+    // Test trump beats lead suit in play
     #[test]
-    fn test_play_final_card_in_trick() {
-        let mut game = StickEmGame::new();
-        game.state = State::Play;
-        game.current_player = 1;
-        game.lead_player = 2;
-        game.dealer = 2;
-        game.hands[1] = vec![Card {
-            id: 4,
-            value: 11,
+    fn test_trump_beats_lead_in_play() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+        game.trump_suit = Some(Suit::Green);
+
+        game.hands[0] = vec![Card {
+            id: 0,
             suit: Suit::Purple,
+            value: 9,
         }];
-        game.current_hand = [
-            Some(Card {
-                id: 0,
-                value: 0,
-                suit: Suit::Red,
-            }),
-            None,
-            Some(Card {
-                id: 2,
-                value: 0,
-                suit: Suit::Yellow,
-            }),
-            Some(Card {
-                id: 3,
-                value: 0,
-                suit: Suit::Purple,
-            }),
-        ];
-        game.apply_move(4);
-        assert_eq!(
-            game.current_player, 1,
-            "Player 1 won by playing the highest off suit card"
-        );
-        assert!(
-            game.current_hand.iter().all(|c| c.is_none()),
-            "Hand is reset"
-        );
+        game.hands[1] = vec![Card {
+            id: 1,
+            suit: Suit::Green,
+            value: 1,
+        }]; // trump
+        game.hands[2] = vec![Card {
+            id: 2,
+            suit: Suit::Purple,
+            value: 8,
+        }];
+        game.hands[3] = vec![Card {
+            id: 3,
+            suit: Suit::Purple,
+            value: 7,
+        }];
+
+        game.state = State::Play;
+        game.current_player = 0;
+        game.lead_player = 0;
+
+        game.apply_move(0); // Purple 9 (lead)
+        game.apply_move(1); // Green 1 (trump)
+        game.apply_move(2); // Purple 8
+        game.apply_move(3); // Purple 7
+
+        // Player 1 should win with trump
+        assert_eq!(game.current_player, 1);
+        assert_eq!(game.state, State::SelectBidOrPass);
     }
 
+    // Test must-follow rules
     #[test]
-    fn test_play_final_card_in_trick_last_round() {
-        let mut game = StickEmGame::new();
-        game.scores = [-50, 0, 0, 0];
-        game.round = PLAYER_COUNT as i32;
+    fn test_must_follow_suit() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 2,
+            },
+        ];
+
         game.state = State::Play;
-        game.current_player = 1;
-        game.lead_player = 2;
-        game.dealer = 2;
+        game.current_player = 0;
+        game.lead_player = 1;
+        game.current_hand[1] = Some(Card {
+            id: 10,
+            suit: Suit::Purple,
+            value: 8,
+        });
+
+        // Must follow Purple suit
+        let moves = game.get_moves();
+        assert_eq!(moves.len(), 2, "Only Purple cards should be playable");
+        assert!(moves.contains(&0));
+        assert!(moves.contains(&2));
+        assert!(!moves.contains(&1), "Green card should not be playable");
+    }
+
+    // Test can play any card when can't follow suit
+    #[test]
+    fn test_cannot_follow_suit_play_any() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Green,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Yellow,
+                value: 3,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Red,
+                value: 2,
+            },
+        ];
+
+        game.state = State::Play;
+        game.current_player = 0;
+        game.lead_player = 1;
+        game.current_hand[1] = Some(Card {
+            id: 10,
+            suit: Suit::Purple,
+            value: 8,
+        });
+
+        // Can't follow Purple, so can play any card
+        let moves = game.get_moves();
+        assert_eq!(moves.len(), 3, "All cards should be playable");
+    }
+
+    // Test get_moves in SelectBidOrPass state
+    #[test]
+    fn test_get_moves_bid_or_pass() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.state = State::SelectBidOrPass;
+        game.accumulated_tricks = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Yellow,
+                value: 2,
+            },
+        ];
+
+        let moves = game.get_moves();
+        assert_eq!(moves.len(), 4, "Should have PASS + 3 cards");
+        assert!(moves.contains(&PASS));
+        assert!(moves.contains(&0));
+        assert!(moves.contains(&1));
+        assert!(moves.contains(&2));
+    }
+
+    // Test end of round scoring
+    #[test]
+    fn test_end_round_scoring() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        // Set up end of round
+        game.round = 1;
+        game.hands = [vec![], vec![], vec![], vec![]];
+        game.state = State::SelectBidOrPass;
+
+        // Set bid cards and tricks won
         game.bid_cards = [
             Some(Card {
-                id: 4,
-                value: 1,
+                id: 0,
                 suit: Suit::Purple,
-            }),
+                value: 5,
+            }), // bid 5
             Some(Card {
-                id: 4,
-                value: 2,
-                suit: Suit::Purple,
-            }),
-            Some(Card {
-                id: 4,
+                id: 1,
+                suit: Suit::Green,
                 value: 3,
-                suit: Suit::Purple,
-            }),
+            }), // bid 3
+            None, // no bid
             Some(Card {
-                id: 4,
-                value: 4,
-                suit: Suit::Purple,
-            }),
+                id: 3,
+                suit: Suit::Red,
+                value: 2,
+            }), // bid 2
         ];
-        game.hands = [
-            vec![],
-            vec![Card {
-                id: 4,
-                value: 11,
-                suit: Suit::Purple,
-            }],
-            vec![],
-            vec![],
-        ];
-        game.current_hand = [
+
+        game.tricks_won_count = [5, 4, 7, 2]; // P0: exact, P1: off by 1, P2: no bid, P3: exact
+        game.scores = [0, 0, 0, 0];
+
+        game.end_hand();
+
+        // Check scores
+        assert_eq!(game.scores[0], 3, "Player 0: exact bid = 3 points");
+        assert_eq!(game.scores[1], 1, "Player 1: off by 1 = 1 point");
+        assert_eq!(game.scores[2], -1, "Player 2: no bid = -1 point");
+        assert_eq!(game.scores[3], 3, "Player 3: exact bid = 3 points");
+
+        // Should deal new round
+        assert_eq!(game.round, 2);
+        assert!(game.hands.iter().all(|h| h.len() == HAND_SIZE));
+    }
+
+    // Test game over after final round
+    #[test]
+    fn test_game_over() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.round = PLAYER_COUNT as i32; // Final round
+        game.hands = [vec![], vec![], vec![], vec![]];
+        game.state = State::SelectBidOrPass;
+
+        game.bid_cards = [
             Some(Card {
                 id: 0,
-                value: 0,
-                suit: Suit::Red,
+                suit: Suit::Purple,
+                value: 5,
             }),
-            None,
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            }),
             Some(Card {
                 id: 2,
-                value: 0,
                 suit: Suit::Yellow,
+                value: 4,
             }),
             Some(Card {
                 id: 3,
-                value: 0,
-                suit: Suit::Purple,
+                suit: Suit::Red,
+                value: 2,
             }),
         ];
-        game.apply_move(4);
-        assert_eq!(
-            game.current_player, 1,
-            "Player 1 won by playing the highest off suit card"
-        );
+
+        game.tricks_won_count = [5, 3, 2, 1];
+        game.scores = [10, 15, 5, 8]; // Player 1 has highest
+
+        game.end_hand();
+
         assert_eq!(game.state, State::GameOver);
-        assert_eq!(game.scores, [-51, -11, -3, -4], "Scores are correct");
-        assert_eq!(game.winner, Some(2), "Winner is properly set")
+        assert_eq!(
+            game.winner,
+            Some(1),
+            "Player 1 should win with highest score"
+        );
+    }
+
+    // Test accumulated tricks go to next winner
+    #[test]
+    fn test_accumulated_tricks_to_next_winner() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        // First trick: all tie (no winner)
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 2,
+            },
+            Card {
+                id: 8,
+                suit: Suit::Purple,
+                value: 9,
+            },
+        ];
+        game.hands[1] = vec![
+            Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 2,
+            },
+            Card {
+                id: 9,
+                suit: Suit::Purple,
+                value: 3,
+            },
+        ];
+        game.hands[2] = vec![
+            Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 2,
+            },
+            Card {
+                id: 10,
+                suit: Suit::Purple,
+                value: 4,
+            },
+        ];
+        game.hands[3] = vec![
+            Card {
+                id: 3,
+                suit: Suit::Purple,
+                value: 2,
+            },
+            Card {
+                id: 11,
+                suit: Suit::Purple,
+                value: 5,
+            },
+        ];
+
+        game.state = State::Play;
+        game.current_player = 0;
+        game.lead_player = 0;
+
+        // First trick - all tie
+        game.apply_move(0);
+        game.apply_move(1);
+        game.apply_move(2);
+        game.apply_move(3);
+
+        assert_eq!(game.accumulated_tricks.len(), 4);
+        assert_eq!(game.state, State::Play, "Continue playing after no winner");
+        assert_eq!(game.current_player, 0, "Lead player stays same");
+
+        // Second trick - player 0 wins with Purple 9 (highest card)
+        game.apply_move(8); // Purple 9
+        game.apply_move(9); // Purple 3
+        game.apply_move(10); // Purple 4
+        game.apply_move(11); // Purple 5
+
+        assert_eq!(game.current_player, 0, "Player 0 wins with Purple 9");
+        assert_eq!(game.state, State::SelectBidOrPass);
+        assert_eq!(
+            game.accumulated_tricks.len(),
+            8,
+            "Should have 4 from first trick + 4 from second"
+        );
+    }
+
+    // Test playable_card_ids when leading
+    #[test]
+    fn test_playable_when_leading() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Yellow,
+                value: 2,
+            },
+        ];
+
+        game.state = State::Play;
+        game.current_player = 0;
+        game.lead_player = 0;
+        game.current_hand = [None; PLAYER_COUNT];
+
+        let moves = game.playable_card_ids();
+        assert_eq!(moves.len(), 3, "All cards playable when leading");
+    }
+
+    // Test first bid card establishes trump
+    #[test]
+    fn test_first_bid_establishes_trump() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.state = State::SelectBidOrPass;
+        game.current_player = 0;
+        game.trump_suit = None;
+        game.accumulated_tricks = vec![
+            Card {
+                id: 0,
+                suit: Suit::Green,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 3,
+            },
+        ];
+        game.hands[0] = vec![];
+
+        // Select Green 5 as bid
+        game.apply_move(0);
+
+        assert_eq!(game.trump_suit, Some(Suit::Green));
+        assert_eq!(game.bid_cards[0].unwrap().suit, Suit::Green);
+    }
+
+    // Test second bid doesn't change trump
+    #[test]
+    fn test_second_bid_keeps_trump() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.state = State::SelectBidOrPass;
+        game.current_player = 1;
+        game.trump_suit = Some(Suit::Green); // Already established
+        game.accumulated_tricks = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Yellow,
+                value: 3,
+            },
+        ];
+        game.hands[1] = vec![];
+
+        // Select Purple 5 as bid
+        game.apply_move(0);
+
+        assert_eq!(
+            game.trump_suit,
+            Some(Suit::Green),
+            "Trump should remain Green"
+        );
+        assert_eq!(game.bid_cards[1].unwrap().suit, Suit::Purple);
+    }
+
+    // Test round progression
+    #[test]
+    fn test_round_progression() {
+        let mut game = TrickOrBidGame::new();
+        assert_eq!(game.round, 1);
+
+        let initial_dealer = game.dealer;
+
+        // Simulate end of round
+        game.no_changes = true;
+        game.hands = [vec![], vec![], vec![], vec![]];
+        game.state = State::SelectBidOrPass;
+        game.bid_cards = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Yellow,
+                value: 4,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Red,
+                value: 2,
+            }),
+        ];
+        game.tricks_won_count = [5, 3, 4, 2];
+
+        game.end_hand();
+
+        assert_eq!(game.round, 2);
+        assert_eq!(game.dealer, (initial_dealer + 1) % PLAYER_COUNT);
+        assert_eq!(game.state, State::Play);
+    }
+
+    // Test randomize_determination keeps bid cards public
+    #[test]
+    fn test_randomize_determination_keeps_bid_cards() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        // Set up a game state with bid cards
+        game.bid_cards = [
+            Some(Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 3,
+            }),
+            None,
+            Some(Card {
+                id: 3,
+                suit: Suit::Red,
+                value: 2,
+            }),
+        ];
+        game.trump_suit = Some(Suit::Purple);
+
+        let original_bid_cards = game.bid_cards.clone();
+        let original_trump = game.trump_suit;
+
+        // Randomize from player 0's perspective
+        game.randomize_determination(0);
+
+        // Bid cards and trump should remain unchanged (they're public)
+        assert_eq!(
+            game.bid_cards, original_bid_cards,
+            "Bid cards are public and should not change"
+        );
+        assert_eq!(
+            game.trump_suit, original_trump,
+            "Trump suit is public and should not change"
+        );
+    }
+
+    // Test randomize_determination preserves observer's hand
+    #[test]
+    fn test_randomize_determination_preserves_observer_hand() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 3,
+            },
+        ];
+        game.hands[1] = vec![
+            Card {
+                id: 2,
+                suit: Suit::Green,
+                value: 7,
+            },
+            Card {
+                id: 3,
+                suit: Suit::Green,
+                value: 2,
+            },
+        ];
+
+        let original_hand = game.hands[0].clone();
+
+        // Randomize from player 0's perspective
+        game.randomize_determination(0);
+
+        // Player 0's hand should remain unchanged
+        assert_eq!(
+            game.hands[0], original_hand,
+            "Observer's hand should not change"
+        );
+    }
+
+    // Test accumulated tricks counting: 8 cards = 2 tricks, 12 cards = 3 tricks, etc.
+    #[test]
+    fn test_accumulated_tricks_counting() {
+        let mut game = TrickOrBidGame::new();
+        game.no_changes = true;
+
+        // Set up a scenario with 8 cards already accumulated (2 previous no-winner tricks)
+        game.accumulated_tricks = vec![
+            Card {
+                id: 0,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 5,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Green,
+                value: 3,
+            },
+            Card {
+                id: 3,
+                suit: Suit::Green,
+                value: 3,
+            },
+            Card {
+                id: 4,
+                suit: Suit::Red,
+                value: 7,
+            },
+            Card {
+                id: 5,
+                suit: Suit::Red,
+                value: 7,
+            },
+            Card {
+                id: 6,
+                suit: Suit::Yellow,
+                value: 2,
+            },
+            Card {
+                id: 7,
+                suit: Suit::Yellow,
+                value: 2,
+            },
+        ];
+
+        // Add the current trick (4 more cards)
+        let current_trick = vec![
+            Card {
+                id: 8,
+                suit: Suit::Purple,
+                value: 9,
+            },
+            Card {
+                id: 9,
+                suit: Suit::Purple,
+                value: 1,
+            },
+            Card {
+                id: 10,
+                suit: Suit::Purple,
+                value: 0,
+            },
+            Card {
+                id: 11,
+                suit: Suit::Purple,
+                value: 2,
+            },
+        ];
+        game.accumulated_tricks.extend(current_trick.clone());
+
+        game.current_player = 0;
+        game.state = State::SelectBidOrPass;
+
+        // Player passes - should get 3 tricks worth of points (12 cards / 4 = 3 tricks)
+        game.select_bid_card_or_pass(PASS);
+
+        // Verify tricks_won_count is 3 (12 cards total / 4 cards per trick)
+        assert_eq!(
+            game.tricks_won_count[0], 3,
+            "Player should have won 3 tricks (12 accumulated cards / 4 cards per trick)"
+        );
+
+        // Verify all cards were moved to cards_won
+        assert_eq!(
+            game.cards_won[0].len(),
+            12,
+            "All 12 cards should be in player's cards_won"
+        );
+
+        // Verify accumulated_tricks is now empty
+        assert_eq!(
+            game.accumulated_tricks.len(),
+            0,
+            "Accumulated tricks should be cleared"
+        );
     }
 }
