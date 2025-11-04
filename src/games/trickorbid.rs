@@ -239,7 +239,10 @@ impl TrickOrBidGame {
                 moves
             }
             State::Play => self.playable_card_ids(),
-            State::GameOver => panic!("No moves can be made when the game is over"),
+            State::GameOver => {
+                // Return empty moves instead of panicking - ISMCTS will use result() to determine game is over
+                vec![]
+            }
         }
     }
 
@@ -274,7 +277,10 @@ impl TrickOrBidGame {
         }
 
         match self.state {
-            State::GameOver => panic!("Cannot play when the game is over"),
+            State::GameOver => {
+                // Game is over, nothing to do - ISMCTS will use result() to determine game is over
+                return;
+            }
             State::SelectBidOrPass => self.select_bid_card_or_pass(card_id),
             State::Play => self.play(card_id),
         }
@@ -835,24 +841,22 @@ impl ismcts::Game for TrickOrBidGame {
             // the hand is not over
             None
         } else {
-            let max_score = *self.scores.iter().max().unwrap() as f64;
-            let min_score = *self.scores.iter().min().unwrap() as f64;
-            let player_score = self.scores[player] as f64;
+            let scores = self.scores;
+            let player_score = scores[player];
+            let max_score = *scores.iter().max().unwrap();
 
-            if max_score == min_score {
-                // Everyone tied - neutral result
-                return Some(0.0);
+            // Winner-takes-all reward function (based on experiments showing 64% win rate vs 59% for exponential)
+            // Simple binary outcome: win = 1.0, lose = -1.0, tie = 0.0
+            if player_score == max_score {
+                // Check if there are multiple players with the max score (tie)
+                if scores.iter().filter(|&&s| s == player_score).count() > 1 {
+                    Some(0.0) // Tie
+                } else {
+                    Some(1.0) // Win
+                }
+            } else {
+                Some(-1.0) // Lose
             }
-
-            // Exponential reward function (based on experiments showing improved performance)
-            // Linear interpolation between worst and best score, then apply exponential transformation
-            let linear = 2.0 * (player_score - min_score) / (max_score - min_score) - 1.0;
-
-            // Apply exponential transformation: sign(x) * (|x|^2)
-            // This amplifies reward differences while preserving direction
-            let exponential_reward = linear.signum() * linear.abs().powf(2.0);
-
-            Some(exponential_reward)
         }
     }
 }
