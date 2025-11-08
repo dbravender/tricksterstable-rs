@@ -234,9 +234,16 @@ impl TrickOrBidGame {
     pub fn get_moves(self: &TrickOrBidGame) -> Vec<i32> {
         match self.state {
             State::SelectBidOrPass => {
-                let mut moves = vec![PASS];
-                moves.extend(self.accumulated_tricks.iter().map(|c| c.id));
-                moves
+                // If player already has a bid card, they can only pass (take the trick)
+                if self.bid_cards[self.current_player].is_some() {
+                    // This never should happen in practice because this state should be skipped
+                    // for players that already have bid
+                    vec![PASS]
+                } else {
+                    let mut moves = vec![PASS];
+                    moves.extend(self.accumulated_tricks.iter().map(|c| c.id));
+                    moves
+                }
             }
             State::Play => self.playable_card_ids(),
             State::GameOver => {
@@ -354,24 +361,22 @@ impl TrickOrBidGame {
             },
         );
 
-        // Remaining cards go to won cards pile (as tricks taken)
-        self.cards_won[player].extend(self.accumulated_tricks.iter().copied());
-        self.tricks_won_count[player] += tricks_count;
-
-        // Animate remaining cards to score pile
-        let change_index = self.new_change();
-        let cards_to_animate = self.accumulated_tricks.clone();
-        for card in &cards_to_animate {
-            self.add_change(
-                change_index,
-                Change {
-                    change_type: ChangeType::TricksToWinner,
-                    object_id: card.id,
-                    dest: Location::Score,
-                    player,
-                    ..Default::default()
-                },
-            );
+        // Remaining cards are DISCARDED (not counted as tricks)
+        // For player 0, animate them burning. For others, just leave them (they'll disappear)
+        if player == 0 {
+            let change_index = self.new_change();
+            let cards_to_animate = self.accumulated_tricks.clone();
+            for card in &cards_to_animate {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::BurnTrick,
+                        object_id: card.id,
+                        dest: Location::TricksBurned,
+                        ..Default::default()
+                    },
+                );
+            }
         }
 
         self.accumulated_tricks.clear();
@@ -441,8 +446,9 @@ impl TrickOrBidGame {
             if self.hands.iter().all(|h| h.is_empty()) {
                 // Last trick with no winner - discard accumulated tricks
                 self.accumulated_tricks.clear();
-                self.state = State::SelectBidOrPass;
-                self.current_player = self.dealer;
+                // Since all players have finished their hands, just end the round
+                // No need to enter SelectBidOrPass state
+                self.end_hand();
             }
             return;
         }
@@ -499,7 +505,43 @@ impl TrickOrBidGame {
         self.current_player = trick_winner;
         self.lead_player = trick_winner;
 
-        // Transition to bid selection state
+        // If player already has a bid card, automatically take the trick (pass)
+        if self.bid_cards[trick_winner].is_some() {
+            // Automatically pass - count the tricks
+            let num_cards = self.accumulated_tricks.len();
+            let tricks_count = (num_cards / 4) as i32;
+
+            self.cards_won[trick_winner].extend(self.accumulated_tricks.iter().copied());
+            self.tricks_won_count[trick_winner] += tricks_count;
+
+            // Animate cards going to score pile
+            let change_index = self.new_change();
+            let cards_to_animate = self.accumulated_tricks.clone();
+            for card in &cards_to_animate {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::TricksToWinner,
+                        object_id: card.id,
+                        dest: Location::Score,
+                        player: trick_winner,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            self.accumulated_tricks.clear();
+
+            // Continue play or end round
+            if self.hands.iter().any(|h| !h.is_empty()) {
+                self.state = State::Play;
+            } else {
+                self.end_hand();
+            }
+            return;
+        }
+
+        // Transition to bid selection state (only if player doesn't have a bid yet)
         self.state = State::SelectBidOrPass;
 
         if self.hands.iter().any(|h| !h.is_empty()) {
@@ -861,7 +903,7 @@ impl ismcts::Game for TrickOrBidGame {
     }
 }
 
-pub fn get_mcts_move(game: &TrickOrBidGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &TrickOrBidGame, iterations: i32, _debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     let mut ismcts = IsmctsHandler::new(new_game);
@@ -1282,8 +1324,9 @@ mod tests {
             Some(Suit::Purple),
             "Trump suit established"
         );
-        assert_eq!(game.tricks_won_count[1], 1);
-        assert_eq!(game.cards_won[1].len(), 3, "Other 3 cards go to won pile");
+        // When selecting a bid card, the trick doesn't count and other cards are discarded
+        assert_eq!(game.tricks_won_count[1], 0, "Bid selection doesn't count as trick won");
+        assert_eq!(game.cards_won[1].len(), 0, "Other cards are discarded when bidding");
     }
 
     // Test passing on bid selection
@@ -1375,12 +1418,17 @@ mod tests {
             0,
             "Last trick with no winner is discarded"
         );
+        // Round ends and new round is dealt (since not at round 4 yet)
         assert_eq!(
             game.state,
-            State::SelectBidOrPass,
-            "Last trick ends round even with no winner"
+            State::Play,
+            "Last trick with no winner ends round and deals new hand"
         );
-        assert_eq!(game.current_player, game.dealer);
+        assert_eq!(game.round, 2, "Round incremented after end_hand");
+        assert!(
+            game.hands.iter().all(|h| h.len() == HAND_SIZE),
+            "New round dealt"
+        );
     }
 
     // Test trump beats lead suit in play
