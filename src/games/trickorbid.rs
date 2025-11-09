@@ -91,7 +91,8 @@ pub enum ChangeType {
     TricksToWinner,
     Reorder,
     SelectBidCardOrPass,
-    Bid, // Card selected to bid
+    Bid,              // Card selected to bid
+    ShowScoringCards, // Show cards in middle for scoring review
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -362,21 +363,19 @@ impl TrickOrBidGame {
         );
 
         // Remaining cards are DISCARDED (not counted as tricks)
-        // For player 0, animate them burning. For others, just leave them (they'll disappear)
-        if player == 0 {
-            let change_index = self.new_change();
-            let cards_to_animate = self.accumulated_tricks.clone();
-            for card in &cards_to_animate {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::BurnTrick,
-                        object_id: card.id,
-                        dest: Location::TricksBurned,
-                        ..Default::default()
-                    },
-                );
-            }
+        // Animate them burning (moving off screen)
+        let change_index = self.new_change();
+        let cards_to_animate = self.accumulated_tricks.clone();
+        for card in &cards_to_animate {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::BurnTrick,
+                    object_id: card.id,
+                    dest: Location::TricksBurned,
+                    ..Default::default()
+                },
+            );
         }
 
         self.accumulated_tricks.clear();
@@ -544,6 +543,25 @@ impl TrickOrBidGame {
         // Transition to bid selection state (only if player doesn't have a bid yet)
         self.state = State::SelectBidOrPass;
 
+        // Show accumulated tricks for selection (especially important for player 0)
+        let review_index = self.new_change();
+        let cards_to_show = self.accumulated_tricks.clone();
+        let num_cards = cards_to_show.len();
+        for (idx, card) in cards_to_show.iter().enumerate() {
+            self.add_change(
+                review_index,
+                Change {
+                    change_type: ChangeType::SelectBidCardOrPass,
+                    object_id: card.id,
+                    dest: Location::Play,
+                    player: trick_winner,
+                    offset: idx,
+                    length: num_cards,
+                    ..Default::default()
+                },
+            );
+        }
+
         if self.hands.iter().any(|h| !h.is_empty()) {
             // Hand continues
             return;
@@ -551,7 +569,52 @@ impl TrickOrBidGame {
     }
 
     pub fn end_hand(&mut self) {
-        // Round is over - calculate scores
+        // Round is over - show all players' scoring cards in middle for review
+        let review_index = self.new_change();
+        let mut offset = 0;
+
+        // Collect all scoring cards for display: bid cards and trick pile cards
+        let mut all_scoring_cards = vec![];
+        for player in 0..PLAYER_COUNT {
+            // Add bid card if present
+            if let Some(bid_card) = self.bid_cards[player] {
+                all_scoring_cards.push((bid_card, player));
+            }
+
+            // Add one card from tricks pile to show trick count (if any tricks)
+            if !self.cards_won[player].is_empty() {
+                all_scoring_cards.push((self.cards_won[player][0], player));
+            }
+        }
+
+        let total_cards = all_scoring_cards.len();
+        for (card, player) in all_scoring_cards {
+            self.add_change(
+                review_index,
+                Change {
+                    change_type: ChangeType::ShowScoringCards,
+                    object_id: card.id,
+                    dest: Location::ScoreCards,
+                    player,
+                    offset,
+                    length: total_cards,
+                    ..Default::default()
+                },
+            );
+            offset += 1;
+        }
+
+        // Add optional pause to review cards
+        self.add_change(
+            review_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: -1,
+                ..Default::default()
+            },
+        );
+
+        // Calculate scores
         for player in 0..PLAYER_COUNT {
             let score_index = self.new_change();
             let score = TrickOrBidGame::calculate_score(
@@ -1325,8 +1388,15 @@ mod tests {
             "Trump suit established"
         );
         // When selecting a bid card, the trick doesn't count and other cards are discarded
-        assert_eq!(game.tricks_won_count[1], 0, "Bid selection doesn't count as trick won");
-        assert_eq!(game.cards_won[1].len(), 0, "Other cards are discarded when bidding");
+        assert_eq!(
+            game.tricks_won_count[1], 0,
+            "Bid selection doesn't count as trick won"
+        );
+        assert_eq!(
+            game.cards_won[1].len(),
+            0,
+            "Other cards are discarded when bidding"
+        );
     }
 
     // Test passing on bid selection
