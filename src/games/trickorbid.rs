@@ -1997,7 +1997,7 @@ mod tests {
         ];
         game.trump_suit = Some(Suit::Purple);
 
-        let original_bid_cards = game.bid_cards.clone();
+        let original_bid_cards = game.bid_cards;
         let original_trump = game.trump_suit;
 
         // Randomize from player 0's perspective

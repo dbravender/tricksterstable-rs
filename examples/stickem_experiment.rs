@@ -1,5 +1,5 @@
 use ismcts::Game;
-use rand::{seq::SliceRandom, thread_rng};
+use rand::thread_rng;
 use std::collections::HashMap;
 use tricksterstable_rs::games::stickem::{get_mcts_move, State, StickEmGame};
 
@@ -132,7 +132,7 @@ fn run_experiment(
 ) -> (f64, HashMap<usize, i32>) {
     let mut total_score = 0.0;
     let mut wins = HashMap::new();
-    let mut rng = thread_rng();
+    let rng = thread_rng();
 
     for _ in 0..games {
         let mut game = ExperimentalStickEmGame::new(reward_function);

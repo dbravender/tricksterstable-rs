@@ -51,7 +51,7 @@ fn verify_against_dart() -> io::Result<()> {
             game = test_case.game_state.clone();
         } else {
             game.apply_move(test_case.action.unwrap());
-            game.dealer = test_case.game_state.dealer.clone();
+            game.dealer = test_case.game_state.dealer;
             game.voids = vec![HashSet::new(), HashSet::new(), HashSet::new()];
             game.draw_decks = test_case.game_state.draw_decks.clone();
             println!("rust: {}", serde_json::to_string(&game).unwrap());
@@ -169,11 +169,9 @@ pub fn ismcts_play() {
             }
 
             let high_score = game.scores.iter().reduce(|x, y| if x > y { x } else { y });
-            for player in 0..3 {
+            for (player, player_obj) in players.iter().enumerate().take(3) {
                 if game.scores[player] == *high_score.unwrap() {
-                    *wins
-                        .entry(players[player].get_name().to_owned())
-                        .or_insert(0) += 1;
+                    *wins.entry(player_obj.get_name().to_owned()).or_insert(0) += 1;
                 }
             }
             println!("total moves: {:?}", total_moves);

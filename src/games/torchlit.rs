@@ -707,10 +707,10 @@ impl TorchlitGame {
 
             let index = self.new_change();
 
-            for player in 0..4 {
+            for (player, torch_point) in torch_points.iter_mut().enumerate() {
                 let mut torch_card = *self.hands[player].first().unwrap();
                 if torch_card.value == self.player_dungeon_offset[player] {
-                    torch_points[player] = 3;
+                    *torch_point = 3;
                 } else {
                     torch_card.dropped_torch = true;
                     self.dungeon_cards[torch_card.value as usize].push(torch_card);
@@ -905,8 +905,8 @@ impl TorchlitGame {
             }
 
             // Show torch points
-            for player in 0..4 {
-                if torch_points[player] == 0 {
+            for (player, &torch_point) in torch_points.iter().enumerate() {
+                if torch_point == 0 {
                     continue;
                 }
                 let index = self.new_change();

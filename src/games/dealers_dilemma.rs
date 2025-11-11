@@ -1686,7 +1686,7 @@ mod tests {
 
     #[test]
     fn test_mcts_playthrough() {
-        let mut iterations = vec![10, 250, 1000];
+        let mut iterations = [10, 250, 1000];
         let mut wins: HashMap<i32, i32> = HashMap::from_iter(iterations.iter().map(|i| (*i, 0)));
         let mut scores: HashMap<i32, i32> = HashMap::from_iter(iterations.iter().map(|i| (*i, 0)));
         // 0..100 for comparisons

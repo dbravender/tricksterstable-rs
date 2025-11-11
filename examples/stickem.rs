@@ -1,4 +1,4 @@
-use rand::{seq::SliceRandom, thread_rng};
+use rand::thread_rng;
 use tricksterstable_rs::games::stickem::{get_mcts_move, State, StickEmGame};
 
 fn main() {

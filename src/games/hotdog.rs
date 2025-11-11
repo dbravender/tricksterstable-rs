@@ -1160,18 +1160,18 @@ impl ismcts::Game for HotdogGame {
         let mut remaining_cards: Vec<Card> = self.cards.clone();
         let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
 
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter_mut().enumerate() {
             if player != self.current_player {
                 remaining_cards.extend(self.hands[player].iter());
             }
 
-            hidden_straw_bottoms[player] =
+            *hidden_bottom =
                 HashSet::from_iter(self.straw_bottom[player].iter().filter_map(|&x| x))
                     .difference(&self.exposed_straw_bottoms(player))
                     .cloned()
                     .collect();
 
-            remaining_cards.extend(hidden_straw_bottoms[player].iter());
+            remaining_cards.extend(hidden_bottom.iter());
         }
 
         remaining_cards.shuffle(rng);
@@ -1193,10 +1193,10 @@ impl ismcts::Game for HotdogGame {
         }
 
         remaining_cards.shuffle(rng);
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter().enumerate() {
             for i in 0..self.straw_bottom[player].len() {
                 let card = self.straw_bottom[player][i];
-                if card.is_some() && hidden_straw_bottoms[player].contains(&card.unwrap()) {
+                if card.is_some() && hidden_bottom.contains(&card.unwrap()) {
                     self.straw_bottom[player][i] = remaining_cards.pop();
                 }
             }

@@ -771,8 +771,8 @@ impl ismcts::Game for StickEmGame {
             }
         }
 
-        for player in 0..PLAYER_COUNT {
-            if pain_card_played[player] {
+        for (player, &played) in pain_card_played.iter().enumerate().take(PLAYER_COUNT) {
+            if played {
                 let card = self.hands[player].pop();
                 self.pain_cards[player] = card;
             }

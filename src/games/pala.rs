@@ -1503,7 +1503,7 @@ mod tests {
         for suit in all::<Suit>() {
             let values = map
                 .get(&suit)
-                .expect(&format!("No cards for suit {:?}", suit));
+                .unwrap_or_else(|| panic!("No cards for suit {:?}", suit));
             // 8 cards per suit
             assert_eq!(values.len(), 8, "wrong count for {:?}", suit);
 

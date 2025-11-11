@@ -336,18 +336,16 @@ impl Yokai2pGame {
             if card.is_none() {
                 continue;
             }
-            let left_open: bool;
-            let right_open: bool;
-            if i == 0 {
-                left_open = true;
+            let left_open: bool = if i == 0 {
+                true
             } else {
-                left_open = self.straw_top[player][i - 1].is_none();
-            }
-            if i == 6 {
-                right_open = true;
+                self.straw_top[player][i - 1].is_none()
+            };
+            let right_open: bool = if i == 6 {
+                true
             } else {
-                right_open = self.straw_top[player][i].is_none();
-            }
+                self.straw_top[player][i].is_none()
+            };
             if left_open && right_open {
                 exposed_cards.insert(card.unwrap());
             }
@@ -609,11 +607,10 @@ impl Yokai2pGame {
 
                     if hand_winning_player.is_none() {
                         let mut overall_hands: [Vec<Card>; 2] = [vec![], vec![]];
-                        for player in 0..2 {
-                            overall_hands[player].extend(self.hands[player].clone());
-                            overall_hands[player]
-                                .extend(self.straw_bottom[player].iter().flatten());
-                            overall_hands[player].extend(self.straw_top[player].iter().flatten());
+                        for (player, overall_hand) in overall_hands.iter_mut().enumerate() {
+                            overall_hand.extend(self.hands[player].clone());
+                            overall_hand.extend(self.straw_bottom[player].iter().flatten());
+                            overall_hand.extend(self.straw_top[player].iter().flatten());
                         }
 
                         if overall_hands.iter().all(|h| h.is_empty()) {
@@ -741,18 +738,18 @@ impl ismcts::Game for Yokai2pGame {
         let mut remaining_cards: Vec<Card> = vec![];
         let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
 
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter_mut().enumerate() {
             if player != self.current_player {
                 remaining_cards.extend(self.hands[player].iter());
             }
 
-            hidden_straw_bottoms[player] =
+            *hidden_bottom =
                 HashSet::from_iter(self.straw_bottom[player].iter().filter_map(|&x| x))
                     .difference(&self.exposed_straw_bottoms(player))
                     .cloned()
                     .collect();
 
-            remaining_cards.extend(hidden_straw_bottoms[player].iter());
+            remaining_cards.extend(hidden_bottom.iter());
         }
 
         remaining_cards.shuffle(rng);
@@ -774,10 +771,10 @@ impl ismcts::Game for Yokai2pGame {
         }
 
         remaining_cards.shuffle(rng);
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter().enumerate() {
             for i in 0..self.straw_bottom[player].len() {
                 let card = self.straw_bottom[player][i];
-                if card.is_some() && hidden_straw_bottoms[player].contains(&card.unwrap()) {
+                if card.is_some() && hidden_bottom.contains(&card.unwrap()) {
                     self.straw_bottom[player][i] = remaining_cards.pop();
                 }
             }
