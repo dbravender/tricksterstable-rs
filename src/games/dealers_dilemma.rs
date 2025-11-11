@@ -371,9 +371,11 @@ pub struct Game {
 impl Game {
     /// Factory to create a default game
     pub fn new() -> Game {
-        let mut game = Game::default();
-        game.dealer = 2;
-        game.current_player = 2;
+        let game = Game {
+            dealer: 2,
+            current_player: 2,
+            ..Default::default()
+        };
         let mut game = game.deal();
         game.scores = [0, 0, 0];
         game.scores_this_hand = [0, 0, 0];

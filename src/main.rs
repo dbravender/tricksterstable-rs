@@ -32,7 +32,7 @@ fn verify_against_dart() -> io::Result<()> {
     let mut test_count: i32 = 0;
 
     for line in reader.lines() {
-        test_count = test_count + 1;
+        test_count += 1;
         let test_case: TestCase = serde_json::from_str(&line.unwrap()).unwrap();
         if test_case
             .game_state

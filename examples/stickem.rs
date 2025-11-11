@@ -2,7 +2,7 @@ use rand::{seq::SliceRandom, thread_rng};
 use tricksterstable_rs::games::stickem::{get_mcts_move, State, StickEmGame};
 
 fn main() {
-    let mut rng = thread_rng();
+    let rng = thread_rng();
     for _ in 0..100 {
         let mut game = StickEmGame::new();
         while game.state != State::GameOver {

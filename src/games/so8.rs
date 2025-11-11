@@ -779,7 +779,7 @@ impl SixOfVIIIGame {
                         dest: Location::Score,
                         player: team,
                         start_score: self.scores[team],
-                        end_score: self.scores[team] + earned_this_hand[team],
+                        end_score: self.scores[team] + earned,
                         ..Default::default()
                     },
                 );
