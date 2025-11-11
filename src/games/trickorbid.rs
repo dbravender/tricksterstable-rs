@@ -4,7 +4,7 @@ Designer: Jeremy Zero
 BoardGameGeek: https://boardgamegeek.com/boardgame/427341/trick-or-bid
 */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
@@ -229,7 +229,7 @@ impl TrickOrBidGame {
 
         deck.shuffle(&mut thread_rng());
 
-        return deck;
+        deck
     }
 
     pub fn get_moves(self: &TrickOrBidGame) -> Vec<i32> {
@@ -564,7 +564,6 @@ impl TrickOrBidGame {
 
         if self.hands.iter().any(|h| !h.is_empty()) {
             // Hand continues
-            return;
         }
     }
 
@@ -653,8 +652,6 @@ impl TrickOrBidGame {
                     ..Default::default()
                 },
             );
-
-            return;
         } else {
             self.deal();
         }
@@ -744,7 +741,7 @@ impl TrickOrBidGame {
             let card = card.unwrap();
             value_suit_count
                 .entry((card.value, card.suit))
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(card);
         }
 

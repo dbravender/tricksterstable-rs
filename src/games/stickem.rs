@@ -220,7 +220,7 @@ impl StickEmGame {
 
         deck.shuffle(&mut thread_rng());
 
-        return deck;
+        deck
     }
 
     pub fn get_moves(&self) -> Vec<i32> {
@@ -391,7 +391,7 @@ impl StickEmGame {
         // Reset the trick
         self.current_hand = [None; 4];
 
-        if self.hands.iter().any(|h| h.len() > 0) {
+        if self.hands.iter().any(|h| !h.is_empty()) {
             // Hand continues
             return;
         }
@@ -453,8 +453,6 @@ impl StickEmGame {
                     ..Default::default()
                 },
             );
-
-            return;
         } else {
             self.deal();
         }
@@ -764,15 +762,12 @@ impl ismcts::Game for StickEmGame {
                     // Don't swap current player's cards - player knows exactly what they have
                     continue;
                 }
-                let mut new_hands = vec![
-                    self.hands[p1 as usize].clone(),
-                    self.hands[p2 as usize].clone(),
-                ];
+                let mut new_hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
 
                 shuffle_and_divide_matching_cards(|_: &Card| true, &mut new_hands, rng);
 
-                self.hands[p1 as usize] = new_hands[0].clone();
-                self.hands[p2 as usize] = new_hands[1].clone();
+                self.hands[p1] = new_hands[0].clone();
+                self.hands[p2] = new_hands[1].clone();
             }
         }
 
@@ -827,7 +822,7 @@ impl ismcts::Game for StickEmGame {
     }
 }
 
-pub fn get_mcts_move(game: &StickEmGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &StickEmGame, iterations: i32, _debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     let mut ismcts = IsmctsHandler::new(new_game);

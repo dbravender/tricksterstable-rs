@@ -73,7 +73,7 @@ impl KaiboshGame {
         game.dealer = 3;
         // TODO: make this configurable for humans playing the game
         game.score_threshold = 25;
-        return game;
+        game
     }
 
     fn new_hand(&mut self) {
@@ -122,7 +122,7 @@ impl KaiboshGame {
 
         assert!(deck.is_empty(), "deck should be all dealt");
 
-        return hands;
+        hands
     }
 
     pub fn name_trump(&mut self, trump: i32) {
@@ -187,7 +187,7 @@ impl KaiboshGame {
                 self.trump.unwrap(),
                 &self.current_trick,
             );
-            let winning_card =
+            let _winning_card =
                 self.current_trick[trick_winner].expect("there has to be a trick_winner card");
             self.current_trick = [None; 4];
             self.lead_card = None;
@@ -218,7 +218,7 @@ impl KaiboshGame {
         {
             return true;
         }
-        return false;
+        false
     }
 
     fn check_for_misdeal(&self, player: usize) -> bool {
@@ -281,7 +281,7 @@ impl KaiboshGame {
     fn play_options(&self) -> Vec<i32> {
         let actions: Vec<i32>;
         if let Some(lead_card) = self.lead_card {
-            actions = self.hands[self.current_player as usize]
+            actions = self.hands[self.current_player]
                 .iter()
                 .filter(|c| c.suit == lead_card.suit)
                 .map(|c| c.id)
@@ -291,7 +291,7 @@ impl KaiboshGame {
             }
         }
 
-        let actions: Vec<i32> = self.hands[self.current_player as usize]
+        let actions: Vec<i32> = self.hands[self.current_player]
             .iter()
             .map(|c| c.id)
             .collect();
@@ -333,12 +333,10 @@ impl KaiboshGame {
             } else {
                 -12
             }
+        } else if made_it {
+            trick_count
         } else {
-            if made_it {
-                trick_count
-            } else {
-                -bid
-            }
+            -bid
         }
     }
 
@@ -383,6 +381,7 @@ impl KaiboshGame {
     }
 }
 
+#[allow(dead_code)]
 fn bid_to_string(bid: i32) -> String {
     match bid {
         KAIBOSH => "kaibosh".to_string(),
@@ -426,7 +425,7 @@ pub fn value_for_card(lead_suit: Suit, trump_suit: Suit, c: &Card) -> i32 {
     if c.suit == lead_suit {
         return c.value + 100;
     }
-    return c.value;
+    c.value
 }
 
 impl ismcts::Game for KaiboshGame {

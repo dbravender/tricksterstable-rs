@@ -114,7 +114,7 @@ impl Card {
             text.push_str(&format!("{:>2}: ", self.id));
         }
         if self.value == KING {
-            text.push_str("K");
+            text.push('K');
         } else {
             text.push_str(&self.value.to_string());
         }
@@ -392,7 +392,7 @@ impl SixOfVIIIGame {
 
         deck.shuffle(&mut thread_rng());
 
-        return deck;
+        deck
     }
 
     pub fn get_moves(self: &SixOfVIIIGame) -> Vec<i32> {
@@ -616,15 +616,14 @@ impl SixOfVIIIGame {
 
                 self.current_trick[self.current_player] = Some(card);
 
-                if lead_suit.is_some() {
+                if let Some(suit) = lead_suit {
                     if Some(card.suit) != lead_suit
-                        && !self.voids[self.current_player].contains(&lead_suit.unwrap())
+                        && !self.voids[self.current_player].contains(&suit)
                         // Zeroes and the King card don't always reveal voids
-                        && card.value != 0
-                        && card.id != KING_ID
+                        && card.value != 0 && card.id != KING_ID
                     {
                         // Player has revealed a void
-                        self.voids[self.current_player].push(lead_suit.unwrap());
+                        self.voids[self.current_player].push(suit);
                     }
                 }
 
@@ -665,7 +664,6 @@ impl SixOfVIIIGame {
                         // 0 - Human player will decide for their team
                         // 1 - West can decide for their team
                         self.current_player = trick_losing_team;
-                        return;
                     } else {
                         self.score_trick(false);
                     }
@@ -694,7 +692,7 @@ impl SixOfVIIIGame {
         }
         // Only the team with the lower score at the start of a hand can use the
         // Church of England ability
-        return self.scores[trick_losing_team] < self.scores[(trick_losing_team + 1) % 2];
+        self.scores[trick_losing_team] < self.scores[(trick_losing_team + 1) % 2]
     }
 
     pub fn score_trick(&mut self, trick_annulled: bool) {
@@ -760,8 +758,8 @@ impl SixOfVIIIGame {
             // Score the hand
             let mut earned_this_hand = [0; 2];
             // Each trick of 4 cards is worth 1 point
-            for team in 0..2 {
-                earned_this_hand[team] += self.cards_taken[team].len() as i32 / 4;
+            for (earned, cards) in earned_this_hand.iter_mut().zip(self.cards_taken.iter()) {
+                *earned += cards.len() as i32 / 4;
             }
             // Add all the points on the cards to the team's score
             for (team, cards) in self.cards_taken.iter().enumerate() {
@@ -772,7 +770,7 @@ impl SixOfVIIIGame {
 
             // Animate the scores
             let score_change_index = self.new_change();
-            for team in 0..2 {
+            for (team, &earned) in earned_this_hand.iter().enumerate() {
                 self.add_change(
                     score_change_index,
                     Change {
@@ -817,7 +815,6 @@ impl SixOfVIIIGame {
                 return;
             }
             self.deal();
-            return;
         }
     }
 
@@ -992,7 +989,7 @@ impl SixOfVIIIGame {
             .filter_map(|&x| x) // filter_map will only pass through the Some values
             .collect();
         for card in cards.iter() {
-            println!("{:?} = {}", card, self.value_for_card(&card));
+            println!("{:?} = {}", card, self.value_for_card(card));
         }
         cards.sort_by_key(|c| std::cmp::Reverse(self.value_for_card(c)));
         *card_id_to_player
@@ -1050,8 +1047,7 @@ impl ismcts::Game for SixOfVIIIGame {
         for p1 in 0..4 {
             if p1 != self.current_player() {
                 // randomly swap each player's hand with the burned cards
-                let mut new_hands =
-                    vec![self.hands[p1 as usize].clone(), self.burned_cards.clone()];
+                let mut new_hands = vec![self.hands[p1].clone(), self.burned_cards.clone()];
 
                 // only swap cards that aren't in the current players void set
                 shuffle_and_divide_matching_cards(
@@ -1070,13 +1066,10 @@ impl ismcts::Game for SixOfVIIIGame {
                 }
 
                 let mut combined_voids: HashSet<Suit> =
-                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
-                combined_voids.extend(self.voids[p2 as usize].iter());
+                    HashSet::from_iter(self.voids[p1].iter().cloned());
+                combined_voids.extend(self.voids[p2].iter());
 
-                let mut new_hands = vec![
-                    self.hands[p1 as usize].clone(),
-                    self.hands[p2 as usize].clone(),
-                ];
+                let mut new_hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
 
                 // allow swapping of any cards that are not in the combined void set
                 shuffle_and_divide_matching_cards(
@@ -1085,8 +1078,8 @@ impl ismcts::Game for SixOfVIIIGame {
                     rng,
                 );
 
-                self.hands[p1 as usize] = new_hands[0].clone();
-                self.hands[p2 as usize] = new_hands[1].clone();
+                self.hands[p1] = new_hands[0].clone();
+                self.hands[p2] = new_hands[1].clone();
             }
         }
     }
@@ -1111,22 +1104,20 @@ impl ismcts::Game for SixOfVIIIGame {
         let team = player % 2;
         if self.winner.is_none() {
             None
+        } else if !self.experiment {
+            let total_score_ratio = self.scores[team] as f64 / MAX_POINTS_PER_HAND;
+
+            // Scale the total score to a range between -1.0 and 1.0
+            let final_score = (total_score_ratio * 2.0) - 1.0;
+
+            Some(final_score)
         } else {
-            if !self.experiment {
-                let total_score_ratio = self.scores[team] as f64 / MAX_POINTS_PER_HAND;
-
-                // Scale the total score to a range between -1.0 and 1.0
-                let final_score = (total_score_ratio * 2.0) - 1.0;
-
-                Some(final_score)
-            } else {
-                todo!("No experiment implemented");
-            }
+            todo!("No experiment implemented");
         }
     }
 }
 
-pub fn get_mcts_move(game: &SixOfVIIIGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &SixOfVIIIGame, iterations: i32, _debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation

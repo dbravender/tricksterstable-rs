@@ -31,13 +31,13 @@ pub const BID_TYPE_ZERO: i32 = 80;
 
 fn color_suit(suit: Option<Suit>, string: String) -> String {
     if !cfg!(windows) {
-        return match suit {
+        match suit {
             Some(Suit::Red) => string.red().to_string(),
             Some(Suit::Blue) => string.blue().to_string(),
             Some(Suit::Yellow) => string.yellow().to_string(),
             Some(Suit::Green) => string.green().to_string(),
             _ => string,
-        };
+        }
     } else {
         string
     }
@@ -66,7 +66,7 @@ pub fn print_card(card: Card, prefix_id: bool) -> String {
     if !prefix_id {
         return string;
     }
-    return format!("{}: {}", card.id, string);
+    format!("{}: {}", card.id, string)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Sequence, Serialize, Deserialize, Eq)]
@@ -104,7 +104,7 @@ impl BidType {
                     // tricks won is equal to the hidden card: score 2 points
                     _ if tricks == facedown_card.unwrap().value => 2,
                     // -1 point per trick missed from your lowest bid value
-                    _ => (lowest_bid - tricks).abs() * -1,
+                    _ => -(lowest_bid - tricks).abs(),
                 }
             }
             BidType::Top => {
@@ -507,7 +507,7 @@ impl Game {
                                     object_id: card.id,
                                     dest: Location::DealerSelect,
                                     dest_offset: offset as i32,
-                                    player: 0 as i32,
+                                    player: 0_i32,
                                     hand_offset: offset as i32,
                                     length: 2,
                                     ..Default::default()
@@ -799,16 +799,14 @@ impl Game {
                             ..Default::default()
                         });
                     }
-                } else {
-                    if new_game.human_player[new_game.current_player as usize] {
-                        new_game.changes.push(vec![Change {
-                            message: Some(format!("Select your secondary bid card")),
-                            change_type: ChangeType::Message,
-                            object_id: -1,
-                            dest: Location::Message,
-                            ..Default::default()
-                        }]);
-                    }
+                } else if new_game.human_player[new_game.current_player as usize] {
+                    new_game.changes.push(vec![Change {
+                        message: Some("Select your secondary bid card".to_string()),
+                        change_type: ChangeType::Message,
+                        object_id: -1,
+                        dest: Location::Message,
+                        ..Default::default()
+                    }]);
                 }
 
                 new_game
@@ -846,11 +844,9 @@ impl Game {
 
                 if new_game.lead_suit.is_none() {
                     new_game.lead_suit = Some(card.suit);
-                } else {
-                    if Some(card.suit) != new_game.lead_suit {
-                        // Player has revealed a void
-                        new_game.voids[new_game.current_player as usize].insert(card.suit);
-                    }
+                } else if Some(card.suit) != new_game.lead_suit {
+                    // Player has revealed a void
+                    new_game.voids[new_game.current_player as usize].insert(card.suit);
                 }
                 new_game.current_player = (new_game.current_player + 1) % 3;
                 // end trick
@@ -950,8 +946,8 @@ impl Game {
                                     object_id: player as i32,
                                     player: player as i32,
                                     dest: Location::Score,
-                                    start_score: self.scores[player as usize],
-                                    end_score: new_game.scores[player as usize],
+                                    start_score: self.scores[player],
+                                    end_score: new_game.scores[player],
                                     ..Default::default()
                                 }]);
                             }
@@ -1123,7 +1119,7 @@ pub fn value_for_card(lead_suit: Option<Suit>, trump_suit: Option<Suit>, card: &
     card.value + bonus
 }
 
-pub fn reorder_hand(player: i32, hand: &Vec<Card>) -> Vec<Change> {
+pub fn reorder_hand(player: i32, hand: &[Card]) -> Vec<Change> {
     let mut changes: Vec<Change> = vec![];
     for (offset_in_hand, card) in hand.iter().enumerate() {
         changes.push(Change {
@@ -1148,7 +1144,7 @@ fn show_playable(new_game: &Game) -> Vec<Change> {
     if new_game.current_player == 0 {
         if new_game.state == State::BidCard && new_game.bid_cards[0][0].is_none() {
             changes.push(Change {
-                message: Some(format!("Select your primary bid card")),
+                message: Some("Select your primary bid card".to_string()),
                 change_type: ChangeType::Message,
                 object_id: -1,
                 dest: Location::Message,
@@ -1190,7 +1186,7 @@ fn show_playable(new_game: &Game) -> Vec<Change> {
         }
         changes
     } else {
-        let mut hide_changes = hide_playable(&new_game);
+        let mut hide_changes = hide_playable(new_game);
         changes.append(&mut hide_changes);
         changes
     }
@@ -1231,7 +1227,8 @@ impl name for Game {
 
                 // Add hidden bid cards to player's hands so they can be swapped
                 for player in [p1 as usize, p2 as usize] {
-                    if self.bids[player] == Some(BidType::Easy) && self.bid_cards[player][1] != None
+                    if self.bids[player] == Some(BidType::Easy)
+                        && self.bid_cards[player][1].is_some()
                     {
                         let bid_card = self.bid_cards[player][1].unwrap();
                         self.hands[player].push(bid_card);
@@ -1258,7 +1255,8 @@ impl name for Game {
                 self.hands[p2 as usize] = new_hands[1].clone();
 
                 for player in [p1 as usize, p2 as usize] {
-                    if self.bids[player] == Some(BidType::Easy) && self.bid_cards[player][1] != None
+                    if self.bids[player] == Some(BidType::Easy)
+                        && self.bid_cards[player][1].is_some()
                     {
                         // randomly take one of the cards and make it the hidden card
                         self.bid_cards[player][1] = self.hands[player].pop();
@@ -1286,10 +1284,10 @@ impl name for Game {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        if self.winner == None {
+        if self.winner.is_none() {
             None
         } else {
-            let mut sorted_scores = self.scores_this_hand.clone();
+            let mut sorted_scores = self.scores_this_hand;
             sorted_scores.sort();
             sorted_scores.reverse();
             let scorer_count = sorted_scores.iter().filter(|&x| *x > 0).count();

@@ -5,10 +5,10 @@ use rand::{seq::SliceRandom, Rng};
 /// hand given the current state of a game.
 pub fn shuffle_and_divide_matching_cards<T: Copy>(
     matcher: impl Fn(&T) -> bool,
-    hands: &mut Vec<Vec<T>>,
+    hands: &mut [Vec<T>],
     rng: &mut impl Rng,
 ) {
-    let mut hand_locations = vec![
+    let mut hand_locations = [
         Vec::with_capacity(hands[0].len()),
         Vec::with_capacity(hands[1].len()),
     ];
@@ -21,7 +21,7 @@ pub fn shuffle_and_divide_matching_cards<T: Copy>(
         for (card_index, card) in hands[hand_index].iter().enumerate() {
             if matcher(card) {
                 hand_locations[hand_index].push(card_index);
-                matched_cards.push(card.clone());
+                matched_cards.push(*card);
             }
         }
     }
@@ -39,14 +39,16 @@ pub fn shuffle_and_divide_matching_cards<T: Copy>(
     }
 
     // All the matching cards were redistributed
-    assert!(matched_cards.len() == 0);
+    assert!(matched_cards.is_empty());
 }
 
+#[cfg(test)]
 pub mod tests {
-    use super::*;
 
     use enum_iterator::{all, Sequence};
     use rand::{rngs::StdRng, seq::SliceRandom, thread_rng, SeedableRng};
+
+    use super::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Sequence, PartialOrd, Ord, Eq)]
     enum Suit {

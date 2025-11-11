@@ -100,10 +100,7 @@ pub enum Suit {
 
 impl Suit {
     pub fn is_primary(&self) -> bool {
-        match self {
-            Suit::Blue | Suit::Red | Suit::Yellow => true,
-            _ => false,
-        }
+        matches!(self, Suit::Blue | Suit::Red | Suit::Yellow)
     }
 
     pub fn is_secondary(&self) -> bool {
@@ -390,7 +387,7 @@ impl PalaGame {
 
         deck.shuffle(&mut thread_rng());
 
-        return deck;
+        deck
     }
 
     fn peek_card(&mut self, id: i32) -> Card {
@@ -398,7 +395,7 @@ impl PalaGame {
             .iter()
             .position(|c| c.id == id)
             .unwrap();
-        return self.hands[self.current_player][pos];
+        self.hands[self.current_player][pos]
     }
 
     fn pop_card(&mut self, id: i32) -> Card {
@@ -406,8 +403,8 @@ impl PalaGame {
             .iter()
             .position(|c| c.id == id)
             .unwrap();
-        let card = self.hands[self.current_player].remove(pos);
-        return card;
+
+        self.hands[self.current_player].remove(pos)
     }
 
     // Intended to be called when all bids are finished
@@ -416,9 +413,9 @@ impl PalaGame {
 
         // Only set up the mapping if all bids are complete
         if self.bids.iter().all(|bid| bid.is_some()) {
-            for i in 0..PLAYER_COUNT {
-                let suit = self.bids[i].unwrap();
-                self.suit_to_bid.insert(suit, BID_CARDS[i]);
+            for (bid, &bid_card) in self.bids.iter().zip(BID_CARDS.iter()).take(PLAYER_COUNT) {
+                let suit = bid.unwrap();
+                self.suit_to_bid.insert(suit, bid_card);
             }
         }
     }
@@ -450,12 +447,13 @@ impl PalaGame {
             .bids
             .iter()
             .enumerate()
-            .filter_map(|(i, bid)| bid.is_none().then(|| BID_OFFSET + i as i32))
+            .filter(|&(_i, bid)| bid.is_none())
+            .map(|(i, _bid)| BID_OFFSET + i as i32)
             .collect();
         if self.human_player == Some(self.current_player) {
             bid_locations.push(UNDO);
         }
-        return bid_locations;
+        bid_locations
     }
 
     fn get_playable_cards(&self) -> Vec<i32> {
@@ -490,7 +488,7 @@ impl PalaGame {
                 return moves;
             }
         }
-        return self.current_player_card_ids();
+        self.current_player_card_ids()
     }
 
     fn cards_playable_as_a_smear(&self) -> Vec<Card> {
@@ -514,7 +512,7 @@ impl PalaGame {
                     && c.suit != winning_suit
                     && smearable_suits.contains(&c.suit.mixed_with(winning_suit))
             })
-            .map(|c| *c)
+            .copied()
             .collect()
     }
 
@@ -523,10 +521,10 @@ impl PalaGame {
             return vec![];
         }
         // Can't mix when the target suit is already played
-        if self.current_trick[self.current_player].is_some() {
-            if self.current_trick[self.current_player].unwrap().suit == target_suit {
-                return vec![];
-            }
+        if self.current_trick[self.current_player].is_some()
+            && self.current_trick[self.current_player].unwrap().suit == target_suit
+        {
+            return vec![];
         }
         let mixing_suits = target_suit.composed_of();
         // If the player does not have both mixing suits they can't mix
@@ -568,12 +566,12 @@ impl PalaGame {
                 return self.hands[self.current_player]
                     .iter()
                     .filter(|c| c.suit == suit)
-                    .map(|c| *c)
+                    .copied()
                     .collect();
             }
         }
 
-        return vec![];
+        vec![]
     }
 
     fn get_locations_to_play(&self) -> Vec<i32> {
@@ -588,7 +586,7 @@ impl PalaGame {
         if self.cards_playable_as_a_smear().contains(&selected_card) {
             locations.insert(0, PLAY_OFFSET + self.trick_winning_player as i32);
         }
-        return locations;
+        locations
     }
 
     pub fn get_lead_suit(&self) -> Option<Suit> {
@@ -719,17 +717,15 @@ impl PalaGame {
         }
         let left_card = self.pop_card(self.selected_card.unwrap().id);
         self.selected_card = None;
-        self.actual_trick_cards.push(left_card.clone());
+        self.actual_trick_cards.push(left_card);
 
         // Track voids: if there's a lead suit and the player played a different suit,
         // they are void in the lead suit (unless they're mixing or the final card matches)
         if let Some(lead_suit) = self.get_lead_suit() {
             // If a player is mixing (their trick for this hand already contains a card)
             // this does not indicate that they are necessarily void in the lead suit
-            if self.current_trick[self.current_player].is_none() {
-                if left_card.suit != lead_suit {
-                    self.record_void_if_not_already_known(self.current_player, lead_suit);
-                }
+            if self.current_trick[self.current_player].is_none() && left_card.suit != lead_suit {
+                self.record_void_if_not_already_known(self.current_player, lead_suit);
             };
         }
         if self.trick_winning_player != self.current_player
@@ -840,11 +836,8 @@ impl PalaGame {
     }
 
     fn apply_move_select_winning_or_losing(&mut self, action: i32) {
-        match action {
-            CHOOSE_TO_WIN => {
-                self.trick_winning_player = self.current_player;
-            }
-            _ => {}
+        if action == CHOOSE_TO_WIN {
+            self.trick_winning_player = self.current_player;
         }
         self.state = State::SelectCardToPlay;
         self.advance_player();
@@ -1027,10 +1020,10 @@ impl PalaGame {
                 .suit_to_bid
                 .get(&card.suit)
                 .unwrap_or(&BidSpace::Missing)
-                .score_for_card(&card);
+                .score_for_card(card);
         }
         self.animate_score(player, score, remaining_cards, cancelled_cards);
-        return score;
+        score
     }
 
     fn animate_score(
@@ -1163,7 +1156,7 @@ impl PalaGame {
                 }
                 break;
             }
-            if self.hands[self.current_player].len() > 0
+            if !self.hands[self.current_player].is_empty()
                 && self.current_trick[self.current_player].is_none()
             {
                 break;
@@ -1470,12 +1463,12 @@ impl ismcts::Game for PalaGame {
             let shaped = 1.0 - normalized.powf(2.0); // You can tune the exponent (e.g., 1.5, 2.0)
 
             // Map to [-1.0, 1.0]
-            return Some((shaped * 2.0) - 1.0);
+            Some((shaped * 2.0) - 1.0)
         }
     }
 }
 
-pub fn get_mcts_move(game: &PalaGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &PalaGame, iterations: i32, _debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation

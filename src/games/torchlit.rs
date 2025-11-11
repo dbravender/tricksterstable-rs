@@ -109,9 +109,7 @@ pub struct Card {
 
 impl Card {
     pub fn get_points(&self) -> i32 {
-        if self.dropped_torch {
-            2
-        } else if self.suit == Suit::Dragon {
+        if self.dropped_torch || self.suit == Suit::Dragon {
             2
         } else {
             1
@@ -344,7 +342,7 @@ impl TorchlitGame {
 
         deck.shuffle(&mut thread_rng());
 
-        return deck;
+        deck
     }
 
     pub fn get_moves(self: &TorchlitGame) -> Vec<i32> {
@@ -396,9 +394,7 @@ impl TorchlitGame {
             .map(|c| c.suit)
             .collect();
 
-        if trick_suits.len() == 4 {
-            playable_actions.push(CONFIRM_SPAWN);
-        } else if playable_actions.is_empty() {
+        if trick_suits.len() == 4 || playable_actions.is_empty() {
             playable_actions.push(CONFIRM_SPAWN);
         }
 
@@ -414,8 +410,8 @@ impl TorchlitGame {
             .iter()
             .position(|c| c.id == id)
             .unwrap();
-        let card = self.hands[self.current_player].remove(pos);
-        return card;
+
+        self.hands[self.current_player].remove(pos)
     }
 
     fn apply_move_internal(&mut self, action: i32) {
@@ -462,12 +458,13 @@ impl TorchlitGame {
                 self.current_trick[self.current_player] = Some(card);
 
                 // Dragons do not need to be followed
-                if lead_suit.is_some() && lead_suit != Some(Suit::Dragon) {
-                    if Some(card.suit) != lead_suit
-                        && !self.voids[self.current_player].contains(&lead_suit.unwrap())
+                if let Some(suit) = lead_suit {
+                    if lead_suit != Some(Suit::Dragon)
+                        && Some(card.suit) != lead_suit
+                        && !self.voids[self.current_player].contains(&suit)
                     {
                         // Player has revealed a void
-                        self.voids[self.current_player].push(lead_suit.unwrap());
+                        self.voids[self.current_player].push(suit);
                     }
                 }
 
@@ -711,12 +708,12 @@ impl TorchlitGame {
             let index = self.new_change();
 
             for player in 0..4 {
-                let mut torch_card = self.hands[player].first().unwrap().clone();
+                let mut torch_card = *self.hands[player].first().unwrap();
                 if torch_card.value == self.player_dungeon_offset[player] {
                     torch_points[player] = 3;
                 } else {
                     torch_card.dropped_torch = true;
-                    self.dungeon_cards[torch_card.value as usize].push(torch_card.clone());
+                    self.dungeon_cards[torch_card.value as usize].push(torch_card);
                 }
                 self.hands[player] = vec![torch_card];
                 *players_per_space
@@ -855,7 +852,7 @@ impl TorchlitGame {
                         index,
                         Change {
                             change_type: ChangeType::MoveAdventurer,
-                            player: player as usize,
+                            player,
                             offset: dungeon as usize,
                             highlight: true,
                             dest: Location::Dungeon,
@@ -886,7 +883,7 @@ impl TorchlitGame {
                         index,
                         Change {
                             change_type: ChangeType::MoveAdventurer,
-                            player: player as usize,
+                            player,
                             offset: self.player_dungeon_offset[player] as usize,
                             highlight: false,
                             dest: Location::Dungeon,
@@ -984,7 +981,6 @@ impl TorchlitGame {
                 return;
             }
             self.deal();
-            return;
         }
     }
 
@@ -1294,8 +1290,8 @@ impl ismcts::Game for TorchlitGame {
                     continue;
                 }
 
-                let mut cards1 = self.hands[p1 as usize].clone();
-                let mut cards2 = self.hands[p2 as usize].clone();
+                let mut cards1 = self.hands[p1].clone();
+                let mut cards2 = self.hands[p2].clone();
 
                 let mut torch_card_ids: Vec<i32> = vec![];
 
@@ -1309,8 +1305,8 @@ impl ismcts::Game for TorchlitGame {
                 }
 
                 let mut combined_voids: HashSet<Suit> =
-                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
-                combined_voids.extend(self.voids[p2 as usize].iter());
+                    HashSet::from_iter(self.voids[p1].iter().cloned());
+                combined_voids.extend(self.voids[p2].iter());
 
                 let mut new_hands = vec![cards1, cards2];
 
@@ -1321,14 +1317,14 @@ impl ismcts::Game for TorchlitGame {
                     rng,
                 );
 
-                self.hands[p1 as usize] = new_hands[0].clone();
-                self.hands[p2 as usize] = new_hands[1].clone();
+                self.hands[p1] = new_hands[0].clone();
+                self.hands[p2] = new_hands[1].clone();
                 if self.torches[p1].is_some() {
-                    let torch = self.hands[p1 as usize].pop();
+                    let torch = self.hands[p1].pop();
                     self.torches[p1] = torch;
                 }
                 if self.torches[p2].is_some() {
-                    let torch = self.hands[p2 as usize].pop();
+                    let torch = self.hands[p2].pop();
                     self.torches[p2] = torch;
                 }
             }
@@ -1354,33 +1350,31 @@ impl ismcts::Game for TorchlitGame {
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
         if self.winner.is_none() {
             None
+        } else if true {
+            let total_score_ratio = self.scores[player] as f64 / MAX_POINTS_PER_HAND;
+
+            // Scale the total score to a range between -1.0 and 1.0
+            let final_score = (total_score_ratio * 2.0) - 1.0;
+
+            Some(final_score)
         } else {
-            if true {
-                let total_score_ratio = self.scores[player] as f64 / MAX_POINTS_PER_HAND;
+            let max_score = *self.scores.iter().max().unwrap() as f64;
+            let player_score = self.scores[player] as f64;
 
-                // Scale the total score to a range between -1.0 and 1.0
-                let final_score = (total_score_ratio * 2.0) - 1.0;
-
+            if player_score == max_score {
+                // Winner gets a positive score scaled between 0 and 1
+                let final_score = player_score / MAX_POINTS_PER_HAND;
                 Some(final_score)
             } else {
-                let max_score = *self.scores.iter().max().unwrap() as f64;
-                let player_score = self.scores[player] as f64;
-
-                if player_score == max_score {
-                    // Winner gets a positive score scaled between 0 and 1
-                    let final_score = player_score / MAX_POINTS_PER_HAND;
-                    Some(final_score)
-                } else {
-                    // Losers get a negative score between -1.0 and 0
-                    let loss_penalty = (player_score - max_score) / max_score;
-                    Some(loss_penalty) // This will be negative
-                }
+                // Losers get a negative score between -1.0 and 0
+                let loss_penalty = (player_score - max_score) / max_score;
+                Some(loss_penalty) // This will be negative
             }
         }
     }
 }
 
-pub fn get_mcts_move(game: &TorchlitGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &TorchlitGame, iterations: i32, _debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     // reset scores for the simulation

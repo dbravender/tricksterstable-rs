@@ -5,7 +5,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/424451/kansas-city-the-trick-
 */
 
 use std::{
-    cmp::{max, min, Ordering},
+    cmp::Ordering,
     collections::{HashMap, HashSet},
 };
 
@@ -257,10 +257,10 @@ impl KansasCityGame {
     }
 
     pub fn trick_winner(&self) -> usize {
-        return self.get_winner(
+        self.get_winner(
             self.current_trick[self.lead_player].unwrap().suit,
             &self.current_trick,
-        );
+        )
     }
 
     pub fn get_moves(self: &KansasCityGame) -> Vec<i32> {
@@ -308,7 +308,7 @@ impl KansasCityGame {
     pub fn playable_card_ids(&self) -> Vec<i32> {
         // Must follow
         if self.current_trick[self.lead_player].is_some() {
-            let lead_suit = self.current_trick[self.lead_player].clone().unwrap().suit;
+            let lead_suit = self.current_trick[self.lead_player].unwrap().suit;
             let moves: Vec<i32> = self.hands[self.current_player]
                 .iter()
                 .filter(|c| c.suit == lead_suit)
@@ -425,7 +425,7 @@ impl KansasCityGame {
                     for hand_card in self.hands[self.current_player].iter_mut() {
                         if hand_card.id == action {
                             // Keep a copy of the card before it is converted to trump
-                            self.converted_to_trump[self.current_player].push(hand_card.clone());
+                            self.converted_to_trump[self.current_player].push(*hand_card);
                             hand_card.suit = Suit::Trump;
                         }
                     }
@@ -458,10 +458,8 @@ impl KansasCityGame {
                 }
             }
             State::Play => {
-                let lead_suit = match self.current_trick[self.lead_player] {
-                    Some(lead_card) => Some(lead_card.suit),
-                    None => None,
-                };
+                let lead_suit =
+                    self.current_trick[self.lead_player].map(|lead_card| lead_card.suit);
 
                 let pos = self.hands[self.current_player]
                     .iter()
@@ -484,12 +482,12 @@ impl KansasCityGame {
 
                 self.current_trick[self.current_player] = Some(card);
 
-                if lead_suit.is_some() {
+                if let Some(suit) = lead_suit {
                     if Some(card.suit) != lead_suit
-                        && !self.voids[self.current_player].contains(&lead_suit.unwrap())
+                        && !self.voids[self.current_player].contains(&suit)
                     {
                         // Player has revealed a void
-                        self.voids[self.current_player].push(lead_suit.unwrap());
+                        self.voids[self.current_player].push(suit);
                     }
                 }
 
@@ -600,8 +598,8 @@ impl KansasCityGame {
                                     object_id: player as i32,
                                     player,
                                     dest: Location::Score,
-                                    start_score: self.scores[player as usize],
-                                    end_score: self.scores[player as usize] + points,
+                                    start_score: self.scores[player],
+                                    end_score: self.scores[player] + points,
                                     ..Default::default()
                                 },
                             );
@@ -631,7 +629,6 @@ impl KansasCityGame {
                             }
                         }
                         self.deal();
-                        return;
                     }
                 }
             }
@@ -841,8 +838,8 @@ impl ismcts::Game for KansasCityGame {
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
 
-        let known_pass_cards = self.passed_cards[self.current_player].clone();
-        let known_pass_cards_player = (self.current_player + 1) % 4;
+        let _known_pass_cards = self.passed_cards[self.current_player].clone();
+        let _known_pass_cards_player = (self.current_player + 1) % 4;
         // TODO: handle random determination taking into account known passed cards
 
         for p1 in 0..4 {
@@ -856,13 +853,10 @@ impl ismcts::Game for KansasCityGame {
                 // which cards have been converted to trump just like a human
                 // player in their position
 
-                let voids: HashSet<Suit> =
-                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
+                let voids: HashSet<Suit> = HashSet::from_iter(self.voids[p1].iter().cloned());
 
-                let mut new_hands = vec![
-                    self.hands[p1 as usize].clone(),
-                    self.converted_to_trump[p2 as usize].clone(),
-                ];
+                let mut new_hands =
+                    vec![self.hands[p1].clone(), self.converted_to_trump[p2].clone()];
 
                 for value in 1..=8 {
                     shuffle_and_divide_matching_cards(
@@ -880,21 +874,18 @@ impl ismcts::Game for KansasCityGame {
                     );
                 }
 
-                self.hands[p1 as usize] = new_hands[0].clone();
-                self.converted_to_trump[p2 as usize] = new_hands[1].clone();
+                self.hands[p1] = new_hands[0].clone();
+                self.converted_to_trump[p2] = new_hands[1].clone();
 
                 if p1 == p2 {
                     continue;
                 }
 
                 let mut combined_voids: HashSet<Suit> =
-                    HashSet::from_iter(self.voids[p1 as usize].iter().cloned());
-                combined_voids.extend(self.voids[p2 as usize].iter());
+                    HashSet::from_iter(self.voids[p1].iter().cloned());
+                combined_voids.extend(self.voids[p2].iter());
 
-                let mut new_hands = vec![
-                    self.hands[p1 as usize].clone(),
-                    self.hands[p2 as usize].clone(),
-                ];
+                let mut new_hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
 
                 for value in 1..=8 {
                     shuffle_and_divide_matching_cards(
@@ -912,8 +903,8 @@ impl ismcts::Game for KansasCityGame {
                     );
                 }
 
-                self.hands[p1 as usize] = new_hands[0].clone();
-                self.hands[p2 as usize] = new_hands[1].clone();
+                self.hands[p1] = new_hands[0].clone();
+                self.hands[p2] = new_hands[1].clone();
             }
         }
     }
@@ -938,32 +929,30 @@ impl ismcts::Game for KansasCityGame {
         if self.winner.is_none() {
             // the hand is not over
             None
+        } else if !self.experiment {
+            // Get the player's total score
+            let total_score = self.scores[player];
+            let total_score_ratio = total_score as f64 / 29.0; // Maximum possible score is 29 (15 for tricks + 14 for 4 cards)
+
+            // Scale the total score to a range between -1.0 and 1.0
+            let final_score = (total_score_ratio * 2.0) - 1.0;
+
+            Some(final_score)
         } else {
-            if !self.experiment {
-                // Get the player's total score
-                let total_score = self.scores[player];
-                let total_score_ratio = total_score as f64 / 29.0; // Maximum possible score is 29 (15 for tricks + 14 for 4 cards)
-
-                // Scale the total score to a range between -1.0 and 1.0
-                let final_score = (total_score_ratio * 2.0) - 1.0;
-
-                Some(final_score)
+            let current_player_score = self.scores[player] as f64;
+            let other_player_score = *self
+                .scores
+                .iter()
+                .enumerate()
+                .filter(|(p, _)| *p != self.current_player)
+                .max()
+                .unwrap()
+                .1 as f64;
+            let score_difference = current_player_score - other_player_score;
+            if current_player_score >= other_player_score {
+                Some(0.8 + ((score_difference / 10.0) * 0.2))
             } else {
-                let current_player_score = self.scores[player] as f64;
-                let other_player_score = *self
-                    .scores
-                    .iter()
-                    .enumerate()
-                    .filter(|(p, _)| *p != self.current_player)
-                    .max()
-                    .unwrap()
-                    .1 as f64;
-                let score_difference = current_player_score - other_player_score;
-                if current_player_score >= other_player_score {
-                    Some(0.8 + ((score_difference / 10.0) * 0.2))
-                } else {
-                    Some(0.2 + ((score_difference / 10.0) * 0.2))
-                }
+                Some(0.2 + ((score_difference / 10.0) * 0.2))
             }
         }
     }

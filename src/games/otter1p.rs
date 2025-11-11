@@ -178,6 +178,7 @@ pub enum ChangeType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct Change {
     #[serde(rename(serialize = "type", deserialize = "type"))]
     pub change_type: ChangeType,
@@ -196,29 +197,6 @@ pub struct Change {
     pub message: Option<String>,
     pub card: Option<Card>,
     pub head_card: Option<HeadCard>,
-}
-
-impl Default for Change {
-    fn default() -> Self {
-        Self {
-            change_type: ChangeType::default(),
-            object_id: 0,
-            dest: Location::default(),
-            startscore: 0,
-            end_score: 0,
-            offset: 0,
-            player: 0,
-            length: 0,
-            highlight: false,
-            xout: false,
-            selected: false,
-            show_flip: false,
-            show_swap: false,
-            message: None,
-            card: None,
-            head_card: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -240,6 +218,12 @@ pub struct OtterGame {
     pub head_scenario: i32,
 }
 
+impl Default for OtterGame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OtterGame {
     pub fn new() -> Self {
         Self::new_with_options(None, None, false)
@@ -251,7 +235,7 @@ impl OtterGame {
         practice: bool,
     ) -> Self {
         // If no parameters provided, generate a random seed
-        let actual_seed = seed.unwrap_or_else(|| rand::random::<u64>());
+        let actual_seed = seed.unwrap_or_else(rand::random::<u64>);
         let mut rng = StdRng::seed_from_u64(actual_seed);
 
         // Validate head_scenario_index if provided
@@ -346,7 +330,7 @@ impl OtterGame {
                 .id
                 == card_id
         });
-        return offset;
+        offset
     }
 
     pub fn apply_move(&mut self, card_id: i32) {
@@ -358,14 +342,13 @@ impl OtterGame {
 
         // Clear old plays out
 
-        let mut changes = Vec::new();
-        changes.push(Change {
+        let changes = vec![Change {
             change_type: ChangeType::HidePlayable,
             object_id: -1,
             highlight: false,
             xout: false,
             ..Default::default()
-        });
+        }];
         self.changes.push(changes);
 
         // Handle undo move
@@ -467,7 +450,7 @@ impl OtterGame {
             self.generate_game_over_animation(false);
             return true;
         }
-        return false;
+        false
     }
 
     pub fn get_moves(&self) -> Vec<i32> {
@@ -529,7 +512,7 @@ impl OtterGame {
                 }
             }
         }
-        return moves;
+        moves
     }
 
     fn get_tummy_moves(&self) -> Vec<i32> {
@@ -554,11 +537,11 @@ impl OtterGame {
                 moves.push(self.tummy_cards[index].id);
             }
         }
-        return moves;
+        moves
     }
 
     pub fn head_deck(seed: u64) -> Vec<HeadCard> {
-        let mut head_cards = vec![
+        let mut head_cards = [
             HeadCard {
                 id: 100,
                 front: HeadType::Higher,
@@ -589,7 +572,7 @@ impl OtterGame {
         let mut rng = StdRng::seed_from_u64(seed);
         head_cards.shuffle(&mut rng);
 
-        return head_cards[..3].to_vec();
+        head_cards[..3].to_vec()
     }
 
     pub fn head_scenarios() -> [[HeadCard; 3]; 10] {
@@ -646,7 +629,7 @@ impl OtterGame {
         let mut rng = StdRng::seed_from_u64(seed);
         deck.shuffle(&mut rng);
 
-        return deck;
+        deck
     }
 
     // Animation generation methods
@@ -687,7 +670,7 @@ impl OtterGame {
 
         // Show all pile cards (deal all cards to their pile positions)
         for (pile_idx, pile) in self.piles.iter().enumerate() {
-            for (card_idx, card) in pile.iter().enumerate() {
+            for card in pile.iter() {
                 setup_changes.push(Change {
                     change_type: ChangeType::Deal,
                     object_id: card.id,
@@ -816,15 +799,13 @@ impl OtterGame {
             return;
         }
 
-        let mut changes = Vec::new();
-
-        changes.push(Change {
+        let changes = vec![Change {
             change_type: ChangeType::FlipHead,
             object_id: card_id,
             dest: Location::HeadCards,
             player: 0,
             ..Default::default()
-        });
+        }];
 
         self.changes.push(changes);
     }
@@ -851,7 +832,7 @@ impl OtterGame {
         self.changes.push(changes);
     }
 
-    fn generate_move_to_tummy_animation(&mut self, card: Card, pile_idx: usize, tummy_idx: usize) {
+    fn generate_move_to_tummy_animation(&mut self, card: Card, _pile_idx: usize, tummy_idx: usize) {
         if self.no_changes {
             return;
         }
