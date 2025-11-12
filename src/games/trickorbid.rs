@@ -109,6 +109,8 @@ pub struct Change {
     pub length: usize,
     pub message: Option<String>,
     pub is_trump: bool, // True when this bid establishes trump (first bid card)
+    pub animate_score: bool, // True to animate score to completion, false to just show preview
+    pub trick_count: i32, // Number of tricks won (for displaying on card backs)
 }
 
 pub struct TrickResult {
@@ -312,6 +314,9 @@ impl TrickOrBidGame {
         let tricks_count = (num_cards / 4) as i32;
 
         if card_id == PASS {
+            // Get existing cards before adding new ones
+            let existing_cards = self.cards_won[player].clone();
+
             // Player takes the trick - add all cards to their won cards
             self.cards_won[player].extend(self.accumulated_tricks.iter().copied());
             self.tricks_won_count[player] += tricks_count;
@@ -319,6 +324,24 @@ impl TrickOrBidGame {
             // Animate cards going to score pile
             let change_index = self.new_change();
             let cards_to_animate = self.accumulated_tricks.clone();
+            let current_trick_count = self.tricks_won_count[player];
+
+            // Update trick count on all existing cards in the pile
+            for card in &existing_cards {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::TricksToWinner,
+                        object_id: card.id,
+                        dest: Location::Score,
+                        player,
+                        trick_count: current_trick_count,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Animate new cards moving to the pile
             for card in &cards_to_animate {
                 self.add_change(
                     change_index,
@@ -327,6 +350,7 @@ impl TrickOrBidGame {
                         object_id: card.id,
                         dest: Location::Score,
                         player,
+                        trick_count: current_trick_count,
                         ..Default::default()
                     },
                 );
@@ -526,6 +550,9 @@ impl TrickOrBidGame {
 
         // If player already has a bid card, animate directly to score pile
         if self.bid_cards[trick_winner].is_some() {
+            // Get existing cards before adding new ones
+            let existing_cards = self.cards_won[trick_winner].clone();
+
             // Automatically pass - count the tricks
             let num_cards = self.accumulated_tricks.len();
             let tricks_count = (num_cards / 4) as i32;
@@ -533,7 +560,25 @@ impl TrickOrBidGame {
             self.cards_won[trick_winner].extend(self.accumulated_tricks.iter().copied());
             self.tricks_won_count[trick_winner] += tricks_count;
 
-            // Animate cards going directly to score pile
+            // Update trick count on all cards in the pile
+            let current_trick_count = self.tricks_won_count[trick_winner];
+
+            // Update existing cards
+            for card in &existing_cards {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::TricksToWinner,
+                        object_id: card.id,
+                        dest: Location::Score,
+                        player: trick_winner,
+                        trick_count: current_trick_count,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Animate new cards going directly to score pile
             for card in &cards_to_animate {
                 self.add_change(
                     change_index,
@@ -542,6 +587,7 @@ impl TrickOrBidGame {
                         object_id: card.id,
                         dest: Location::Score,
                         player: trick_winner,
+                        trick_count: current_trick_count,
                         ..Default::default()
                     },
                 );
@@ -587,42 +633,58 @@ impl TrickOrBidGame {
     }
 
     pub fn end_hand(&mut self) {
-        // Round is over - show all score deltas at once, wait for input, then continue
-        // Append to last change group so scores appear right after card animation
-        let score_index = if !self.changes.is_empty() {
+        // Show score previews in last animation group, pause, then animate to completion
+        let preview_index = if !self.changes.is_empty() {
             self.changes.len() - 1
         } else {
             self.new_change()
         };
 
-        // Calculate and show all scores at once
+        // Show score delta previews (don't animate yet)
         for player in 0..PLAYER_COUNT {
             let score = TrickOrBidGame::calculate_score(
                 self.bid_cards[player],
                 self.tricks_won_count[player],
             );
             self.add_change(
-                score_index,
+                preview_index,
                 Change {
                     change_type: ChangeType::Score,
                     player,
                     start_score: self.scores[player],
                     end_score: self.scores[player] + score,
+                    animate_score: false, // Just show preview
                     ..Default::default()
                 },
             );
             self.scores[player] += score;
         }
 
-        // Add optional pause to review scores
+        // Add optional pause to review score previews
         self.add_change(
-            score_index,
+            preview_index,
             Change {
                 change_type: ChangeType::OptionalPause,
                 object_id: -1,
                 ..Default::default()
             },
         );
+
+        // After pause, animate scores to completion
+        let animate_index = self.new_change();
+        for player in 0..PLAYER_COUNT {
+            self.add_change(
+                animate_index,
+                Change {
+                    change_type: ChangeType::Score,
+                    player,
+                    start_score: self.scores[player],
+                    end_score: self.scores[player],
+                    animate_score: true, // Animate to completion
+                    ..Default::default()
+                },
+            );
+        }
 
         if self.round >= PLAYER_COUNT as i32 {
             self.state = State::GameOver;
@@ -635,6 +697,7 @@ impl TrickOrBidGame {
                 }
             }
 
+            // Add GameOver in its own change group so it happens AFTER score animations
             let game_over_index = self.new_change();
             self.add_change(
                 game_over_index,
