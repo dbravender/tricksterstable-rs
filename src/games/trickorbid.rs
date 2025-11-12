@@ -135,6 +135,7 @@ pub struct TrickOrBidGame {
     pub trump_suit: Option<Suit>,
     pub accumulated_tricks: Vec<Card>, // Cards from won tricks (for bid selection) or no-winner tricks
     pub tricks_won_count: [i32; PLAYER_COUNT], // Count of tricks won (not cards)
+    pub voids: [Vec<Suit>; PLAYER_COUNT], // Suits each player is void in (for determination)
     pub experiment: bool,              // Set to true when testing new reward functions
 }
 
@@ -156,6 +157,7 @@ impl TrickOrBidGame {
         self.tricks_won_count = [0; PLAYER_COUNT];
         self.trump_suit = None;
         self.accumulated_tricks = vec![];
+        self.voids = [vec![], vec![], vec![], vec![]];
         self.state = State::Play;
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
         self.current_player = self.dealer;
@@ -459,6 +461,15 @@ impl TrickOrBidGame {
 
         self.current_hand[player] = Some(card);
 
+        // Track voids for determination
+        if player != self.lead_player {
+            let lead_suit = self.current_hand[self.lead_player].unwrap().suit;
+            if card.suit != lead_suit && !self.voids[player].contains(&lead_suit) {
+                // Player revealed a void
+                self.voids[player].push(lead_suit);
+            }
+        }
+
         if self.current_hand.iter().any(|c| c.is_none()) {
             self.current_player = (self.current_player + 1) % PLAYER_COUNT;
             return;
@@ -576,21 +587,24 @@ impl TrickOrBidGame {
         // Transition to bid selection state (only if player doesn't have a bid yet)
         self.state = State::SelectBidOrPass;
 
-        // Animate cards directly to bid selection grid
-        let num_cards = cards_to_animate.len();
-        for (idx, card) in cards_to_animate.iter().enumerate() {
-            self.add_change(
-                change_index,
-                Change {
-                    change_type: ChangeType::SelectBidCardOrPass,
-                    object_id: card.id,
-                    dest: Location::ScoreCards,
-                    player: trick_winner,
-                    offset: idx,
-                    length: num_cards,
-                    ..Default::default()
-                },
-            );
+        // Only show bid selection grid for player 0
+        // For AI players, cards stay in play area and animate directly when they make their choice
+        if trick_winner == 0 {
+            let num_cards = cards_to_animate.len();
+            for (idx, card) in cards_to_animate.iter().enumerate() {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::SelectBidCardOrPass,
+                        object_id: card.id,
+                        dest: Location::ScoreCards,
+                        player: trick_winner,
+                        offset: idx,
+                        length: num_cards,
+                        ..Default::default()
+                    },
+                );
+            }
         }
 
         if self.hands.iter().any(|h| !h.is_empty()) {
@@ -901,7 +915,8 @@ impl ismcts::Game for TrickOrBidGame {
         // In Trick or Bid:
         // - Bid cards are PUBLIC (kept face up) - don't shuffle them
         // - Only shuffle unknown cards in other players' hands
-        // - Observer knows their own hand and all bid cards
+        // - Observer knows their own hand, all bid cards, and revealed voids
+        // - Voids are revealed when a player doesn't follow suit
 
         for p1 in 0..PLAYER_COUNT {
             for p2 in 0..PLAYER_COUNT {
@@ -913,9 +928,23 @@ impl ismcts::Game for TrickOrBidGame {
                     continue;
                 }
 
+                // Build combined void set for both players
+                let mut combined_voids = [false; 4];
+                for suit in &self.voids[p1] {
+                    combined_voids[*suit as usize] = true;
+                }
+                for suit in &self.voids[p2] {
+                    combined_voids[*suit as usize] = true;
+                }
+
                 let mut new_hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
 
-                shuffle_and_divide_matching_cards(|_: &Card| true, &mut new_hands, rng);
+                // Only shuffle cards that aren't in the combined void set
+                shuffle_and_divide_matching_cards(
+                    |c: &Card| !combined_voids[c.suit as usize],
+                    &mut new_hands,
+                    rng,
+                );
 
                 self.hands[p1] = new_hands[0].clone();
                 self.hands[p2] = new_hands[1].clone();
