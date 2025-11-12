@@ -145,11 +145,11 @@ impl TrickOrBidGame {
         };
         // Randomly select a start player each game
         game.dealer = thread_rng().gen_range(0..PLAYER_COUNT);
-        game.deal();
+        game.deal(true); // Animate initial deal
         game
     }
 
-    fn deal(&mut self) {
+    fn deal(&mut self, animate: bool) {
         let mut deck = TrickOrBidGame::deck();
         self.cards_won = [vec![], vec![], vec![], vec![]];
         self.bid_cards = [None; PLAYER_COUNT];
@@ -160,6 +160,23 @@ impl TrickOrBidGame {
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
         self.current_player = self.dealer;
         self.lead_player = self.dealer;
+
+        self.hands = [
+            deck.drain(..HAND_SIZE).collect::<Vec<_>>(),
+            deck.drain(..HAND_SIZE).collect::<Vec<_>>(),
+            deck.drain(..HAND_SIZE).collect::<Vec<_>>(),
+            deck,
+        ];
+
+        // Sort player 0's hand by suit, then by value (high to low)
+        self.hands[0].sort_by(|a, b| match a.suit.cmp(&b.suit) {
+            std::cmp::Ordering::Equal => b.value.cmp(&a.value), // Same suit: high to low
+            other => other,                                     // Different suits: sort by suit
+        });
+
+        if !animate {
+            return;
+        }
 
         let shuffle_index = self.new_change();
         let deal_index = self.new_change();
@@ -174,19 +191,6 @@ impl TrickOrBidGame {
                 ..Default::default()
             },
         );
-
-        self.hands = [
-            deck.drain(..HAND_SIZE).collect::<Vec<_>>(),
-            deck.drain(..HAND_SIZE).collect::<Vec<_>>(),
-            deck.drain(..HAND_SIZE).collect::<Vec<_>>(),
-            deck,
-        ];
-
-        // Sort player 0's hand by suit, then by value (high to low)
-        self.hands[0].sort_by(|a, b| match a.suit.cmp(&b.suit) {
-            std::cmp::Ordering::Equal => b.value.cmp(&a.value), // Same suit: high to low
-            other => other,                                     // Different suits: sort by suit
-        });
 
         // Deal animations
         for hand_index in 0..HAND_SIZE {
@@ -349,9 +353,10 @@ impl TrickOrBidGame {
             self.trump_suit = Some(card.suit);
         }
 
-        // Animate bid card selection
+        // Animate bid card selection and reorder remaining cards simultaneously
+        let change_index = 0;
         self.add_change(
-            0,
+            change_index,
             Change {
                 change_type: ChangeType::Bid,
                 object_id: card_id,
@@ -362,13 +367,29 @@ impl TrickOrBidGame {
             },
         );
 
-        // Remaining cards are DISCARDED (not counted as tricks)
-        // Animate them burning (moving off screen)
-        let change_index = self.new_change();
-        let cards_to_animate = self.accumulated_tricks.clone();
-        for card in &cards_to_animate {
+        // Reorder remaining cards to close the gap where the selected card was (simultaneous with bid)
+        let cards_to_reorder = self.accumulated_tricks.clone();
+        let num_cards = cards_to_reorder.len();
+        for (idx, card) in cards_to_reorder.iter().enumerate() {
             self.add_change(
                 change_index,
+                Change {
+                    change_type: ChangeType::Reorder,
+                    object_id: card.id,
+                    dest: Location::ScoreCards,
+                    offset: idx,
+                    length: num_cards,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Remaining cards are DISCARDED (not counted as tricks)
+        // Animate them burning (moving off screen) after reorder completes
+        let burn_index = self.new_change();
+        for card in &cards_to_reorder {
+            self.add_change(
+                burn_index,
                 Change {
                     change_type: ChangeType::BurnTrick,
                     object_id: card.id,
@@ -568,54 +589,11 @@ impl TrickOrBidGame {
     }
 
     pub fn end_hand(&mut self) {
-        // Round is over - show all players' scoring cards in middle for review
-        let review_index = self.new_change();
-        let mut offset = 0;
+        // Round is over - show all score deltas at once, wait for input, then continue
+        let score_index = self.new_change();
 
-        // Collect all scoring cards for display: bid cards and trick pile cards
-        let mut all_scoring_cards = vec![];
+        // Calculate and show all scores at once
         for player in 0..PLAYER_COUNT {
-            // Add bid card if present
-            if let Some(bid_card) = self.bid_cards[player] {
-                all_scoring_cards.push((bid_card, player));
-            }
-
-            // Add one card from tricks pile to show trick count (if any tricks)
-            if !self.cards_won[player].is_empty() {
-                all_scoring_cards.push((self.cards_won[player][0], player));
-            }
-        }
-
-        let total_cards = all_scoring_cards.len();
-        for (card, player) in all_scoring_cards {
-            self.add_change(
-                review_index,
-                Change {
-                    change_type: ChangeType::ShowScoringCards,
-                    object_id: card.id,
-                    dest: Location::ScoreCards,
-                    player,
-                    offset,
-                    length: total_cards,
-                    ..Default::default()
-                },
-            );
-            offset += 1;
-        }
-
-        // Add optional pause to review cards
-        self.add_change(
-            review_index,
-            Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: -1,
-                ..Default::default()
-            },
-        );
-
-        // Calculate scores
-        for player in 0..PLAYER_COUNT {
-            let score_index = self.new_change();
             let score = TrickOrBidGame::calculate_score(
                 self.bid_cards[player],
                 self.tricks_won_count[player],
@@ -632,6 +610,16 @@ impl TrickOrBidGame {
             );
             self.scores[player] += score;
         }
+
+        // Add optional pause to review scores
+        self.add_change(
+            score_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: -1,
+                ..Default::default()
+            },
+        );
 
         if self.round >= PLAYER_COUNT as i32 {
             self.state = State::GameOver;
@@ -653,7 +641,7 @@ impl TrickOrBidGame {
                 },
             );
         } else {
-            self.deal();
+            self.deal(true); // Always animate deal between hands
         }
     }
 
