@@ -37,8 +37,8 @@ pub enum Suit {
     #[default]
     Purple = 0,
     Green = 1,
-    Yellow = 2,
-    Red = 3,
+    Orange = 2,
+    Black = 3,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -349,12 +349,41 @@ impl TrickOrBidGame {
         let card = self.accumulated_tricks.remove(card_pos.unwrap());
 
         // Set trump suit if this is the first bid card
-        if self.trump_suit.is_none() {
+        let is_first_bid = self.trump_suit.is_none();
+        if is_first_bid {
             self.trump_suit = Some(card.suit);
         }
 
         // Animate bid card selection and reorder remaining cards simultaneously
         let change_index = 0;
+
+        // Show trump selection message if this is the first bid
+        if is_first_bid {
+            let suit_name = match card.suit {
+                Suit::Purple => "Purple",
+                Suit::Green => "Green",
+                Suit::Orange => "Orange",
+                Suit::Black => "Black",
+            };
+            let message_index = self.new_change();
+            self.add_change(
+                message_index,
+                Change {
+                    change_type: ChangeType::Message,
+                    message: Some(format!("{} has been selected as trump", suit_name)),
+                    object_id: -1,
+                    ..Default::default()
+                },
+            );
+            self.add_change(
+                message_index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    object_id: -1,
+                    ..Default::default()
+                },
+            );
+        }
         self.add_change(
             change_index,
             Change {
@@ -501,31 +530,16 @@ impl TrickOrBidGame {
         self.accumulated_tricks
             .extend(self.current_hand.iter().flatten().copied());
 
-        // Animate all tricks (current + accumulated) won to winner
-        let change_index = self.new_change();
-        let cards_to_animate = self.accumulated_tricks.clone();
-        for card in &cards_to_animate {
-            self.add_change(
-                change_index,
-                Change {
-                    change_type: ChangeType::TricksToWinner,
-                    object_id: card.id,
-                    dest: Location::TricksTaken,
-                    player: trick_winner,
-                    ..Default::default()
-                },
-            );
-        }
-
-        // accumulated_tricks will be cleared in select_bid_card_or_pass()
-
         // Reset the current hand
         self.current_hand = [None; 4];
 
         self.current_player = trick_winner;
         self.lead_player = trick_winner;
 
-        // If player already has a bid card, automatically take the trick (pass)
+        let change_index = self.new_change();
+        let cards_to_animate = self.accumulated_tricks.clone();
+
+        // If player already has a bid card, animate directly to score pile
         if self.bid_cards[trick_winner].is_some() {
             // Automatically pass - count the tricks
             let num_cards = self.accumulated_tricks.len();
@@ -534,9 +548,7 @@ impl TrickOrBidGame {
             self.cards_won[trick_winner].extend(self.accumulated_tricks.iter().copied());
             self.tricks_won_count[trick_winner] += tricks_count;
 
-            // Animate cards going to score pile
-            let change_index = self.new_change();
-            let cards_to_animate = self.accumulated_tricks.clone();
+            // Animate cards going directly to score pile
             for card in &cards_to_animate {
                 self.add_change(
                     change_index,
@@ -564,17 +576,15 @@ impl TrickOrBidGame {
         // Transition to bid selection state (only if player doesn't have a bid yet)
         self.state = State::SelectBidOrPass;
 
-        // Show accumulated tricks for selection (especially important for player 0)
-        let review_index = self.new_change();
-        let cards_to_show = self.accumulated_tricks.clone();
-        let num_cards = cards_to_show.len();
-        for (idx, card) in cards_to_show.iter().enumerate() {
+        // Animate cards directly to bid selection grid
+        let num_cards = cards_to_animate.len();
+        for (idx, card) in cards_to_animate.iter().enumerate() {
             self.add_change(
-                review_index,
+                change_index,
                 Change {
                     change_type: ChangeType::SelectBidCardOrPass,
                     object_id: card.id,
-                    dest: Location::Play,
+                    dest: Location::ScoreCards,
                     player: trick_winner,
                     offset: idx,
                     length: num_cards,
@@ -590,7 +600,12 @@ impl TrickOrBidGame {
 
     pub fn end_hand(&mut self) {
         // Round is over - show all score deltas at once, wait for input, then continue
-        let score_index = self.new_change();
+        // Append to last change group so scores appear right after card animation
+        let score_index = if !self.changes.is_empty() {
+            self.changes.len() - 1
+        } else {
+            self.new_change()
+        };
 
         // Calculate and show all scores at once
         for player in 0..PLAYER_COUNT {
@@ -1063,7 +1078,7 @@ mod tests {
             }),
             Some(Card {
                 id: 3,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 8,
             }),
         ];
@@ -1209,12 +1224,12 @@ mod tests {
             }),
             Some(Card {
                 id: 2,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 3,
             }),
             Some(Card {
                 id: 3,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 4,
             }),
         ];
@@ -1243,7 +1258,7 @@ mod tests {
             }), // ties with id 0
             Some(Card {
                 id: 3,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 4,
             }),
         ];
@@ -1314,7 +1329,7 @@ mod tests {
             },
             Card {
                 id: 5,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 1,
             },
         ];
@@ -1326,7 +1341,7 @@ mod tests {
             },
             Card {
                 id: 7,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 8,
             },
         ];
@@ -1405,12 +1420,12 @@ mod tests {
             },
             Card {
                 id: 2,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 2,
             },
             Card {
                 id: 3,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 4,
             },
         ];
@@ -1583,12 +1598,12 @@ mod tests {
             },
             Card {
                 id: 1,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 3,
             },
             Card {
                 id: 2,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 2,
             },
         ];
@@ -1627,7 +1642,7 @@ mod tests {
             },
             Card {
                 id: 2,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 2,
             },
         ];
@@ -1666,7 +1681,7 @@ mod tests {
             None, // no bid
             Some(Card {
                 id: 3,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 2,
             }), // bid 2
         ];
@@ -1710,12 +1725,12 @@ mod tests {
             }),
             Some(Card {
                 id: 2,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 4,
             }),
             Some(Card {
                 id: 3,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 2,
             }),
         ];
@@ -1837,7 +1852,7 @@ mod tests {
             },
             Card {
                 id: 2,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 2,
             },
         ];
@@ -1898,7 +1913,7 @@ mod tests {
             },
             Card {
                 id: 1,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 3,
             },
         ];
@@ -1940,12 +1955,12 @@ mod tests {
             }),
             Some(Card {
                 id: 2,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 4,
             }),
             Some(Card {
                 id: 3,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 2,
             }),
         ];
@@ -1979,7 +1994,7 @@ mod tests {
             None,
             Some(Card {
                 id: 3,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 2,
             }),
         ];
@@ -2075,22 +2090,22 @@ mod tests {
             },
             Card {
                 id: 4,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 7,
             },
             Card {
                 id: 5,
-                suit: Suit::Red,
+                suit: Suit::Black,
                 value: 7,
             },
             Card {
                 id: 6,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 2,
             },
             Card {
                 id: 7,
-                suit: Suit::Yellow,
+                suit: Suit::Orange,
                 value: 2,
             },
         ];
