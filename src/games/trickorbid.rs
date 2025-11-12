@@ -6,7 +6,7 @@ BoardGameGeek: https://boardgamegeek.com/boardgame/427341/trick-or-bid
 
 use std::collections::HashMap;
 
-use enum_iterator::{all, Sequence};
+use enum_iterator::Sequence;
 use ismcts::IsmctsHandler;
 use rand::prelude::SliceRandom;
 use rand::{thread_rng, Rng};
@@ -108,6 +108,7 @@ pub struct Change {
     pub player: usize,
     pub length: usize,
     pub message: Option<String>,
+    pub is_trump: bool, // True when this bid establishes trump (first bid card)
 }
 
 pub struct TrickResult {
@@ -226,7 +227,7 @@ impl TrickOrBidGame {
         let mut deck = Vec::new();
         let mut id = 0;
 
-        for suit in all::<Suit>() {
+        for suit in [Suit::Purple, Suit::Green, Suit::Orange, Suit::Black] {
             for value in [0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 8, 9] {
                 deck.push(Card { id, value, suit });
                 id += 1;
@@ -358,34 +359,6 @@ impl TrickOrBidGame {
 
         // Animate bid card selection and reorder remaining cards simultaneously
         let change_index = 0;
-
-        // Show trump selection message if this is the first bid
-        if is_first_bid {
-            let suit_name = match card.suit {
-                Suit::Purple => "Purple",
-                Suit::Green => "Green",
-                Suit::Orange => "Orange",
-                Suit::Black => "Black",
-            };
-            let message_index = self.new_change();
-            self.add_change(
-                message_index,
-                Change {
-                    change_type: ChangeType::Message,
-                    message: Some(format!("{} has been selected as trump", suit_name)),
-                    object_id: -1,
-                    ..Default::default()
-                },
-            );
-            self.add_change(
-                message_index,
-                Change {
-                    change_type: ChangeType::OptionalPause,
-                    object_id: -1,
-                    ..Default::default()
-                },
-            );
-        }
         self.add_change(
             change_index,
             Change {
@@ -394,6 +367,7 @@ impl TrickOrBidGame {
                 dest: Location::Bid,
                 player,
                 offset: self.bid_cards.iter().flatten().count(),
+                is_trump: is_first_bid,
                 ..Default::default()
             },
         );
