@@ -640,24 +640,24 @@ impl TrickOrBidGame {
             self.new_change()
         };
 
+        // Calculate score deltas for all players
+        let score_deltas: [i32; PLAYER_COUNT] = std::array::from_fn(|player| {
+            TrickOrBidGame::calculate_score(self.bid_cards[player], self.tricks_won_count[player])
+        });
+
         // Show score delta previews (don't animate yet)
-        for player in 0..PLAYER_COUNT {
-            let score = TrickOrBidGame::calculate_score(
-                self.bid_cards[player],
-                self.tricks_won_count[player],
-            );
+        for (player, &delta) in score_deltas.iter().enumerate() {
             self.add_change(
                 preview_index,
                 Change {
                     change_type: ChangeType::Score,
                     player,
                     start_score: self.scores[player],
-                    end_score: self.scores[player] + score,
+                    end_score: self.scores[player] + delta,
                     animate_score: false, // Just show preview
                     ..Default::default()
                 },
             );
-            self.scores[player] += score;
         }
 
         // Add optional pause to review score previews
@@ -672,18 +672,23 @@ impl TrickOrBidGame {
 
         // After pause, animate scores to completion
         let animate_index = self.new_change();
-        for player in 0..PLAYER_COUNT {
+        for (player, &delta) in score_deltas.iter().enumerate() {
             self.add_change(
                 animate_index,
                 Change {
                     change_type: ChangeType::Score,
                     player,
                     start_score: self.scores[player],
-                    end_score: self.scores[player],
+                    end_score: self.scores[player] + delta,
                     animate_score: true, // Animate to completion
                     ..Default::default()
                 },
             );
+        }
+
+        // Update scores after sending all changes
+        for (player, &delta) in score_deltas.iter().enumerate() {
+            self.scores[player] += delta;
         }
 
         if self.round >= PLAYER_COUNT as i32 {
@@ -697,10 +702,8 @@ impl TrickOrBidGame {
                 }
             }
 
-            // Add GameOver in its own change group so it happens AFTER score animations
-            let game_over_index = self.new_change();
             self.add_change(
-                game_over_index,
+                animate_index,
                 Change {
                     change_type: ChangeType::GameOver,
                     ..Default::default()
