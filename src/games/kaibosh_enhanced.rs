@@ -7,16 +7,14 @@ See rules/kaibosh.md for game rules
 use ismcts::IsmctsHandler;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::min,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::utils::shuffle_and_divide_matching_cards;
 
-const KAIBOSH: i32 = 12;
+pub const KAIBOSH: i32 = 12;
 const JACK: i32 = 11;
 const MISDEAL: i32 = 100; // high so it can be "bid" anytime
+const PASS: i32 = 0;
 
 // Define the card, player, and game state structures based on Kaibosh rules
 
@@ -26,6 +24,34 @@ pub enum Suit {
     Diamonds,
     Clubs,
     Spades,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    Red,
+    Black,
+}
+
+impl Suit {
+    pub fn color(&self) -> Color {
+        match self {
+            Suit::Hearts | Suit::Diamonds => Color::Red,
+            Suit::Clubs | Suit::Spades => Color::Black,
+        }
+    }
+
+    pub fn same_color_suit(&self) -> Suit {
+        match self {
+            Suit::Hearts => Suit::Diamonds,
+            Suit::Diamonds => Suit::Hearts,
+            Suit::Clubs => Suit::Spades,
+            Suit::Spades => Suit::Clubs,
+        }
+    }
+
+    pub fn all() -> Vec<Suit> {
+        vec![Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -52,6 +78,10 @@ pub struct KaiboshGame {
     pub scores: [i32; 2],          // team scores
     pub scores_this_hand: [i32; 2], // team scores for current hand (used during search)
     pub score_threshold: i32,
+    pub use_heuristic: bool,
+    pub use_value_network: bool,      // disable for benchmarking rollouts
+    pub use_policy_priors: bool,      // use policy network priors in MCTS
+    pub last_hand_score: Option<i32>, // score from the last completed hand
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -73,6 +103,12 @@ impl KaiboshGame {
         game.dealer = 3;
         // TODO: make this configurable for humans playing the game
         game.score_threshold = 25;
+
+        // Enable all best features by default for optimal play
+        game.use_value_network = true;  // Use value network for fast position evaluation
+        game.use_policy_priors = true;  // Use policy network to guide MCTS exploration
+        game.use_heuristic = true;      // Use convention bidding (1=aces, 2=jacks)
+
         game
     }
 
@@ -97,6 +133,8 @@ impl KaiboshGame {
         self.bids = [None; 4];
         // clean up trick
         self.current_trick = [None; 4];
+        // reset tricks taken
+        self.tricks_taken = [0, 0];
         // no longer know which voids a player has revealed
         self.voids = [
             HashSet::new(),
@@ -203,14 +241,17 @@ impl KaiboshGame {
                     // Animate game end - declare winner
                     return;
                 }
-                // Prepare for a new hand if the game continues
-                // TODO: animate shuffle
-                self.new_hand();
+                // FIX: Don't call new_hand() here - it resets scores_this_hand to [0,0]
+                // which breaks ISMCTS rollouts that check result() to see if hand is over.
+                // For actual gameplay, the UI should call new_hand() manually.
+                // For ISMCTS, we only simulate one hand and check last_hand_score.
+                // Commented out to prevent infinite loops in ISMCTS:
+                // self.new_hand();
             }
         }
     }
 
-    fn game_over(&self) -> bool {
+    pub fn game_over(&self) -> bool {
         if self
             .scores
             .iter()
@@ -274,7 +315,44 @@ impl KaiboshGame {
             bids.push(MISDEAL);
         }
         bids.push(KAIBOSH);
-        bids.retain(|bid| *bid > max_bid);
+        bids.retain(|bid| *bid == 0 || *bid > max_bid);
+
+        // Convention logic:
+        // 1 - signals 2 or more aces
+        // 2 - signals one black jack and one red jack
+        // Only allowed if partner hasn't bid yet.
+
+        // Determine if partner has bid.
+        // Bidding order: (dealer + 1) % 4, (dealer + 2) % 4, ...
+        // 1st and 2nd players to bid have partners who haven't bid yet.
+        // 3rd and 4th players have partners who HAVE bid.
+
+        // Calculate position relative to first bidder (0 to 3)
+        // first bidder is (dealer + 1) % 4
+        let first_bidder = (self.dealer + 1) % 4;
+        let relative_pos = (self.current_player + 4 - first_bidder) % 4;
+        let partner_has_bid = relative_pos >= 2;
+
+        let hand = &self.hands[self.current_player];
+        let aces = hand.iter().filter(|c| c.value == 14).count();
+        let has_black_jack = hand
+            .iter()
+            .any(|c| c.value == 11 && (c.suit == Suit::Clubs || c.suit == Suit::Spades));
+        let has_red_jack = hand
+            .iter()
+            .any(|c| c.value == 11 && (c.suit == Suit::Hearts || c.suit == Suit::Diamonds));
+        let has_convention_jacks = has_black_jack && has_red_jack;
+
+        bids.retain(|&bid| {
+            if bid == 1 {
+                !partner_has_bid && aces >= 2
+            } else if bid == 2 {
+                !partner_has_bid && has_convention_jacks
+            } else {
+                true
+            }
+        });
+
         bids
     }
 
@@ -311,7 +389,13 @@ impl KaiboshGame {
         // so the tree search can see the result
         self.scores_this_hand = [0, 0];
         match self.state {
-            GameState::Bidding => self.bid(mov),
+            GameState::Bidding => {
+                if mov == Some(0) {
+                    self.bid(None);
+                } else {
+                    self.bid(mov);
+                }
+            }
             GameState::NameTrump => self.name_trump(mov.unwrap()),
             GameState::Play => self.play_card(mov.unwrap()),
         }
@@ -362,9 +446,14 @@ impl KaiboshGame {
             self.scores[defending_team] += tricks_taken_by_defender;
             self.scores_this_hand[defending_team] += tricks_taken_by_defender;
         }
+
+        // Store hand score from bidding team's perspective (range: -12 to 12)
+        // Positive = bidder made it, Negative = bidder got set
+        let raw_score = self.scores_this_hand[bidding_team] - self.scores_this_hand[defending_team];
+        self.last_hand_score = Some(raw_score.clamp(-12, 12));
     }
 
-    fn create_deck() -> Vec<Card> {
+    pub fn create_deck() -> Vec<Card> {
         let mut id: i32 = 0;
         let mut deck = Vec::new();
         for suit in &[Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades] {
@@ -385,6 +474,7 @@ impl KaiboshGame {
 fn bid_to_string(bid: i32) -> String {
     match bid {
         KAIBOSH => "kaibosh".to_string(),
+        PASS => "pass".to_string(),
         _ => bid.to_string(),
     }
 }
@@ -482,34 +572,241 @@ impl ismcts::Game for KaiboshGame {
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
         let hand_over = self.scores_this_hand.iter().any(|&score| score != 0);
-        if !hand_over {
-            None
-        } else {
-            let mut score = self.scores_this_hand[player as usize % 2];
-            if score <= 0 {
-                // Capping the score at -6
-                score = min(-6, score);
-                let normalized_score = (score.abs() as f64) / 6.0;
-                // Normalizing the score to 0 - .2
-                Some(0.2 * (1.0 - normalized_score))
+        if hand_over {
+            let score = self.scores_this_hand[player as usize % 2];
+            // Normalize score (-12 to 12) to 0.0 to 1.0
+            // -12 -> 0.0
+            // 0 -> 0.5
+            // 12 -> 1.0
+            let normalized_score = (score as f64 + 12.0) / 24.0;
+            Some(normalized_score.clamp(0.0, 1.0))
+        } else if self.use_heuristic {
+            // Use heuristic ONLY at the start of the hand (to evaluate bidding decisions).
+            // If we are mid-hand, we want to use Pure ISMCTS rollouts.
+            let tricks_played = self.tricks_taken[0] + self.tricks_taken[1];
+            let cards_in_trick = self.current_trick.iter().filter(|c| c.is_some()).count();
+
+            if tricks_played == 0 && cards_in_trick == 0 {
+                if let Some(trump) = self.trump {
+                    let hand = &self.hands[player as usize];
+                    let network = crate::model::Network::production();
+                    let bid = self.high_bid.unwrap_or(0);
+                    let score = network.evaluate(hand, trump, bid);
+
+                    // Heuristic now predicts normalized score (0.0 - 1.0) directly
+
+                    let mut final_score = score as f64;
+
+                    // Risk adjustment: if losing, be more optimistic about our hand if we named trump
+                    let my_score = self.scores[player as usize % 2];
+                    let opp_score = self.scores[(player as usize + 1) % 2];
+
+                    if my_score < opp_score {
+                        let diff = (opp_score - my_score) as f64;
+                        if let Some(bidder) = self.bidder {
+                            if bidder % 2 == player as usize % 2 {
+                                // Add a bonus proportional to the deficit
+                                final_score += diff * 0.01;
+                            }
+                        }
+                    }
+
+                    Some(final_score.clamp(0.0, 1.0))
+                } else {
+                    None
+                }
             } else {
-                let score = score as f64 / 6.0;
-                Some(0.2 + (0.8 * score))
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn move_probabilities(&self) -> Option<Vec<(Self::Move, f64)>> {
+        // Only provide policy priors during bidding phase
+        if !matches!(self.state, GameState::Bidding) {
+            return None;
+        }
+
+        // Load the policy network (using cached instance)
+        let policy_model = get_policy_model();
+
+        // Get the current player's hand
+        let hand = &self.hands[self.current_player];
+
+        // During bidding, trump is not yet known, so we evaluate for all possible trumps
+        // and average the probabilities
+        let all_suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
+        let mut max_probs = vec![0.0f32; 8]; // 8 possible bids
+
+        for suit in &all_suits {
+            let mut features = crate::features::Features::from_hand(hand, *suit);
+            // Add bidding context (partner bid, opponent bids)
+            features.add_bidding_context(self.dealer, self.current_player, &self.bids);
+            let probs = policy_model.evaluate_features(&features);
+            for i in 0..8 {
+                if probs[i] > max_probs[i] {
+                    max_probs[i] = probs[i];
+                }
             }
         }
+
+        // Get valid moves
+        let valid_moves = self.get_moves();
+
+        // Calculate total probability mass for valid moves
+        let mut total_prob = 0.0;
+        for &bid in &valid_moves {
+            let idx = crate::policy_model::bid_to_index(bid);
+            total_prob += max_probs[idx] as f64;
+        }
+
+        // Create (move, probability) pairs for valid moves, renormalized
+        let move_probs: Vec<(i32, f64)> = valid_moves
+            .iter()
+            .map(|&bid| {
+                let idx = crate::policy_model::bid_to_index(bid);
+                let prob = max_probs[idx] as f64;
+                if total_prob > 0.0 {
+                    (bid, prob / total_prob)
+                } else {
+                    (bid, 1.0 / valid_moves.len() as f64)
+                }
+            })
+            .collect();
+
+        Some(move_probs)
+    }
+
+    fn value_estimate(&self) -> Option<f64> {
+        // Check if value network is enabled
+        if !self.use_value_network {
+            return None;
+        }
+
+        // Only provide value estimates during bidding phase
+        if !matches!(self.state, GameState::Bidding) {
+            return None;
+        }
+
+        // Load the value network (using cached instance)
+        let value_model = get_value_model();
+
+        // Get the current player's hand
+        let hand = &self.hands[self.current_player];
+
+        // Evaluate for all possible trumps and take maximum
+        // (player would call the trump that's best for their hand)
+        let all_suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
+        let mut max_value = f64::NEG_INFINITY;
+
+        for suit in &all_suits {
+            let mut features = crate::features::Features::from_hand(hand, *suit);
+            features.add_bidding_context(self.dealer, self.current_player, &self.bids);
+            let value = value_model.evaluate_features(&features);
+            max_value = max_value.max(value as f64);
+        }
+
+        Some(max_value)
+    }
+}
+
+use crate::policy_model::PolicyNetwork;
+use crate::value_network::ValueNetwork;
+use std::sync::OnceLock;
+
+static POLICY_MODEL: OnceLock<PolicyNetwork> = OnceLock::new();
+static VALUE_MODEL: OnceLock<ValueNetwork> = OnceLock::new();
+
+fn get_policy_model() -> &'static PolicyNetwork {
+    POLICY_MODEL.get_or_init(|| {
+        // Use embedded model (compiled into binary) for mobile/embedded deployments
+        PolicyNetwork::embedded()
+    })
+}
+
+fn get_value_model() -> &'static ValueNetwork {
+    VALUE_MODEL.get_or_init(|| {
+        // Use embedded model (compiled into binary) for mobile/embedded deployments
+        ValueNetwork::embedded()
+    })
+}
+
+impl KaiboshGame {
+    /// Get the best move using ISMCTS with appropriate settings
+    /// Automatically applies convention heuristic during bidding if enabled
+    /// Uses policy priors and value network based on game flags
+    pub fn get_best_move(&self, iterations: i32) -> Option<i32> {
+        let mut game_copy = self.clone();
+        game_copy.score_threshold = -10000;
+
+        let mut ismcts = if self.use_policy_priors {
+            IsmctsHandler::new_with_puct(game_copy, 1.0)
+        } else {
+            IsmctsHandler::new(game_copy)
+        };
+
+        ismcts.run_iterations(1, iterations as usize);
+        let raw_move = ismcts.best_move();
+
+        // Apply convention heuristic if appropriate
+        apply_convention_heuristic(self, raw_move)
     }
 }
 
 pub fn get_mcts_move(game: &KaiboshGame, iterations: i32) -> i32 {
-    let mut new_game = game.clone();
-    new_game.score_threshold = -10000;
-    let mut ismcts = IsmctsHandler::new(new_game);
-    let parallel_threads: usize = 1;
-    ismcts.run_iterations(
-        parallel_threads,
-        (iterations as f64 / parallel_threads as f64) as usize,
-    );
-    ismcts.best_move().expect("should have a move to make")
+    game.get_best_move(iterations)
+        .expect("should have a move to make")
+}
+
+/// Apply convention bidding heuristic if appropriate
+/// If ISMCTS wants to bid < 4 and partner hasn't bid yet, override with convention bid
+pub fn apply_convention_heuristic(game: &KaiboshGame, best_move: Option<i32>) -> Option<i32> {
+    // Only apply during bidding with heuristic enabled
+    if !matches!(game.state, GameState::Bidding) || !game.use_heuristic {
+        return best_move;
+    }
+
+    let best_move = best_move?;
+
+    // Check if partner has bid yet
+    let first_bidder = (game.dealer + 1) % 4;
+    let relative_pos = (game.current_player + 4 - first_bidder) % 4;
+    let partner_has_bid = relative_pos >= 2;
+
+    if partner_has_bid {
+        return Some(best_move);
+    }
+
+    // Only override if ISMCTS wants to bid less than 4 (not a strong bid)
+    if best_move >= 4 {
+        return Some(best_move);
+    }
+
+    // Check for convention cards
+    let hand = &game.hands[game.current_player];
+    let aces = hand.iter().filter(|c| c.value == 14).count();
+    let has_black_jack = hand
+        .iter()
+        .any(|c| c.value == 11 && (c.suit == Suit::Clubs || c.suit == Suit::Spades));
+    let has_red_jack = hand
+        .iter()
+        .any(|c| c.value == 11 && (c.suit == Suit::Hearts || c.suit == Suit::Diamonds));
+    let has_convention_jacks = has_black_jack && has_red_jack;
+
+    // Get available bids to ensure convention bid is valid
+    let available_bids = game.bidding_options();
+
+    // Prefer bid 2 (both jacks) over bid 1 (aces)
+    // Bid 2 is more important - signals you have partner's left/right bower
+    if has_convention_jacks && available_bids.contains(&2) {
+        Some(2)
+    } else if aces >= 2 && available_bids.contains(&1) {
+        Some(1)
+    } else {
+        Some(best_move)
+    }
 }
 
 // Tests for game logic
@@ -1010,4 +1307,325 @@ fn test_no_misdeal_with_insufficient_nines_or_tens() {
         },
     ];
     assert!(!game.check_for_misdeal(game.current_player));
+}
+
+#[test]
+fn test_complete_hand_end_to_end() {
+    let mut game = KaiboshGame::new();
+
+    // Manually set up a simple hand to control the outcome
+    // Player 0 bids 3, wins 3 tricks, scores 3
+    game.hands[0] = vec![
+        Card {
+            value: 14,
+            suit: Suit::Hearts,
+            id: 0,
+        }, // A♥
+        Card {
+            value: 13,
+            suit: Suit::Hearts,
+            id: 1,
+        }, // K♥
+        Card {
+            value: 12,
+            suit: Suit::Hearts,
+            id: 2,
+        }, // Q♥
+        Card {
+            value: 11,
+            suit: Suit::Spades,
+            id: 3,
+        }, // J♠
+        Card {
+            value: 10,
+            suit: Suit::Spades,
+            id: 4,
+        }, // 10♠
+        Card {
+            value: 9,
+            suit: Suit::Spades,
+            id: 5,
+        }, // 9♠
+    ];
+    game.hands[1] = vec![
+        Card {
+            value: 11,
+            suit: Suit::Hearts,
+            id: 6,
+        }, // J♥ (right bower if H is trump)
+        Card {
+            value: 10,
+            suit: Suit::Hearts,
+            id: 7,
+        }, // 10♥
+        Card {
+            value: 9,
+            suit: Suit::Hearts,
+            id: 8,
+        }, // 9♥
+        Card {
+            value: 14,
+            suit: Suit::Clubs,
+            id: 9,
+        }, // A♣
+        Card {
+            value: 13,
+            suit: Suit::Clubs,
+            id: 10,
+        }, // K♣
+        Card {
+            value: 12,
+            suit: Suit::Clubs,
+            id: 11,
+        }, // Q♣
+    ];
+    game.hands[2] = vec![
+        Card {
+            value: 14,
+            suit: Suit::Diamonds,
+            id: 12,
+        }, // A♦
+        Card {
+            value: 13,
+            suit: Suit::Diamonds,
+            id: 13,
+        }, // K♦
+        Card {
+            value: 12,
+            suit: Suit::Diamonds,
+            id: 14,
+        }, // Q♦
+        Card {
+            value: 11,
+            suit: Suit::Diamonds,
+            id: 15,
+        }, // J♦ (left bower if H is trump)
+        Card {
+            value: 10,
+            suit: Suit::Diamonds,
+            id: 16,
+        }, // 10♦
+        Card {
+            value: 9,
+            suit: Suit::Diamonds,
+            id: 17,
+        }, // 9♦
+    ];
+    game.hands[3] = vec![
+        Card {
+            value: 11,
+            suit: Suit::Clubs,
+            id: 18,
+        }, // J♣
+        Card {
+            value: 10,
+            suit: Suit::Clubs,
+            id: 19,
+        }, // 10♣
+        Card {
+            value: 9,
+            suit: Suit::Clubs,
+            id: 20,
+        }, // 9♣
+        Card {
+            value: 14,
+            suit: Suit::Spades,
+            id: 21,
+        }, // A♠
+        Card {
+            value: 13,
+            suit: Suit::Spades,
+            id: 22,
+        }, // K♠
+        Card {
+            value: 12,
+            suit: Suit::Spades,
+            id: 23,
+        }, // Q♠
+    ];
+
+    // Bidding phase: Player 0 bids 3, others pass
+    game.bid(Some(3)); // Player 0 bids 3
+    game.bid(None); // Player 1 passes
+    game.bid(None); // Player 2 passes
+    game.bid(None); // Player 3 passes
+
+    assert_eq!(game.state, GameState::NameTrump);
+    assert_eq!(game.bidder, Some(0));
+    assert_eq!(game.high_bid, Some(3));
+
+    // Name trump: Player 0 chooses Hearts
+    game.name_trump(2); // 2 = Hearts
+    assert_eq!(game.trump, Some(Suit::Hearts));
+    assert_eq!(game.state, GameState::Play);
+
+    // Play 6 tricks - player 0 leads
+    // Track initial state
+    let initial_scores = game.scores;
+    let initial_scores_this_hand = game.scores_this_hand;
+
+    // Play through all 24 cards (6 tricks × 4 players)
+    for trick_num in 0..6 {
+        for _ in 0..4 {
+            let moves = game.get_moves();
+            assert!(
+                !moves.is_empty(),
+                "Should have moves available on trick {}",
+                trick_num
+            );
+            game.apply_move(Some(moves[0]));
+        }
+    }
+
+    // Verify hand completed
+    assert!(
+        game.hands.iter().all(|h| h.is_empty()),
+        "All hands should be empty"
+    );
+    assert!(
+        game.last_hand_score.is_some(),
+        "last_hand_score should be set"
+    );
+
+    // Verify scores were calculated
+    let final_scores = game.scores;
+    let final_scores_this_hand = game.scores_this_hand;
+
+    println!("Initial scores: {:?}", initial_scores);
+    println!("Final scores: {:?}", final_scores);
+    println!("Initial scores_this_hand: {:?}", initial_scores_this_hand);
+    println!("Final scores_this_hand: {:?}", final_scores_this_hand);
+    println!("last_hand_score: {:?}", game.last_hand_score);
+    println!("tricks_taken: {:?}", game.tricks_taken);
+
+    // Verify score change happened
+    assert_ne!(
+        final_scores_this_hand,
+        [0, 0],
+        "scores_this_hand should not be [0,0] after hand completes"
+    );
+
+    // Verify last_hand_score matches scores_this_hand
+    let expected_hand_score = final_scores_this_hand[0] - final_scores_this_hand[1];
+    assert_eq!(
+        game.last_hand_score,
+        Some(expected_hand_score),
+        "last_hand_score should equal scores_this_hand[0] - scores_this_hand[1]"
+    );
+}
+
+#[test]
+fn test_kaibosh_hand_end_to_end() {
+    let mut game = KaiboshGame::new();
+
+    // Set up a hand where player 0 can bid and make KAIBOSH
+    // Give player 0 all trump (Hearts) including both bowers
+    game.hands[0] = vec![
+        Card {
+            value: 11,
+            suit: Suit::Hearts,
+            id: 0,
+        }, // J♥ (right bower)
+        Card {
+            value: 11,
+            suit: Suit::Diamonds,
+            id: 1,
+        }, // J♦ (left bower)
+        Card {
+            value: 14,
+            suit: Suit::Hearts,
+            id: 2,
+        }, // A♥
+        Card {
+            value: 13,
+            suit: Suit::Hearts,
+            id: 3,
+        }, // K♥
+        Card {
+            value: 12,
+            suit: Suit::Hearts,
+            id: 4,
+        }, // Q♥
+        Card {
+            value: 10,
+            suit: Suit::Hearts,
+            id: 5,
+        }, // 10♥
+    ];
+
+    // Give other players weak hands
+    for player in 1..4 {
+        let base_id = (6 + player * 6) as i32;
+        game.hands[player] = vec![
+            Card {
+                value: 9,
+                suit: Suit::Clubs,
+                id: base_id,
+            },
+            Card {
+                value: 10,
+                suit: Suit::Clubs,
+                id: base_id + 1,
+            },
+            Card {
+                value: 12,
+                suit: Suit::Clubs,
+                id: base_id + 2,
+            },
+            Card {
+                value: 9,
+                suit: Suit::Spades,
+                id: base_id + 3,
+            },
+            Card {
+                value: 10,
+                suit: Suit::Spades,
+                id: base_id + 4,
+            },
+            Card {
+                value: 12,
+                suit: Suit::Spades,
+                id: base_id + 5,
+            },
+        ];
+    }
+
+    // Bidding: Player 0 bids KAIBOSH (12), others pass
+    game.bid(Some(KAIBOSH));
+    assert_eq!(
+        game.state,
+        GameState::NameTrump,
+        "KAIBOSH bid should go straight to NameTrump"
+    );
+
+    // Name trump
+    game.name_trump(2); // 2 = Hearts
+    assert_eq!(game.trump, Some(Suit::Hearts));
+
+    // Play through all 6 tricks
+    for _ in 0..24 {
+        let moves = game.get_moves();
+        if !moves.is_empty() {
+            game.apply_move(Some(moves[0]));
+        }
+    }
+
+    // Verify KAIBOSH scoring
+    assert!(game.last_hand_score.is_some());
+
+    println!("KAIBOSH test - last_hand_score: {:?}", game.last_hand_score);
+    println!(
+        "KAIBOSH test - scores_this_hand: {:?}",
+        game.scores_this_hand
+    );
+    println!("KAIBOSH test - tricks_taken: {:?}", game.tricks_taken);
+
+    // If player 0 won all 6 tricks, should score +12
+    // If player 0 failed, should score -12
+    let score = game.last_hand_score.unwrap();
+    assert!(
+        score == 12 || score == -12,
+        "KAIBOSH score should be exactly +12 or -12, got {}",
+        score
+    );
 }
