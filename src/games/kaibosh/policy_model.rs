@@ -56,22 +56,22 @@ impl PolicyNetwork {
 
         // Forward pass - hidden layer
         let mut hidden_outputs = vec![0.0; self.hidden_size];
-        for j in 0..self.hidden_size {
+        for (j, output) in hidden_outputs.iter_mut().enumerate() {
             let mut sum = self.hidden_bias[j];
-            for i in 0..self.input_size {
-                sum += inputs[i] * self.hidden_weights[i][j];
+            for (i, &input) in inputs.iter().enumerate() {
+                sum += input * self.hidden_weights[i][j];
             }
-            hidden_outputs[j] = if sum > 0.0 { sum } else { 0.0 }; // ReLU
+            *output = if sum > 0.0 { sum } else { 0.0 }; // ReLU
         }
 
         // Forward pass - output layer
         let mut logits = vec![0.0; self.output_size];
-        for k in 0..self.output_size {
+        for (k, logit) in logits.iter_mut().enumerate() {
             let mut sum = self.output_bias[k];
-            for j in 0..self.hidden_size {
-                sum += hidden_outputs[j] * self.output_weights[j][k];
+            for (j, &hidden) in hidden_outputs.iter().enumerate() {
+                sum += hidden * self.output_weights[j][k];
             }
-            logits[k] = sum;
+            *logit = sum;
         }
 
         // Softmax activation
@@ -95,22 +95,26 @@ impl PolicyNetwork {
         let mut hidden_inputs = vec![0.0; self.hidden_size];
         let mut hidden_outputs = vec![0.0; self.hidden_size];
 
-        for j in 0..self.hidden_size {
+        for (j, (h_input, h_output)) in hidden_inputs
+            .iter_mut()
+            .zip(hidden_outputs.iter_mut())
+            .enumerate()
+        {
             let mut sum = self.hidden_bias[j];
-            for i in 0..self.input_size {
-                sum += inputs[i] * self.hidden_weights[i][j];
+            for (i, &input) in inputs.iter().enumerate() {
+                sum += input * self.hidden_weights[i][j];
             }
-            hidden_inputs[j] = sum;
-            hidden_outputs[j] = if sum > 0.0 { sum } else { 0.0 }; // ReLU
+            *h_input = sum;
+            *h_output = if sum > 0.0 { sum } else { 0.0 }; // ReLU
         }
 
         let mut logits = vec![0.0; self.output_size];
-        for k in 0..self.output_size {
+        for (k, logit) in logits.iter_mut().enumerate() {
             let mut sum = self.output_bias[k];
-            for j in 0..self.hidden_size {
-                sum += hidden_outputs[j] * self.output_weights[j][k];
+            for (j, &hidden) in hidden_outputs.iter().enumerate() {
+                sum += hidden * self.output_weights[j][k];
             }
-            logits[k] = sum;
+            *logit = sum;
         }
 
         // Softmax
@@ -121,41 +125,46 @@ impl PolicyNetwork {
 
         // Backpropagation
         // Output layer gradients (cross-entropy + softmax derivative)
-        let mut delta_output = vec![0.0; self.output_size];
-        for k in 0..self.output_size {
-            delta_output[k] = probabilities[k] - target[k];
-        }
+        let delta_output: Vec<f32> = probabilities
+            .iter()
+            .zip(target.iter())
+            .map(|(&prob, &tgt)| prob - tgt)
+            .collect();
 
         // Hidden layer gradients
         let mut delta_hidden = vec![0.0; self.hidden_size];
-        for j in 0..self.hidden_size {
+        for (j, (delta, &h_input)) in delta_hidden
+            .iter_mut()
+            .zip(hidden_inputs.iter())
+            .enumerate()
+        {
             let mut error = 0.0;
-            for k in 0..self.output_size {
-                error += delta_output[k] * self.output_weights[j][k];
+            for (k, &d_out) in delta_output.iter().enumerate() {
+                error += d_out * self.output_weights[j][k];
             }
-            let relu_prime = if hidden_inputs[j] > 0.0 { 1.0 } else { 0.0 };
-            delta_hidden[j] = error * relu_prime;
+            let relu_prime = if h_input > 0.0 { 1.0 } else { 0.0 };
+            *delta = error * relu_prime;
         }
 
         // Update weights
-        for j in 0..self.hidden_size {
-            for k in 0..self.output_size {
-                self.output_weights[j][k] -= learning_rate * delta_output[k] * hidden_outputs[j];
+        for (j, &hidden) in hidden_outputs.iter().enumerate() {
+            for (k, &d_out) in delta_output.iter().enumerate() {
+                self.output_weights[j][k] -= learning_rate * d_out * hidden;
             }
         }
 
-        for k in 0..self.output_size {
-            self.output_bias[k] -= learning_rate * delta_output[k];
+        for (bias, &d_out) in self.output_bias.iter_mut().zip(delta_output.iter()) {
+            *bias -= learning_rate * d_out;
         }
 
-        for i in 0..self.input_size {
-            for j in 0..self.hidden_size {
-                self.hidden_weights[i][j] -= learning_rate * delta_hidden[j] * inputs[i];
+        for (i, &input) in inputs.iter().enumerate() {
+            for (j, &delta) in delta_hidden.iter().enumerate() {
+                self.hidden_weights[i][j] -= learning_rate * delta * input;
             }
         }
 
-        for j in 0..self.hidden_size {
-            self.hidden_bias[j] -= learning_rate * delta_hidden[j];
+        for (bias, &delta) in self.hidden_bias.iter_mut().zip(delta_hidden.iter()) {
+            *bias -= learning_rate * delta;
         }
     }
 }

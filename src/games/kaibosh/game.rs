@@ -232,6 +232,7 @@ impl KaiboshGame {
                 // check for end of game
                 if self.game_over() {
                     // Animate game end - declare winner
+                    #[allow(clippy::needless_return)]
                     return;
                 }
                 // FIX: Don't call new_hand() here - it resets scores_this_hand to [0,0]
@@ -630,7 +631,7 @@ impl ismcts::Game for KaiboshGame {
         // During bidding, trump is not yet known, so we evaluate for all possible trumps
         // and average the probabilities
         let all_suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
-        let mut max_probs = vec![0.0f32; 8]; // 8 possible bids
+        let mut max_probs = [0.0f32; 8]; // 8 possible bids
 
         for suit in &all_suits {
             let probs = policy_model.evaluate(hand, *suit);

@@ -48,18 +48,18 @@ impl Network {
         // Forward pass
         let mut hidden_outputs = vec![0.0; self.hidden_size];
 
-        for j in 0..self.hidden_size {
+        for (j, output) in hidden_outputs.iter_mut().enumerate() {
             let mut sum = self.hidden_bias[j];
-            for i in 0..self.input_size {
-                sum += inputs[i] * self.hidden_weights[i][j];
+            for (i, &input) in inputs.iter().enumerate() {
+                sum += input * self.hidden_weights[i][j];
             }
             // ReLU activation
-            hidden_outputs[j] = if sum > 0.0 { sum } else { 0.0 };
+            *output = if sum > 0.0 { sum } else { 0.0 };
         }
 
         let mut final_output = self.output_bias;
-        for j in 0..self.hidden_size {
-            final_output += hidden_outputs[j] * self.output_weights[j];
+        for (j, &hidden) in hidden_outputs.iter().enumerate() {
+            final_output += hidden * self.output_weights[j];
         }
 
         // Sigmoid activation for output (0.0 - 1.0)
@@ -74,18 +74,22 @@ impl Network {
         let mut hidden_inputs = vec![0.0; self.hidden_size];
         let mut hidden_outputs = vec![0.0; self.hidden_size];
 
-        for j in 0..self.hidden_size {
+        for (j, (h_input, h_output)) in hidden_inputs
+            .iter_mut()
+            .zip(hidden_outputs.iter_mut())
+            .enumerate()
+        {
             let mut sum = self.hidden_bias[j];
-            for i in 0..self.input_size {
-                sum += inputs[i] * self.hidden_weights[i][j];
+            for (i, &input) in inputs.iter().enumerate() {
+                sum += input * self.hidden_weights[i][j];
             }
-            hidden_inputs[j] = sum;
-            hidden_outputs[j] = if sum > 0.0 { sum } else { 0.0 }; // ReLU
+            *h_input = sum;
+            *h_output = if sum > 0.0 { sum } else { 0.0 }; // ReLU
         }
 
         let mut final_sum = self.output_bias;
-        for j in 0..self.hidden_size {
-            final_sum += hidden_outputs[j] * self.output_weights[j];
+        for (j, &hidden) in hidden_outputs.iter().enumerate() {
+            final_sum += hidden * self.output_weights[j];
         }
 
         let predicted = 1.0 / (1.0 + (-final_sum).exp()); // Sigmoid
@@ -98,25 +102,29 @@ impl Network {
         self.output_bias -= learning_rate * delta_output;
 
         let mut delta_hidden = vec![0.0; self.hidden_size];
-        for j in 0..self.hidden_size {
+        for (j, (delta, &h_input)) in delta_hidden
+            .iter_mut()
+            .zip(hidden_inputs.iter())
+            .enumerate()
+        {
             let error_wrt_hidden = delta_output * self.output_weights[j];
-            let relu_prime = if hidden_inputs[j] > 0.0 { 1.0 } else { 0.0 };
-            delta_hidden[j] = error_wrt_hidden * relu_prime;
+            let relu_prime = if h_input > 0.0 { 1.0 } else { 0.0 };
+            *delta = error_wrt_hidden * relu_prime;
         }
 
         // Now update weights
-        for j in 0..self.hidden_size {
-            self.output_weights[j] -= learning_rate * delta_output * hidden_outputs[j];
+        for (&hidden, weight) in hidden_outputs.iter().zip(self.output_weights.iter_mut()) {
+            *weight -= learning_rate * delta_output * hidden;
         }
 
-        for i in 0..self.input_size {
-            for j in 0..self.hidden_size {
-                self.hidden_weights[i][j] -= learning_rate * delta_hidden[j] * inputs[i];
+        for (i, &input) in inputs.iter().enumerate() {
+            for (j, &delta) in delta_hidden.iter().enumerate() {
+                self.hidden_weights[i][j] -= learning_rate * delta * input;
             }
         }
 
-        for j in 0..self.hidden_size {
-            self.hidden_bias[j] -= learning_rate * delta_hidden[j];
+        for (bias, &delta) in self.hidden_bias.iter_mut().zip(delta_hidden.iter()) {
+            *bias -= learning_rate * delta;
         }
     }
 }
