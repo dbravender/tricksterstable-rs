@@ -734,7 +734,7 @@ static POLICY_MODEL: OnceLock<PolicyNetwork> = OnceLock::new();
 
 fn get_policy_model() -> &'static PolicyNetwork {
     POLICY_MODEL.get_or_init(|| {
-        const MODEL_JSON: &str = include_str!("policy_model_superhuman.json");
+        const MODEL_JSON: &str = include_str!("policy_model_with_context.json");
         serde_json::from_str(MODEL_JSON).expect("Failed to parse embedded policy model")
     })
 }
