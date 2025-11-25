@@ -14,6 +14,10 @@ pub struct Features {
     pub nine: f32,
     pub two_aces: f32,
     pub two_jacks: f32,
+    pub score_differential: f32, // (my team score - opponent score) / 25
+    pub opponent_has_bid: f32,   // 1.0 if opponent has current high bid, 0.0 otherwise
+    pub score_behind: f32,       // max(0, opponent_score - my_score) / 25 - desperation when losing
+    pub opponent_near_win: f32,  // opponent_score / 25 - urgency when opponent is close to winning
 }
 
 impl Features {

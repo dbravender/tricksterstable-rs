@@ -79,6 +79,7 @@ pub struct KaiboshGame {
     pub score_threshold: i32,
     pub use_heuristic: bool,
     pub use_policy_priors: bool,      // use policy network priors in MCTS
+    pub experiment: i32,              // experimental reward function (0=baseline, 1+=experiments)
     pub last_hand_score: Option<i32>, // score from the last completed hand
 }
 
@@ -105,7 +106,7 @@ impl KaiboshGame {
         game
     }
 
-    fn new_hand(&mut self) {
+    pub fn new_hand(&mut self) {
         // reset bidder
         self.bidder = None;
         // reset bid
@@ -135,8 +136,9 @@ impl KaiboshGame {
             HashSet::new(),
             HashSet::new(),
         ];
-        self.scores = [0, 0];
+        // Don't reset game scores - only reset hand scores
         self.scores_this_hand = [0, 0];
+        self.last_hand_score = None;
     }
 
     fn deal() -> [Vec<Card>; 4] {
@@ -566,13 +568,47 @@ impl ismcts::Game for KaiboshGame {
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
         let hand_over = self.scores_this_hand.iter().any(|&score| score != 0);
         if hand_over {
-            let score = self.scores_this_hand[player as usize % 2];
-            // Normalize score (-12 to 12) to 0.0 to 1.0
-            // -12 -> 0.0
-            // 0 -> 0.5
-            // 12 -> 1.0
-            let normalized_score = (score as f64 + 12.0) / 24.0;
-            Some(normalized_score.clamp(0.0, 1.0))
+            let team = player as usize % 2;
+            let opponent_team = 1 - team;
+
+            match self.experiment {
+                0 => {
+                    // Baseline: Asymmetric rewards [0.0, 1.0]
+                    let score = self.scores_this_hand[team];
+                    // Normalize score (-12 to 12) to 0.0 to 1.0
+                    // -12 -> 0.0
+                    // 0 -> 0.5
+                    // 12 -> 1.0
+                    let normalized_score = (score as f64 + 12.0) / 24.0;
+                    Some(normalized_score.clamp(0.0, 1.0))
+                }
+                1 => {
+                    // Experiment 1: Symmetric rewards [-1.0, 1.0] with game win/loss emphasis
+                    // Check if the game is actually won or lost
+                    if self.scores[team] >= self.score_threshold {
+                        // My team won the game - maximum reward
+                        return Some(1.0);
+                    } else if self.scores[opponent_team] >= self.score_threshold {
+                        // Opponent won the game - minimum reward
+                        return Some(-1.0);
+                    }
+
+                    // Game is ongoing - use normalized hand score
+                    let score = self.scores_this_hand[team];
+                    // Normalize score (-12 to 12) to -1.0 to 1.0
+                    // -12 -> -1.0
+                    // 0 -> 0.0
+                    // 12 -> 1.0
+                    let normalized_score = (score as f64) / 12.0;
+                    Some(normalized_score.clamp(-1.0, 1.0))
+                }
+                _ => {
+                    // Default to baseline for unknown experiments
+                    let score = self.scores_this_hand[team];
+                    let normalized_score = (score as f64 + 12.0) / 24.0;
+                    Some(normalized_score.clamp(0.0, 1.0))
+                }
+            }
         } else if self.use_heuristic {
             // Use heuristic ONLY at the start of the hand (to evaluate bidding decisions).
             // If we are mid-hand, we want to use Pure ISMCTS rollouts.
