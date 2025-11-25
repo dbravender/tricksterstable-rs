@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::utils::shuffle_and_divide_matching_cards;
 
 pub const KAIBOSH: i32 = 12;
+pub const DEFAULT_SCORE_THRESHOLD: i32 = 25;
 const JACK: i32 = 11;
 const MISDEAL: i32 = 100; // high so it can be "bid" anytime
 
@@ -101,7 +102,7 @@ impl KaiboshGame {
         game.current_player = 0;
         game.dealer = 3;
         // TODO: make this configurable for humans playing the game
-        game.score_threshold = 25;
+        game.score_threshold = DEFAULT_SCORE_THRESHOLD;
         game.use_policy_priors = true; // Enable by default
         game
     }
@@ -664,13 +665,33 @@ impl ismcts::Game for KaiboshGame {
         // Get the current player's hand
         let hand = &self.hands[self.current_player];
 
+        // Get game context
+        let my_team = self.current_player % 2;
+        let opponent_team = 1 - my_team;
+        let my_score = self.scores[my_team];
+        let opponent_score = self.scores[opponent_team];
+        let high_bidder = self.bids.iter().enumerate().rev().find_map(|(i, &bid)| {
+            if bid.is_some() && bid != Some(0) {
+                Some(i)
+            } else {
+                None
+            }
+        });
+
         // During bidding, trump is not yet known, so we evaluate for all possible trumps
         // and average the probabilities
         let all_suits = [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades];
         let mut max_probs = [0.0f32; 8]; // 8 possible bids
 
         for suit in &all_suits {
-            let probs = policy_model.evaluate(hand, *suit);
+            let probs = policy_model.evaluate(
+                hand,
+                *suit,
+                my_score,
+                opponent_score,
+                high_bidder,
+                self.current_player,
+            );
             for i in 0..8 {
                 if probs[i] > max_probs[i] {
                     max_probs[i] = probs[i];

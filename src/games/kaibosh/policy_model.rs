@@ -50,9 +50,32 @@ impl PolicyNetwork {
 
     /// Evaluate hand and return probabilities for each bid
     /// Returns: [P(Pass), P(1), P(2), P(3), P(4), P(5), P(6), P(Kaibosh)]
-    pub fn evaluate(&self, hand: &[Card], trump: Suit) -> Vec<f32> {
-        let features = Features::from_hand(hand, trump);
-        let inputs = features.to_vec();
+    pub fn evaluate(
+        &self,
+        hand: &[Card],
+        trump: Suit,
+        my_score: i32,
+        opponent_score: i32,
+        high_bidder: Option<usize>,
+        current_player: usize,
+    ) -> Vec<f32> {
+        let features = Features::from_hand_with_context(
+            hand,
+            trump,
+            my_score,
+            opponent_score,
+            high_bidder,
+            current_player,
+        );
+        let mut inputs = features.to_vec();
+
+        // Handle model/feature size mismatch
+        // If model expects fewer inputs, truncate; if more, pad with zeros
+        match inputs.len().cmp(&self.input_size) {
+            std::cmp::Ordering::Less => inputs.resize(self.input_size, 0.0),
+            std::cmp::Ordering::Greater => inputs.truncate(self.input_size),
+            std::cmp::Ordering::Equal => {}
+        }
 
         // Forward pass - hidden layer
         let mut hidden_outputs = vec![0.0; self.hidden_size];
@@ -82,9 +105,34 @@ impl PolicyNetwork {
     }
 
     /// Train on a single example using cross-entropy loss
-    pub fn train(&mut self, hand: &[Card], trump: Suit, target_bid: i32, learning_rate: f32) {
-        let features = Features::from_hand(hand, trump);
-        let inputs = features.to_vec();
+    #[allow(clippy::too_many_arguments)]
+    pub fn train(
+        &mut self,
+        hand: &[Card],
+        trump: Suit,
+        my_score: i32,
+        opponent_score: i32,
+        high_bidder: Option<usize>,
+        current_player: usize,
+        target_bid: i32,
+        learning_rate: f32,
+    ) {
+        let features = Features::from_hand_with_context(
+            hand,
+            trump,
+            my_score,
+            opponent_score,
+            high_bidder,
+            current_player,
+        );
+        let mut inputs = features.to_vec();
+
+        // Handle model/feature size mismatch
+        match inputs.len().cmp(&self.input_size) {
+            std::cmp::Ordering::Less => inputs.resize(self.input_size, 0.0),
+            std::cmp::Ordering::Greater => inputs.truncate(self.input_size),
+            std::cmp::Ordering::Equal => {}
+        }
 
         // Create one-hot target
         let target_index = bid_to_index(target_bid);

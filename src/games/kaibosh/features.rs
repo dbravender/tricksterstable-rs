@@ -1,4 +1,4 @@
-use super::game::{Card, Color, Suit};
+use super::game::{Card, Color, Suit, DEFAULT_SCORE_THRESHOLD};
 
 /// Hand features used for neural network evaluation
 #[derive(Default, Debug, Clone)]
@@ -14,15 +14,27 @@ pub struct Features {
     pub nine: f32,
     pub two_aces: f32,
     pub two_jacks: f32,
-    pub score_differential: f32, // (my team score - opponent score) / 25
+    pub score_differential: f32, // (my team score - opponent score) / DEFAULT_SCORE_THRESHOLD
     pub opponent_has_bid: f32,   // 1.0 if opponent has current high bid, 0.0 otherwise
-    pub score_behind: f32,       // max(0, opponent_score - my_score) / 25 - desperation when losing
-    pub opponent_near_win: f32,  // opponent_score / 25 - urgency when opponent is close to winning
+    pub score_behind: f32, // max(0, opponent_score - my_score) / DEFAULT_SCORE_THRESHOLD - desperation when losing
+    pub opponent_near_win: f32, // opponent_score / DEFAULT_SCORE_THRESHOLD - urgency when opponent is close to winning
 }
 
 impl Features {
-    /// Extract hand features given a trump suit
+    /// Extract hand features given a trump suit (without game context)
     pub fn from_hand(hand: &[Card], trump: Suit) -> Self {
+        Self::from_hand_with_context(hand, trump, 0, 0, None, 0)
+    }
+
+    /// Extract hand features with game context for strategic bidding
+    pub fn from_hand_with_context(
+        hand: &[Card],
+        trump: Suit,
+        my_score: i32,
+        opponent_score: i32,
+        high_bidder: Option<usize>,
+        current_player: usize,
+    ) -> Self {
         let mut features = Features::default();
 
         let mut trump_count = 0.0;
@@ -89,10 +101,36 @@ impl Features {
         features.two_aces = two_aces;
         features.two_jacks = two_jacks;
 
+        // Calculate game context features
+        let my_team = current_player % 2;
+        let opponent_team = 1 - my_team;
+
+        // Score differential: positive when winning, negative when losing
+        features.score_differential =
+            (my_score - opponent_score) as f32 / DEFAULT_SCORE_THRESHOLD as f32;
+
+        // Opponent has the current high bid (need to outbid or steal trump naming)
+        features.opponent_has_bid = if let Some(bidder) = high_bidder {
+            if bidder % 2 == opponent_team {
+                1.0
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        // Desperation factor: how far behind we are (only positive when losing)
+        features.score_behind =
+            ((opponent_score - my_score).max(0) as f32) / DEFAULT_SCORE_THRESHOLD as f32;
+
+        // Urgency factor: how close opponent is to winning
+        features.opponent_near_win = (opponent_score as f32) / DEFAULT_SCORE_THRESHOLD as f32;
+
         features
     }
 
-    /// Convert features to vector (for policy network - 11 features)
+    /// Convert features to vector (for policy network - 15 features)
     pub fn to_vec(&self) -> Vec<f32> {
         vec![
             self.trump,
@@ -106,10 +144,14 @@ impl Features {
             self.nine,
             self.two_aces,
             self.two_jacks,
+            self.score_differential,
+            self.opponent_has_bid,
+            self.score_behind,
+            self.opponent_near_win,
         ]
     }
 
-    /// Convert features to vector with additional bid and bias inputs (for value network - 13 features)
+    /// Convert features to vector with additional bid and bias inputs (for value network - 17 features)
     pub fn to_vec_with_bid(&self, bid: i32) -> Vec<f32> {
         vec![
             self.trump,
@@ -123,6 +165,10 @@ impl Features {
             self.nine,
             self.two_aces,
             self.two_jacks,
+            self.score_differential,
+            self.opponent_has_bid,
+            self.score_behind,
+            self.opponent_near_win,
             bid as f32 / 12.0, // Normalized bid
             1.0,               // Bias input
         ]
