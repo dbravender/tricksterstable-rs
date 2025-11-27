@@ -654,8 +654,8 @@ impl ismcts::Game for KaiboshGame {
     }
 
     fn move_probabilities(&self) -> Option<Vec<(Self::Move, f64)>> {
-        // Only provide policy priors during bidding phase
-        if !matches!(self.state, GameState::Bidding) {
+        // Only provide policy priors if enabled and during bidding phase
+        if !self.use_policy_priors || !matches!(self.state, GameState::Bidding) {
             return None;
         }
 
