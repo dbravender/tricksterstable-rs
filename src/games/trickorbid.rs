@@ -370,15 +370,6 @@ impl TrickOrBidGame {
             self.trump_suit = Some(card.suit);
         }
 
-        // Collect cards to burn before mutating
-        let cards_to_burn: Vec<i32> = self
-            .current_hand
-            .iter()
-            .flatten()
-            .filter(|c| c.id != card_id)
-            .map(|c| c.id)
-            .collect();
-
         // Animate bid card moving to bid area
         let change_index = self.new_change();
         self.add_change(
@@ -395,13 +386,25 @@ impl TrickOrBidGame {
         );
 
         // Remaining cards are DISCARDED (not counted as tricks)
-        for burn_card_id in cards_to_burn {
+        // Include player info so frontend knows where each card is animating from
+        let cards_to_burn: Vec<(i32, usize)> = self
+            .current_hand
+            .iter()
+            .enumerate()
+            .filter_map(|(card_player, card_opt)| {
+                card_opt
+                    .filter(|c| c.id != card_id)
+                    .map(|c| (c.id, card_player))
+            })
+            .collect();
+        for (burn_card_id, card_player) in cards_to_burn {
             self.add_change(
                 change_index,
                 Change {
                     change_type: ChangeType::BurnTrick,
                     object_id: burn_card_id,
                     dest: Location::TricksBurned,
+                    player: card_player,
                     ..Default::default()
                 },
             );
@@ -835,17 +838,52 @@ impl TrickOrBidGame {
         let change_index = self.new_change();
         if self.current_player == 0 {
             let moves = self.get_moves();
-            for id in moves {
-                self.add_change(
-                    change_index,
-                    Change {
-                        object_id: id,
-                        change_type: ChangeType::ShowPlayable,
-                        dest: Location::Hand,
-                        player: self.current_player,
-                        ..Default::default()
-                    },
-                );
+            match self.state {
+                State::SelectBidOrPass => {
+                    // During bid selection, highlight cards in play area and show pass button
+                    for id in moves {
+                        if id == PASS {
+                            // Show pass button
+                            self.add_change(
+                                change_index,
+                                Change {
+                                    object_id: PASS,
+                                    change_type: ChangeType::SelectBidCardOrPass,
+                                    dest: Location::Play,
+                                    player: self.current_player,
+                                    ..Default::default()
+                                },
+                            );
+                        } else {
+                            // Highlight biddable cards in play area
+                            self.add_change(
+                                change_index,
+                                Change {
+                                    object_id: id,
+                                    change_type: ChangeType::ShowPlayable,
+                                    dest: Location::Play,
+                                    player: self.current_player,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+                }
+                State::Play => {
+                    for id in moves {
+                        self.add_change(
+                            change_index,
+                            Change {
+                                object_id: id,
+                                change_type: ChangeType::ShowPlayable,
+                                dest: Location::Hand,
+                                player: self.current_player,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
+                State::GameOver => {}
             }
         } else {
             self.hide_playable();
@@ -853,15 +891,19 @@ impl TrickOrBidGame {
     }
 
     fn show_message(&mut self) {
-        let player_name = match self.current_player {
-            0 => "You".to_string(),
-            1 => "West".to_string(),
-            2 => "North".to_string(),
-            _ => "East".to_string(),
-        };
-
         let message = match self.state {
-            State::SelectBidOrPass => Some(format!("{} must select a bid or pass", player_name)),
+            State::SelectBidOrPass => {
+                if self.current_player == 0 {
+                    Some("Select a bid card or pass".to_string())
+                } else {
+                    let player_name = match self.current_player {
+                        1 => "West",
+                        2 => "North",
+                        _ => "East",
+                    };
+                    Some(format!("{} must select a bid or pass", player_name))
+                }
+            }
             State::Play => None,
             State::GameOver => None,
         };
