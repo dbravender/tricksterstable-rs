@@ -69,6 +69,7 @@ pub enum Location {
     Play,
     TricksTaken,  // Move tricks to the player that won them
     TricksBurned, // Move tied tricks off screen - not to a particular player
+    UnwonTricks,  // Facedown pile for no-winner tricks (visible with counter)
     ReorderHand,
     ScoreCards,
 }
@@ -111,6 +112,7 @@ pub struct Change {
     pub is_trump: bool, // True when this bid establishes trump (first bid card)
     pub animate_score: bool, // True to animate score to completion, false to just show preview
     pub trick_count: i32, // Number of tricks won (for displaying on card backs)
+    pub unwon_trick_count: i32, // Number of unwon tricks in the pile (for counter display)
 }
 
 pub struct TrickResult {
@@ -136,7 +138,7 @@ pub struct TrickOrBidGame {
     pub round: i32,
     pub cards_won: [Vec<Card>; PLAYER_COUNT],
     pub trump_suit: Option<Suit>,
-    pub accumulated_tricks: Vec<Card>, // Cards from won tricks (for bid selection) or no-winner tricks
+    pub accumulated_tricks: Vec<Card>, // Cards from no-winner tricks (go to next winner's score pile)
     pub tricks_won_count: [i32; PLAYER_COUNT], // Count of tricks won (not cards)
     pub voids: [Vec<Suit>; PLAYER_COUNT], // Suits each player is void in (for determination)
     pub experiment: bool,              // Set to true when testing new reward functions
@@ -251,7 +253,15 @@ impl TrickOrBidGame {
                     vec![PASS]
                 } else {
                     let mut moves = vec![PASS];
-                    moves.extend(self.accumulated_tricks.iter().map(|c| c.id));
+                    // Can only bid with cards from the current trick that the winner DIDN'T play
+                    let winner_card_id = self.current_hand[self.current_player].map(|c| c.id);
+                    moves.extend(
+                        self.current_hand
+                            .iter()
+                            .flatten()
+                            .filter(|c| Some(c.id) != winner_card_id)
+                            .map(|c| c.id),
+                    );
                     moves
                 }
             }
@@ -308,26 +318,17 @@ impl TrickOrBidGame {
     pub fn select_bid_card_or_pass(&mut self, card_id: i32) {
         let player = self.current_player;
 
-        // Calculate number of tricks won (current trick + any accumulated no-winner tricks)
-        // Each trick is 4 cards, so total tricks = total cards / 4
-        let num_cards = self.accumulated_tricks.len();
-        let tricks_count = (num_cards / 4) as i32;
-
         if card_id == PASS {
-            // Get existing cards before adding new ones
-            let existing_cards = self.cards_won[player].clone();
-
-            // Player takes the trick - add all cards to their won cards
-            self.cards_won[player].extend(self.accumulated_tricks.iter().copied());
-            self.tricks_won_count[player] += tricks_count;
+            // Player takes the current trick - add to their won cards
+            self.tricks_won_count[player] += 1;
+            let cards_to_add: Vec<Card> = self.current_hand.iter().flatten().copied().collect();
+            self.cards_won[player].extend(cards_to_add.iter().copied());
 
             // Animate cards going to score pile
             let change_index = self.new_change();
-            let cards_to_animate = self.accumulated_tricks.clone();
             let current_trick_count = self.tricks_won_count[player];
 
-            // Update trick count on all existing cards in the pile
-            for card in &existing_cards {
+            for card in &cards_to_add {
                 self.add_change(
                     change_index,
                     Change {
@@ -341,22 +342,7 @@ impl TrickOrBidGame {
                 );
             }
 
-            // Animate new cards moving to the pile
-            for card in &cards_to_animate {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.id,
-                        dest: Location::Score,
-                        player,
-                        trick_count: current_trick_count,
-                        ..Default::default()
-                    },
-                );
-            }
-
-            self.accumulated_tricks.clear();
+            self.current_hand = [None; PLAYER_COUNT];
 
             // Continue play or end round
             if self.hands.iter().any(|h| !h.is_empty()) {
@@ -367,13 +353,16 @@ impl TrickOrBidGame {
             return;
         }
 
-        // Player is selecting a bid card from the won trick
-        // Find and remove the selected card from accumulated_tricks
-        let card_pos = self.accumulated_tricks.iter().position(|c| c.id == card_id);
+        // Player is selecting a bid card from the current trick
+        // Find the selected card in current_hand
+        let card_pos = self
+            .current_hand
+            .iter()
+            .position(|c| c.is_some() && c.unwrap().id == card_id);
         if card_pos.is_none() {
-            panic!("Selected bid card not found in won cards");
+            panic!("Selected bid card not found in current trick");
         }
-        let card = self.accumulated_tricks.remove(card_pos.unwrap());
+        let card = self.current_hand[card_pos.unwrap()].unwrap();
 
         // Set trump suit if this is the first bid card
         let is_first_bid = self.trump_suit.is_none();
@@ -381,8 +370,17 @@ impl TrickOrBidGame {
             self.trump_suit = Some(card.suit);
         }
 
-        // Animate bid card selection and reorder remaining cards simultaneously
-        let change_index = 0;
+        // Collect cards to burn before mutating
+        let cards_to_burn: Vec<i32> = self
+            .current_hand
+            .iter()
+            .flatten()
+            .filter(|c| c.id != card_id)
+            .map(|c| c.id)
+            .collect();
+
+        // Animate bid card moving to bid area
+        let change_index = self.new_change();
         self.add_change(
             change_index,
             Change {
@@ -396,39 +394,20 @@ impl TrickOrBidGame {
             },
         );
 
-        // Reorder remaining cards to close the gap where the selected card was (simultaneous with bid)
-        let cards_to_reorder = self.accumulated_tricks.clone();
-        let num_cards = cards_to_reorder.len();
-        for (idx, card) in cards_to_reorder.iter().enumerate() {
+        // Remaining cards are DISCARDED (not counted as tricks)
+        for burn_card_id in cards_to_burn {
             self.add_change(
                 change_index,
                 Change {
-                    change_type: ChangeType::Reorder,
-                    object_id: card.id,
-                    dest: Location::ScoreCards,
-                    offset: idx,
-                    length: num_cards,
-                    ..Default::default()
-                },
-            );
-        }
-
-        // Remaining cards are DISCARDED (not counted as tricks)
-        // Animate them burning (moving off screen) after reorder completes
-        let burn_index = self.new_change();
-        for card in &cards_to_reorder {
-            self.add_change(
-                burn_index,
-                Change {
                     change_type: ChangeType::BurnTrick,
-                    object_id: card.id,
+                    object_id: burn_card_id,
                     dest: Location::TricksBurned,
                     ..Default::default()
                 },
             );
         }
 
-        self.accumulated_tricks.clear();
+        self.current_hand = [None; PLAYER_COUNT];
         self.bid_cards[player] = Some(card);
 
         // Continue play or end round
@@ -478,11 +457,14 @@ impl TrickOrBidGame {
             TrickOrBidGame::trick_winner(self.lead_player, self.current_hand, self.trump_suit);
 
         if trick_result.no_winner {
-            // No winner - accumulate these cards for the next winner
+            // No winner - add these cards to accumulated tricks (visible facedown pile)
             self.accumulated_tricks
                 .extend(self.current_hand.iter().flatten().copied());
 
-            // Animate trick being burned/discarded
+            // Calculate number of accumulated tricks (PLAYER_COUNT cards per trick)
+            let accumulated_trick_count = (self.accumulated_tricks.len() / PLAYER_COUNT) as i32;
+
+            // Animate cards moving to the unwon tricks pile (facedown with counter)
             let change_index = self.new_change();
             for card in self.current_hand {
                 self.add_change(
@@ -490,14 +472,15 @@ impl TrickOrBidGame {
                     Change {
                         change_type: ChangeType::BurnTrick,
                         object_id: card.unwrap().id,
-                        dest: Location::TricksBurned,
+                        dest: Location::UnwonTricks,
+                        unwon_trick_count: accumulated_trick_count,
                         ..Default::default()
                     },
                 );
             }
 
             // Reset the trick - lead player stays the same
-            self.current_hand = [None; 4];
+            self.current_hand = [None; PLAYER_COUNT];
             self.current_player = self.lead_player;
 
             // Check if this was the last trick
@@ -534,37 +517,49 @@ impl TrickOrBidGame {
             },
         );
 
-        // Add current trick cards to accumulated tricks (for bid selection)
-        // accumulated_tricks already contains any no-winner tricks
-        self.accumulated_tricks
-            .extend(self.current_hand.iter().flatten().copied());
-
-        // Reset the current hand
-        self.current_hand = [None; 4];
-
         self.current_player = trick_winner;
         self.lead_player = trick_winner;
 
         let change_index = self.new_change();
-        let cards_to_animate = self.accumulated_tricks.clone();
 
-        // If player already has a bid card, animate directly to score pile
+        // First, move any accumulated no-winner tricks to the winner's score pile
+        // These are automatically won - not available for bid selection
+        if !self.accumulated_tricks.is_empty() {
+            let accumulated_trick_count = (self.accumulated_tricks.len() / PLAYER_COUNT) as i32;
+            self.tricks_won_count[trick_winner] += accumulated_trick_count;
+            let accumulated_cards: Vec<Card> = self.accumulated_tricks.clone();
+            self.cards_won[trick_winner].extend(accumulated_cards.iter().copied());
+
+            // Animate accumulated cards going to score pile
+            let trick_count = self.tricks_won_count[trick_winner];
+            for card in &accumulated_cards {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::TricksToWinner,
+                        object_id: card.id,
+                        dest: Location::Score,
+                        player: trick_winner,
+                        trick_count,
+                        ..Default::default()
+                    },
+                );
+            }
+            self.accumulated_tricks.clear();
+        }
+
+        // If player already has a bid card, automatically pass (take the current trick)
         if self.bid_cards[trick_winner].is_some() {
-            // Get existing cards before adding new ones
-            let existing_cards = self.cards_won[trick_winner].clone();
+            // Add current trick to score pile
+            self.tricks_won_count[trick_winner] += 1;
+            let current_trick_cards: Vec<Card> =
+                self.current_hand.iter().flatten().copied().collect();
+            self.cards_won[trick_winner].extend(current_trick_cards.iter().copied());
 
-            // Automatically pass - count the tricks
-            let num_cards = self.accumulated_tricks.len();
-            let tricks_count = (num_cards / 4) as i32;
-
-            self.cards_won[trick_winner].extend(self.accumulated_tricks.iter().copied());
-            self.tricks_won_count[trick_winner] += tricks_count;
-
-            // Update trick count on all cards in the pile
             let current_trick_count = self.tricks_won_count[trick_winner];
 
-            // Update existing cards
-            for card in &existing_cards {
+            // Animate current trick cards going to score pile
+            for card in &current_trick_cards {
                 self.add_change(
                     change_index,
                     Change {
@@ -578,22 +573,7 @@ impl TrickOrBidGame {
                 );
             }
 
-            // Animate new cards going directly to score pile
-            for card in &cards_to_animate {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.id,
-                        dest: Location::Score,
-                        player: trick_winner,
-                        trick_count: current_trick_count,
-                        ..Default::default()
-                    },
-                );
-            }
-
-            self.accumulated_tricks.clear();
+            self.current_hand = [None; PLAYER_COUNT];
 
             // Continue play or end round
             if self.hands.iter().any(|h| !h.is_empty()) {
@@ -605,30 +585,31 @@ impl TrickOrBidGame {
         }
 
         // Transition to bid selection state (only if player doesn't have a bid yet)
+        // current_hand is kept - bid selection is only from the current trick
         self.state = State::SelectBidOrPass;
 
-        // Only show bid selection grid for player 0
-        // For AI players, cards stay in play area and animate directly when they make their choice
+        // Highlight biddable cards for player 0 (excluding the winner's own card)
         if trick_winner == 0 {
-            let num_cards = cards_to_animate.len();
-            for (idx, card) in cards_to_animate.iter().enumerate() {
+            let winner_card_id = self.current_hand[trick_winner].map(|c| c.id);
+            let biddable_card_ids: Vec<i32> = self
+                .current_hand
+                .iter()
+                .flatten()
+                .filter(|c| Some(c.id) != winner_card_id)
+                .map(|c| c.id)
+                .collect();
+            for card_id in biddable_card_ids {
                 self.add_change(
                     change_index,
                     Change {
                         change_type: ChangeType::SelectBidCardOrPass,
-                        object_id: card.id,
-                        dest: Location::ScoreCards,
+                        object_id: card_id,
+                        dest: Location::Play,
                         player: trick_winner,
-                        offset: idx,
-                        length: num_cards,
                         ..Default::default()
                     },
                 );
             }
-        }
-
-        if self.hands.iter().any(|h| !h.is_empty()) {
-            // Hand continues
         }
     }
 
@@ -791,7 +772,7 @@ impl TrickOrBidGame {
         }
     }
 
-    fn non_matching_cards(cards: [Option<Card>; 4]) -> Vec<Card> {
+    fn non_matching_cards(cards: [Option<Card>; PLAYER_COUNT]) -> Vec<Card> {
         // Count cards by (value, suit) pair to detect ties
         let mut value_suit_count: HashMap<(i32, Suit), Vec<Card>> = HashMap::new();
         for card in cards {
@@ -999,7 +980,7 @@ impl ismcts::Game for TrickOrBidGame {
     }
 
     fn next_player(&self) -> Self::PlayerTag {
-        (self.current_player + 1) % 4
+        (self.current_player + 1) % PLAYER_COUNT
     }
 
     fn available_moves(&self) -> Self::MoveList {
@@ -1438,17 +1419,23 @@ mod tests {
         // Player 1 should win (Purple 7 is highest)
         assert_eq!(game.current_player, 1, "Player 1 won the trick");
         assert_eq!(game.state, State::SelectBidOrPass);
-        assert_eq!(game.accumulated_tricks.len(), 4);
+        // current_hand contains the trick cards for bid selection
+        assert!(
+            game.current_hand.iter().all(|c| c.is_some()),
+            "current_hand should contain 4 cards for bid selection"
+        );
 
-        // Player 1 selects Purple 7 as bid card
-        game.apply_move(2); // card id 2 is Purple 7
+        // Player 1 cannot bid with their own card (Purple 7, id 2)
+        // They must select a card from the trick that they didn't play
+        // Player 1 selects Purple 5 (id 0) as bid card
+        game.apply_move(0); // card id 0 is Purple 5 (played by player 0)
 
         assert_eq!(
             game.bid_cards[1],
             Some(Card {
-                id: 2,
+                id: 0,
                 suit: Suit::Purple,
-                value: 7
+                value: 5
             })
         );
         assert_eq!(
@@ -1476,27 +1463,28 @@ mod tests {
 
         game.state = State::SelectBidOrPass;
         game.current_player = 0;
-        game.accumulated_tricks = vec![
-            Card {
+        // current_hand contains the trick cards for bid selection
+        game.current_hand = [
+            Some(Card {
                 id: 0,
                 suit: Suit::Purple,
                 value: 5,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 1,
                 suit: Suit::Green,
                 value: 3,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 2,
                 suit: Suit::Orange,
                 value: 2,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 3,
                 suit: Suit::Black,
                 value: 4,
-            },
+            }),
         ];
         game.hands[0] = vec![Card {
             id: 10,
@@ -1698,30 +1686,40 @@ mod tests {
         game.no_changes = true;
 
         game.state = State::SelectBidOrPass;
-        game.accumulated_tricks = vec![
-            Card {
+        game.current_player = 0;
+        // current_hand contains the trick cards for bid selection
+        // Player 0's card is at index 0, which should be excluded from bid options
+        game.current_hand = [
+            Some(Card {
                 id: 0,
                 suit: Suit::Purple,
                 value: 5,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 1,
                 suit: Suit::Green,
                 value: 3,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 2,
                 suit: Suit::Orange,
                 value: 2,
-            },
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Black,
+                value: 4,
+            }),
         ];
 
         let moves = game.get_moves();
+        // Should have PASS + 3 cards (excluding player 0's own card at index 0)
         assert_eq!(moves.len(), 4, "Should have PASS + 3 cards");
         assert!(moves.contains(&PASS));
-        assert!(moves.contains(&0));
+        assert!(!moves.contains(&0), "Cannot bid with own card");
         assert!(moves.contains(&1));
         assert!(moves.contains(&2));
+        assert!(moves.contains(&3));
     }
 
     // Test end of round scoring
@@ -1883,7 +1881,11 @@ mod tests {
         game.apply_move(2);
         game.apply_move(3);
 
-        assert_eq!(game.accumulated_tricks.len(), 4);
+        assert_eq!(
+            game.accumulated_tricks.len(),
+            PLAYER_COUNT,
+            "No-winner tricks go to accumulated_tricks"
+        );
         assert_eq!(game.state, State::Play, "Continue playing after no winner");
         assert_eq!(game.current_player, 0, "Lead player stays same");
 
@@ -1895,10 +1897,25 @@ mod tests {
 
         assert_eq!(game.current_player, 0, "Player 0 wins with Purple 9");
         assert_eq!(game.state, State::SelectBidOrPass);
+        // Accumulated no-winner tricks go directly to winner's score pile
         assert_eq!(
             game.accumulated_tricks.len(),
-            8,
-            "Should have 4 from first trick + 4 from second"
+            0,
+            "accumulated_tricks cleared when winner takes them"
+        );
+        assert_eq!(
+            game.tricks_won_count[0], 1,
+            "Player 0 got 1 trick from the no-winner trick"
+        );
+        assert_eq!(
+            game.cards_won[0].len(),
+            PLAYER_COUNT,
+            "Player 0 has 4 cards from the no-winner trick"
+        );
+        // current_hand contains the current trick for bid selection
+        assert!(
+            game.current_hand.iter().all(|c| c.is_some()),
+            "current_hand should contain 4 cards for bid selection"
         );
     }
 
@@ -1944,22 +1961,34 @@ mod tests {
         game.state = State::SelectBidOrPass;
         game.current_player = 0;
         game.trump_suit = None;
-        game.accumulated_tricks = vec![
-            Card {
+        // current_hand contains the trick cards
+        // Player 0's card is at index 0, so they cannot bid with it
+        game.current_hand = [
+            Some(Card {
                 id: 0,
-                suit: Suit::Green,
-                value: 5,
-            },
-            Card {
-                id: 1,
                 suit: Suit::Purple,
                 value: 3,
-            },
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Green,
+                value: 5,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Orange,
+                value: 2,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Black,
+                value: 4,
+            }),
         ];
         game.hands[0] = vec![];
 
-        // Select Green 5 as bid
-        game.apply_move(0);
+        // Select Green 5 (id 1) as bid - this is not player 0's card
+        game.apply_move(1);
 
         assert_eq!(game.trump_suit, Some(Suit::Green));
         assert_eq!(game.bid_cards[0].unwrap().suit, Suit::Green);
@@ -1974,21 +2003,33 @@ mod tests {
         game.state = State::SelectBidOrPass;
         game.current_player = 1;
         game.trump_suit = Some(Suit::Green); // Already established
-        game.accumulated_tricks = vec![
-            Card {
+                                             // current_hand contains the trick cards
+                                             // Player 1's card is at index 1, so they cannot bid with id 1
+        game.current_hand = [
+            Some(Card {
                 id: 0,
                 suit: Suit::Purple,
                 value: 5,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 1,
                 suit: Suit::Orange,
                 value: 3,
-            },
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Black,
+                value: 2,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Green,
+                value: 4,
+            }),
         ];
         game.hands[1] = vec![];
 
-        // Select Purple 5 as bid
+        // Select Purple 5 (id 0) as bid - this is not player 1's card
         game.apply_move(0);
 
         assert_eq!(
@@ -2129,105 +2170,61 @@ mod tests {
         );
     }
 
-    // Test accumulated tricks counting: 8 cards = 2 tricks, 12 cards = 3 tricks, etc.
+    // Test accumulated tricks counting: accumulated_tricks are awarded in play() when winner
+    // is determined, current_hand is used for bid selection (pass = take current trick)
     #[test]
     fn test_accumulated_tricks_counting() {
         let mut game = TrickOrBidGame::new();
         game.no_changes = true;
 
-        // Set up a scenario with 8 cards already accumulated (2 previous no-winner tricks)
-        game.accumulated_tricks = vec![
-            Card {
-                id: 0,
-                suit: Suit::Purple,
-                value: 5,
-            },
-            Card {
-                id: 1,
-                suit: Suit::Purple,
-                value: 5,
-            },
-            Card {
-                id: 2,
-                suit: Suit::Green,
-                value: 3,
-            },
-            Card {
-                id: 3,
-                suit: Suit::Green,
-                value: 3,
-            },
-            Card {
-                id: 4,
-                suit: Suit::Black,
-                value: 7,
-            },
-            Card {
-                id: 5,
-                suit: Suit::Black,
-                value: 7,
-            },
-            Card {
-                id: 6,
-                suit: Suit::Orange,
-                value: 2,
-            },
-            Card {
-                id: 7,
-                suit: Suit::Orange,
-                value: 2,
-            },
-        ];
-
-        // Add the current trick (4 more cards)
-        let current_trick = vec![
-            Card {
+        // Set up current_hand with the current winning trick (4 cards)
+        // (accumulated_tricks would have been awarded already in play() before SelectBidOrPass)
+        game.current_hand = [
+            Some(Card {
                 id: 8,
                 suit: Suit::Purple,
                 value: 9,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 9,
                 suit: Suit::Purple,
                 value: 1,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 10,
                 suit: Suit::Purple,
                 value: 0,
-            },
-            Card {
+            }),
+            Some(Card {
                 id: 11,
                 suit: Suit::Purple,
                 value: 2,
-            },
+            }),
         ];
-        game.accumulated_tricks.extend(current_trick.clone());
 
         game.current_player = 0;
         game.state = State::SelectBidOrPass;
 
-        // Player passes - should get 3 tricks worth of points (12 cards / 4 = 3 tricks)
+        // Player passes - takes the current trick (1 trick from current_hand)
         game.select_bid_card_or_pass(PASS);
 
-        // Verify tricks_won_count is 3 (12 cards total / 4 cards per trick)
+        // Verify tricks_won_count is 1 (just the current trick)
         assert_eq!(
-            game.tricks_won_count[0], 3,
-            "Player should have won 3 tricks (12 accumulated cards / 4 cards per trick)"
+            game.tricks_won_count[0], 1,
+            "Player should have won 1 trick from current_hand"
         );
 
-        // Verify all cards were moved to cards_won
+        // Verify current_hand cards were moved to cards_won
         assert_eq!(
             game.cards_won[0].len(),
-            12,
-            "All 12 cards should be in player's cards_won"
+            4,
+            "Current trick (4 cards) should be in player's cards_won"
         );
 
-        // Verify accumulated_tricks is now empty
-        assert_eq!(
-            game.accumulated_tricks.len(),
-            0,
-            "Accumulated tricks should be cleared"
+        // Verify current_hand is now empty
+        assert!(
+            game.current_hand.iter().all(|c| c.is_none()),
+            "Current hand should be cleared after passing"
         );
     }
 }
