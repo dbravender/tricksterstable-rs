@@ -44,9 +44,9 @@ pub enum Suit {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct Card {
-    id: i32,
+    pub id: i32,
     pub suit: Suit,
-    value: i32,
+    pub value: i32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -499,31 +499,51 @@ impl TrickOrBidGame {
 
         let trick_winner = trick_result.winning_player;
 
-        // Show winning card and pause
-        let index = self.new_change();
+        // Show winning card and pause (group N)
+        let winning_card_id = self.current_hand[trick_winner].unwrap().id;
+        let pause_index = self.new_change();
         self.add_change(
-            index,
+            pause_index,
             Change {
                 change_type: ChangeType::ShowWinningCard,
-                object_id: self.current_hand[trick_winner].unwrap().id,
+                object_id: winning_card_id,
                 dest: Location::Play,
                 ..Default::default()
             },
         );
+
+        // Pause so human can see the trick:
+        // - CPU wins: always pause
+        // - Human wins but already has bid: pause (will auto-pass after)
+        // - Human wins and needs to select bid: no pause (go straight to bid selection)
+        if trick_winner != 0 || self.bid_cards[0].is_some() {
+            self.add_change(
+                pause_index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    object_id: 0,
+                    dest: Location::Play,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // After pause: hide winning card highlight and continue (group N+1)
+        // show_playable() will add to this group
+        let change_index = self.new_change();
         self.add_change(
-            index,
+            change_index,
             Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: 0,
+                change_type: ChangeType::HidePlayable,
+                object_id: winning_card_id,
                 dest: Location::Play,
+                player: trick_winner,
                 ..Default::default()
             },
         );
 
         self.current_player = trick_winner;
         self.lead_player = trick_winner;
-
-        let change_index = self.new_change();
 
         // First, move any accumulated no-winner tricks to the winner's score pile
         // These are automatically won - not available for bid selection
@@ -589,31 +609,8 @@ impl TrickOrBidGame {
 
         // Transition to bid selection state (only if player doesn't have a bid yet)
         // current_hand is kept - bid selection is only from the current trick
+        // Biddable cards and PASS button will be shown by show_playable()
         self.state = State::SelectBidOrPass;
-
-        // Highlight biddable cards for player 0 (excluding the winner's own card)
-        if trick_winner == 0 {
-            let winner_card_id = self.current_hand[trick_winner].map(|c| c.id);
-            let biddable_card_ids: Vec<i32> = self
-                .current_hand
-                .iter()
-                .flatten()
-                .filter(|c| Some(c.id) != winner_card_id)
-                .map(|c| c.id)
-                .collect();
-            for card_id in biddable_card_ids {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::SelectBidCardOrPass,
-                        object_id: card_id,
-                        dest: Location::Play,
-                        player: trick_winner,
-                        ..Default::default()
-                    },
-                );
-            }
-        }
     }
 
     pub fn end_hand(&mut self) {
@@ -835,19 +832,20 @@ impl TrickOrBidGame {
         if self.changes.is_empty() {
             self.changes = vec![vec![]];
         }
-        let change_index = self.new_change();
+        // Use existing change group so pass button/playable cards appear with previous changes
+        let change_index = self.changes.len() - 1;
         if self.current_player == 0 {
             let moves = self.get_moves();
             match self.state {
                 State::SelectBidOrPass => {
-                    // During bid selection, highlight cards in play area and show pass button
+                    // Highlight biddable cards and show pass button
                     for id in moves {
                         if id == PASS {
-                            // Show pass button
+                            // PASS triggers pass button display
                             self.add_change(
                                 change_index,
                                 Change {
-                                    object_id: PASS,
+                                    object_id: id,
                                     change_type: ChangeType::SelectBidCardOrPass,
                                     dest: Location::Play,
                                     player: self.current_player,
@@ -855,7 +853,7 @@ impl TrickOrBidGame {
                                 },
                             );
                         } else {
-                            // Highlight biddable cards in play area
+                            // Biddable cards use ShowPlayable
                             self.add_change(
                                 change_index,
                                 Change {
@@ -870,6 +868,17 @@ impl TrickOrBidGame {
                     }
                 }
                 State::Play => {
+                    // Hide pass button (in case we just left SelectBidOrPass)
+                    self.add_change(
+                        change_index,
+                        Change {
+                            object_id: PASS,
+                            change_type: ChangeType::HidePlayable,
+                            dest: Location::Hand,
+                            player: 0,
+                            ..Default::default()
+                        },
+                    );
                     for id in moves {
                         self.add_change(
                             change_index,
@@ -943,6 +952,17 @@ impl TrickOrBidGame {
                 },
             );
         }
+        // Also hide pass button
+        self.add_change(
+            change_index,
+            Change {
+                object_id: PASS,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: 0,
+                ..Default::default()
+            },
+        );
     }
 
     pub fn calculate_score(bid_card: Option<Card>, tricks_won: i32) -> i32 {
