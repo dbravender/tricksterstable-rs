@@ -94,6 +94,7 @@ pub enum ChangeType {
     SelectBidCardOrPass,
     Bid,              // Card selected to bid
     ShowScoringCards, // Show cards in middle for scoring review
+    UpdateTrickCount, // Update trick count display on existing cards in score pile
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -243,6 +244,55 @@ impl TrickOrBidGame {
         deck
     }
 
+    /// Add cards to a player's score pile and emit appropriate change events.
+    /// Updates trick count on all existing cards and animates new cards to the pile.
+    fn add_cards_to_score_pile(
+        &mut self,
+        change_index: usize,
+        player: usize,
+        cards: Vec<Card>,
+        trick_increment: i32,
+    ) {
+        self.tricks_won_count[player] += trick_increment;
+        self.cards_won[player].extend(cards.iter().copied());
+
+        let trick_count = self.tricks_won_count[player];
+
+        // Collect card IDs to avoid borrow conflicts
+        let all_card_ids: Vec<i32> = self.cards_won[player].iter().map(|c| c.id).collect();
+        let new_card_ids: Vec<i32> = cards.iter().map(|c| c.id).collect();
+
+        // Update all cards in score pile with new trick count
+        for card_id in &all_card_ids {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::UpdateTrickCount,
+                    object_id: *card_id,
+                    dest: Location::Score,
+                    player,
+                    trick_count,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Animate the newly added cards going to score pile
+        for card_id in &new_card_ids {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::TricksToWinner,
+                    object_id: *card_id,
+                    dest: Location::Score,
+                    player,
+                    trick_count,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
     pub fn get_moves(self: &TrickOrBidGame) -> Vec<i32> {
         match self.state {
             State::SelectBidOrPass => {
@@ -320,27 +370,9 @@ impl TrickOrBidGame {
 
         if card_id == PASS {
             // Player takes the current trick - add to their won cards
-            self.tricks_won_count[player] += 1;
             let cards_to_add: Vec<Card> = self.current_hand.iter().flatten().copied().collect();
-            self.cards_won[player].extend(cards_to_add.iter().copied());
-
-            // Animate cards going to score pile
             let change_index = self.new_change();
-            let current_trick_count = self.tricks_won_count[player];
-
-            for card in &cards_to_add {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.id,
-                        dest: Location::Score,
-                        player,
-                        trick_count: current_trick_count,
-                        ..Default::default()
-                    },
-                );
-            }
+            self.add_cards_to_score_pile(change_index, player, cards_to_add, 1);
 
             self.current_hand = [None; PLAYER_COUNT];
 
@@ -549,52 +581,21 @@ impl TrickOrBidGame {
         // These are automatically won - not available for bid selection
         if !self.accumulated_tricks.is_empty() {
             let accumulated_trick_count = (self.accumulated_tricks.len() / PLAYER_COUNT) as i32;
-            self.tricks_won_count[trick_winner] += accumulated_trick_count;
             let accumulated_cards: Vec<Card> = self.accumulated_tricks.clone();
-            self.cards_won[trick_winner].extend(accumulated_cards.iter().copied());
-
-            // Animate accumulated cards going to score pile
-            let trick_count = self.tricks_won_count[trick_winner];
-            for card in &accumulated_cards {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.id,
-                        dest: Location::Score,
-                        player: trick_winner,
-                        trick_count,
-                        ..Default::default()
-                    },
-                );
-            }
+            self.add_cards_to_score_pile(
+                change_index,
+                trick_winner,
+                accumulated_cards,
+                accumulated_trick_count,
+            );
             self.accumulated_tricks.clear();
         }
 
         // If player already has a bid card, automatically pass (take the current trick)
         if self.bid_cards[trick_winner].is_some() {
-            // Add current trick to score pile
-            self.tricks_won_count[trick_winner] += 1;
             let current_trick_cards: Vec<Card> =
                 self.current_hand.iter().flatten().copied().collect();
-            self.cards_won[trick_winner].extend(current_trick_cards.iter().copied());
-
-            let current_trick_count = self.tricks_won_count[trick_winner];
-
-            // Animate current trick cards going to score pile
-            for card in &current_trick_cards {
-                self.add_change(
-                    change_index,
-                    Change {
-                        change_type: ChangeType::TricksToWinner,
-                        object_id: card.id,
-                        dest: Location::Score,
-                        player: trick_winner,
-                        trick_count: current_trick_count,
-                        ..Default::default()
-                    },
-                );
-            }
+            self.add_cards_to_score_pile(change_index, trick_winner, current_trick_cards, 1);
 
             self.current_hand = [None; PLAYER_COUNT];
 
