@@ -1,3 +1,4 @@
+pub mod cincosverdes;
 pub mod dealers_dilemma;
 pub mod hotdog;
 pub mod kaibosh;
