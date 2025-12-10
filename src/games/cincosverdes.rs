@@ -97,6 +97,7 @@ pub enum ChangeType {
     ShowScoringCards,
     UpdateTrickCount,
     PlayFaceDown, // Play a card face-down as green 5
+    UpdateTrickSum, // Show trick sum change after a trick
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -115,6 +116,7 @@ pub struct Change {
     pub animate_score: bool,
     pub trick_count: i32,
     pub face_down: bool, // True when card is played face-down as green 5
+    pub disabled: bool,  // True when option is shown but not selectable
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -138,6 +140,7 @@ pub struct CincosVerdesGame {
     pub voids: [Vec<Suit>; PLAYER_COUNT], // Known voids for determination
     pub green_five_played: bool, // Track if green 5 already played this trick
     pub selected_card: Option<Card>, // Card selected by human player (for play style choice)
+    pub green_five_available: bool, // Whether selected card can be played as green 5
 }
 
 impl CincosVerdesGame {
@@ -174,11 +177,7 @@ impl CincosVerdesGame {
         self.current_player = green_zero_holder;
         self.lead_player = green_zero_holder;
 
-        // Sort player 0's hand by suit, then by value (high to low)
-        self.hands[0].sort_by(|a, b| match a.suit.cmp(&b.suit) {
-            std::cmp::Ordering::Equal => b.value.cmp(&a.value),
-            other => other,
-        });
+        self.sort_hand(0);
 
         if !animate {
             return;
@@ -263,7 +262,10 @@ impl CincosVerdesGame {
             State::SelectPlayStyle => {
                 // Player has selected a card - show play options
                 let mut moves = vec![self.selected_card.unwrap().id, UNDO];
-                moves.push(GREEN_FIVE_OPTION);
+                // Only include green 5 option if it's actually available
+                if self.green_five_available {
+                    moves.push(GREEN_FIVE_OPTION);
+                }
                 moves
             }
             State::GameOver => vec![],
@@ -367,17 +369,18 @@ impl CincosVerdesGame {
             State::GameOver => return,
             State::SelectPlayStyle => self.apply_play_style_selection(mov),
             State::Play => {
-                // For human player (player 0), check if this card can also be played face-down
-                if self.current_player == 0 {
+                // For human player (player 0), always show play selection UI
+                // But not during AI simulation (when no_changes is true)
+                if self.current_player == 0 && !self.no_changes {
                     let face_down_move = mov + FACE_DOWN_OFFSET;
                     let all_moves = self.all_playable_moves();
-                    if all_moves.contains(&mov) && all_moves.contains(&face_down_move) {
-                        // Card can be played both ways - go to selection state
-                        self.select_card_for_play_style(mov);
-                        self.show_playable();
-                        self.show_message();
-                        return;
-                    }
+                    // Track if green 5 option is available for this card
+                    self.green_five_available = all_moves.contains(&face_down_move);
+                    // Always go to selection state for human player
+                    self.select_card_for_play_style(mov);
+                    self.show_playable();
+                    self.show_message();
+                    return;
                 }
                 self.play(mov);
             }
@@ -388,11 +391,12 @@ impl CincosVerdesGame {
     }
 
     fn select_card_for_play_style(&mut self, card_id: i32) {
-        let card = self.hands[self.current_player]
+        // Remove the card from hand and store it
+        let pos = self.hands[self.current_player]
             .iter()
-            .find(|c| c.id == card_id)
-            .copied()
+            .position(|c| c.id == card_id)
             .expect("Card not found in hand");
+        let card = self.hands[self.current_player].remove(pos);
 
         self.selected_card = Some(card);
         self.state = State::SelectPlayStyle;
@@ -409,18 +413,30 @@ impl CincosVerdesGame {
                 ..Default::default()
             },
         );
+
+        // Reorder remaining cards to fill the gap
+        self.reorder_hand(self.current_player, false);
     }
 
     fn apply_play_style_selection(&mut self, mov: i32) {
         let card = self.selected_card.expect("No card selected");
 
         if mov == UNDO {
-            // Return card to hand
+            // Return card to hand and hide the option cards
+            self.hands[self.current_player].push(card);
+            self.sort_hand(self.current_player);
             self.selected_card = None;
             self.state = State::Play;
+            self.hide_playable();
             self.reorder_hand(self.current_player, true);
             return;
         }
+
+        // Hide the option cards before playing
+        self.hide_playable();
+
+        // Add card back to hand before calling play (which will pop it)
+        self.hands[self.current_player].push(card);
 
         if mov == GREEN_FIVE_OPTION {
             // Play face-down as green 5
@@ -570,6 +586,7 @@ impl CincosVerdesGame {
             self.current_trick[trick_winner].unwrap().value
         };
 
+        let old_trick_sum = self.trick_sums[trick_winner];
         self.trick_sums[trick_winner] += winning_value;
 
         // Show winning card
@@ -585,18 +602,43 @@ impl CincosVerdesGame {
             },
         );
 
-        // Pause to show winner
-        if trick_winner != 0 {
-            self.add_change(
-                pause_index,
-                Change {
-                    change_type: ChangeType::OptionalPause,
-                    object_id: 0,
-                    dest: Location::Play,
-                    ..Default::default()
-                },
-            );
-        }
+        // Show trick sum preview (delta)
+        self.add_change(
+            pause_index,
+            Change {
+                change_type: ChangeType::UpdateTrickSum,
+                player: trick_winner,
+                start_score: old_trick_sum,
+                end_score: self.trick_sums[trick_winner],
+                animate_score: false,
+                ..Default::default()
+            },
+        );
+
+        // Pause for player to see the result
+        self.add_change(
+            pause_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::Play,
+                ..Default::default()
+            },
+        );
+
+        // Complete trick sum animation
+        let complete_index = self.new_change();
+        self.add_change(
+            complete_index,
+            Change {
+                change_type: ChangeType::UpdateTrickSum,
+                player: trick_winner,
+                start_score: old_trick_sum,
+                end_score: self.trick_sums[trick_winner],
+                animate_score: true,
+                ..Default::default()
+            },
+        );
 
         // Move cards to winner
         let change_index = self.new_change();
@@ -853,6 +895,14 @@ impl CincosVerdesGame {
         self.hands[self.current_player].remove(pos)
     }
 
+    fn sort_hand(&mut self, player: usize) {
+        // Sort hand by suit, then by value (high to low)
+        self.hands[player].sort_by(|a, b| match a.suit.cmp(&b.suit) {
+            std::cmp::Ordering::Equal => b.value.cmp(&a.value),
+            other => other,
+        });
+    }
+
     #[inline]
     fn new_change(&mut self) -> usize {
         self.changes.push(vec![]);
@@ -905,6 +955,7 @@ impl CincosVerdesGame {
                     change_type: ChangeType::ShowPlayable,
                     dest: Location::Green5Option,
                     player: 0,
+                    disabled: !self.green_five_available,
                     ..Default::default()
                 },
             );
@@ -1211,6 +1262,24 @@ mod tests {
         assert_eq!(deltas[1], 2, "Second closest gets 2");
         assert_eq!(deltas[2], -1, "Over 25 loses 1");
         assert_eq!(deltas[3], 1, "Third closest gets 1");
+    }
+
+    #[test]
+    fn test_scoring_with_tie_for_second() {
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+        game.trick_sums = [23, 16, 16, 39];
+
+        let deltas = game.calculate_round_scores();
+
+        // Player 0: 23 = 3 (closest) + 1 (bonus from player 3 exceeding) = 4
+        // Player 1: 16 = 2 (tied for second)
+        // Player 2: 16 = 2 (tied for second)
+        // Player 3: 39 = -1 (over)
+        assert_eq!(deltas[0], 4, "Closest to 25 gets 3 + 1 bonus");
+        assert_eq!(deltas[1], 2, "Tied for second gets 2");
+        assert_eq!(deltas[2], 2, "Tied for second gets 2");
+        assert_eq!(deltas[3], -1, "Over 25 loses 1");
     }
 
     #[test]
