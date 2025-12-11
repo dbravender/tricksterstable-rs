@@ -73,9 +73,9 @@ pub enum Location {
     TricksTaken,
     ReorderHand,
     ScoreCards,
-    Preview, // Card selected but not yet played - shown in preview position
+    Preview,      // Card selected but not yet played - shown in preview position
     Green5Option, // Location for the green 5 option button/card
-    UndoOption, // Location for the undo button
+    UndoOption,   // Location for the undo button
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -96,7 +96,7 @@ pub enum ChangeType {
     Reorder,
     ShowScoringCards,
     UpdateTrickCount,
-    PlayFaceDown, // Play a card face-down as green 5
+    PlayFaceDown,   // Play a card face-down as green 5
     UpdateTrickSum, // Show trick sum change after a trick
 }
 
@@ -136,11 +136,11 @@ pub struct CincosVerdesGame {
     pub round: i32,
     pub num_players: usize,
     pub trick_sums: [i32; PLAYER_COUNT], // Sum of winning card values this round
-    pub carry_over_bonus: i32, // Bonus carried over when tied for first
+    pub carry_over_bonus: i32,           // Bonus carried over when tied for first
     pub voids: [Vec<Suit>; PLAYER_COUNT], // Known voids for determination
-    pub green_five_played: bool, // Track if green 5 already played this trick
-    pub selected_card: Option<Card>, // Card selected by human player (for play style choice)
-    pub green_five_available: bool, // Whether selected card can be played as green 5
+    pub green_five_played: bool,         // Track if green 5 already played this trick
+    pub selected_card: Option<Card>,     // Card selected by human player (for play style choice)
+    pub green_five_available: bool,      // Whether selected card can be played as green 5
 }
 
 impl CincosVerdesGame {
@@ -341,7 +341,8 @@ impl CincosVerdesGame {
                             moves.push(card.id + FACE_DOWN_OFFSET);
                         } else {
                             // Has lead suit cards
-                            let lead_suit_count = hand.iter().filter(|c| c.suit == lead_suit).count();
+                            let lead_suit_count =
+                                hand.iter().filter(|c| c.suit == lead_suit).count();
                             if lead_suit_count == 1 && card.suit == lead_suit {
                                 // Exactly one card of lead suit - can play it face up or face down
                                 moves.push(card.id + FACE_DOWN_OFFSET);
@@ -642,7 +643,9 @@ impl CincosVerdesGame {
 
         // Move cards to winner
         let change_index = self.new_change();
-        let trick_card_ids: Vec<i32> = self.current_trick.iter()
+        let trick_card_ids: Vec<i32> = self
+            .current_trick
+            .iter()
             .filter_map(|c| c.map(|card| card.id))
             .collect();
         for card_id in trick_card_ids {
@@ -808,9 +811,8 @@ impl CincosVerdesGame {
 
     fn calculate_round_scores(&mut self) -> [i32; PLAYER_COUNT] {
         let mut deltas = [0i32; PLAYER_COUNT];
-        let mut rankings: Vec<(usize, i32)> = (0..PLAYER_COUNT)
-            .map(|p| (p, self.trick_sums[p]))
-            .collect();
+        let mut rankings: Vec<(usize, i32)> =
+            (0..PLAYER_COUNT).map(|p| (p, self.trick_sums[p])).collect();
 
         // Sort by sum, highest first (but only those <= 25)
         rankings.sort_by(|a, b| {
@@ -833,8 +835,11 @@ impl CincosVerdesGame {
         }
 
         // Find valid players (sum <= 25)
-        let valid_rankings: Vec<(usize, i32)> =
-            rankings.iter().filter(|(_, sum)| *sum <= TARGET_SUM).copied().collect();
+        let valid_rankings: Vec<(usize, i32)> = rankings
+            .iter()
+            .filter(|(_, sum)| *sum <= TARGET_SUM)
+            .copied()
+            .collect();
 
         if !valid_rankings.is_empty() {
             // Award points based on rank
@@ -1179,10 +1184,26 @@ mod tests {
         game.no_changes = true;
 
         game.current_trick = [
-            Some(Card { id: 0, suit: Suit::Orange, value: 5 }),
-            Some(Card { id: 1, suit: Suit::Orange, value: 9 }),
-            Some(Card { id: 2, suit: Suit::Orange, value: 3 }),
-            Some(Card { id: 3, suit: Suit::Orange, value: 7 }),
+            Some(Card {
+                id: 0,
+                suit: Suit::Orange,
+                value: 5,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Orange,
+                value: 9,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Orange,
+                value: 3,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Orange,
+                value: 7,
+            }),
         ];
         game.played_face_down = [false; PLAYER_COUNT];
         game.lead_player = 0;
@@ -1197,10 +1218,26 @@ mod tests {
         game.no_changes = true;
 
         game.current_trick = [
-            Some(Card { id: 0, suit: Suit::Orange, value: 13 }),
-            Some(Card { id: 1, suit: Suit::Purple, value: 1 }), // Trump!
-            Some(Card { id: 2, suit: Suit::Orange, value: 10 }),
-            Some(Card { id: 3, suit: Suit::Orange, value: 11 }),
+            Some(Card {
+                id: 0,
+                suit: Suit::Orange,
+                value: 13,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 1,
+            }), // Trump!
+            Some(Card {
+                id: 2,
+                suit: Suit::Orange,
+                value: 10,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Orange,
+                value: 11,
+            }),
         ];
         game.played_face_down = [false; PLAYER_COUNT];
         game.lead_player = 0;
@@ -1215,10 +1252,26 @@ mod tests {
         game.no_changes = true;
 
         game.current_trick = [
-            Some(Card { id: 0, suit: Suit::Orange, value: 13 }),
-            Some(Card { id: 1, suit: Suit::Purple, value: 5 }),
-            Some(Card { id: 2, suit: Suit::Purple, value: 9 }),
-            Some(Card { id: 3, suit: Suit::Orange, value: 11 }),
+            Some(Card {
+                id: 0,
+                suit: Suit::Orange,
+                value: 13,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Purple,
+                value: 5,
+            }),
+            Some(Card {
+                id: 2,
+                suit: Suit::Purple,
+                value: 9,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Orange,
+                value: 11,
+            }),
         ];
         game.played_face_down = [false; PLAYER_COUNT];
         game.lead_player = 0;
@@ -1233,10 +1286,26 @@ mod tests {
         game.no_changes = true;
 
         game.current_trick = [
-            Some(Card { id: 0, suit: Suit::Green, value: 10 }),
-            Some(Card { id: 1, suit: Suit::Orange, value: 13 }), // Played face-down
-            Some(Card { id: 2, suit: Suit::Green, value: 3 }),
-            Some(Card { id: 3, suit: Suit::Green, value: 7 }),
+            Some(Card {
+                id: 0,
+                suit: Suit::Green,
+                value: 10,
+            }),
+            Some(Card {
+                id: 1,
+                suit: Suit::Orange,
+                value: 13,
+            }), // Played face-down
+            Some(Card {
+                id: 2,
+                suit: Suit::Green,
+                value: 3,
+            }),
+            Some(Card {
+                id: 3,
+                suit: Suit::Green,
+                value: 7,
+            }),
         ];
         game.played_face_down = [false, true, false, false]; // Player 1 played face-down
         game.lead_player = 0;
@@ -1324,8 +1393,16 @@ mod tests {
         game.lead_player = 0;
 
         game.hands[0] = vec![
-            Card { id: 0, suit: Suit::Orange, value: 5 },
-            Card { id: 1, suit: Suit::Pink, value: 3 },
+            Card {
+                id: 0,
+                suit: Suit::Orange,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Pink,
+                value: 3,
+            },
         ];
 
         // First, no green 5 played yet
@@ -1355,14 +1432,30 @@ mod tests {
         game.lead_player = 1;
         game.current_player = 0;
 
-        game.current_trick[1] = Some(Card { id: 10, suit: Suit::Orange, value: 7 });
+        game.current_trick[1] = Some(Card {
+            id: 10,
+            suit: Suit::Orange,
+            value: 7,
+        });
         game.played_face_down[1] = false;
         game.green_five_played = false;
 
         game.hands[0] = vec![
-            Card { id: 0, suit: Suit::Orange, value: 5 },
-            Card { id: 1, suit: Suit::Pink, value: 3 },
-            Card { id: 2, suit: Suit::Green, value: 8 },
+            Card {
+                id: 0,
+                suit: Suit::Orange,
+                value: 5,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Pink,
+                value: 3,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Green,
+                value: 8,
+            },
         ];
 
         let moves = game.get_moves();
@@ -1370,8 +1463,14 @@ mod tests {
         // Must follow orange - only orange card playable face-up
         assert!(moves.contains(&0), "Can play orange face-up");
         // Can't play pink or green face-up
-        assert!(!moves.contains(&1), "Can't play pink when must follow orange");
-        assert!(!moves.contains(&2), "Can't play green when must follow orange");
+        assert!(
+            !moves.contains(&1),
+            "Can't play pink when must follow orange"
+        );
+        assert!(
+            !moves.contains(&2),
+            "Can't play green when must follow orange"
+        );
 
         // Can play orange face-down if exactly one orange card
         assert!(moves.contains(&100), "Can play only orange card face-down");
