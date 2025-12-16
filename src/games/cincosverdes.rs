@@ -844,7 +844,7 @@ impl CincosVerdesGame {
         if !valid_rankings.is_empty() {
             // Award points based on rank
             // 4 player: 3, 2, 1, 0
-            // Ties get same points
+            // Ties get the lower rank's points (per "sharing the lower rank" rule)
             let points_by_rank = [3, 2, 1, 0];
 
             let mut current_rank = 0;
@@ -859,8 +859,11 @@ impl CincosVerdesGame {
                     j += 1;
                 }
 
-                // All tied players get the same rank's points
-                let points = points_by_rank[current_rank];
+                // All tied players get the lower rank's points
+                // e.g., two-way tie for 1st gets 2nd place points
+                let lower_rank_index =
+                    (current_rank + tied_players.len() - 1).min(points_by_rank.len() - 1);
+                let points = points_by_rank[lower_rank_index];
                 for player in &tied_players {
                     deltas[*player] += points;
 
@@ -1342,12 +1345,18 @@ mod tests {
         let deltas = game.calculate_round_scores();
 
         // Player 0: 23 = 3 (closest) + 1 (bonus from player 3 exceeding) = 4
-        // Player 1: 16 = 2 (tied for second)
-        // Player 2: 16 = 2 (tied for second)
+        // Player 1: 16 = 1 (tied for second gets lower rank = 3rd place)
+        // Player 2: 16 = 1 (tied for second gets lower rank = 3rd place)
         // Player 3: 39 = -1 (over)
         assert_eq!(deltas[0], 4, "Closest to 25 gets 3 + 1 bonus");
-        assert_eq!(deltas[1], 2, "Tied for second gets 2");
-        assert_eq!(deltas[2], 2, "Tied for second gets 2");
+        assert_eq!(
+            deltas[1], 1,
+            "Tied for second gets lower rank (3rd place) = 1"
+        );
+        assert_eq!(
+            deltas[2], 1,
+            "Tied for second gets lower rank (3rd place) = 1"
+        );
         assert_eq!(deltas[3], -1, "Over 25 loses 1");
     }
 
@@ -1372,16 +1381,149 @@ mod tests {
 
         let deltas = game.calculate_round_scores();
 
-        // Players 0 and 1 tied at 24 - both get 3 (first place points)
+        // Players 0 and 1 tied at 24 - both get 2nd place points (lower rank rule)
         // No bonus from over-25 player goes to anyone (tied)
         // Player 2: 20 = third place
         // Player 3: -1 (over)
-        assert_eq!(deltas[0], 3, "Tied for first gets 3");
-        assert_eq!(deltas[1], 3, "Tied for first gets 3");
+        assert_eq!(
+            deltas[0], 2,
+            "Tied for first gets lower rank (2nd place) = 2"
+        );
+        assert_eq!(
+            deltas[1], 2,
+            "Tied for first gets lower rank (2nd place) = 2"
+        );
         // After tie, rank 2 gets third place points
         assert_eq!(deltas[2], 1, "Third place after tie");
         assert_eq!(deltas[3], -1, "Over 25");
         assert_eq!(game.carry_over_bonus, 1, "Bonus carries over when tied");
+    }
+
+    #[test]
+    fn test_scoring_two_way_tie_for_first_with_exact_25() {
+        // Bug report: 25-25-24-28 was scoring 4-4-1-(-1) but should be 3-3-1-(-1)
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+        game.trick_sums = [25, 25, 24, 28];
+        game.carry_over_bonus = 0;
+
+        let deltas = game.calculate_round_scores();
+
+        // Players 0 and 1 tied at 25 - both get 2nd place points (2) + exact 25 bonus (1) = 3
+        assert_eq!(
+            deltas[0], 3,
+            "Tied for first at 25: 2 (lower rank) + 1 (exact bonus) = 3"
+        );
+        assert_eq!(
+            deltas[1], 3,
+            "Tied for first at 25: 2 (lower rank) + 1 (exact bonus) = 3"
+        );
+        // Player 2 at 24 gets 3rd place points
+        assert_eq!(deltas[2], 1, "Third place gets 1");
+        assert_eq!(deltas[3], -1, "Over 25 loses 1");
+    }
+
+    #[test]
+    fn test_scoring_three_way_tie_for_first_with_exact_25() {
+        // Bug report: three players at 25 were scoring 4 points each
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+        game.trick_sums = [25, 25, 25, 28];
+        game.carry_over_bonus = 0;
+
+        let deltas = game.calculate_round_scores();
+
+        // Players 0, 1, 2 tied at 25 - all get 3rd place points (1) + exact 25 bonus (1) = 2
+        assert_eq!(
+            deltas[0], 2,
+            "Three-way tie at 25: 1 (lower rank) + 1 (exact bonus) = 2"
+        );
+        assert_eq!(
+            deltas[1], 2,
+            "Three-way tie at 25: 1 (lower rank) + 1 (exact bonus) = 2"
+        );
+        assert_eq!(
+            deltas[2], 2,
+            "Three-way tie at 25: 1 (lower rank) + 1 (exact bonus) = 2"
+        );
+        assert_eq!(deltas[3], -1, "Over 25 loses 1");
+    }
+
+    #[test]
+    fn test_scoring_four_way_tie_at_25() {
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+        game.trick_sums = [25, 25, 25, 25];
+        game.carry_over_bonus = 0;
+
+        let deltas = game.calculate_round_scores();
+
+        // All tied at 25 - all get 4th place points (0) + exact 25 bonus (1) = 1
+        assert_eq!(
+            deltas[0], 1,
+            "Four-way tie at 25: 0 (lower rank) + 1 (exact bonus) = 1"
+        );
+        assert_eq!(
+            deltas[1], 1,
+            "Four-way tie at 25: 0 (lower rank) + 1 (exact bonus) = 1"
+        );
+        assert_eq!(
+            deltas[2], 1,
+            "Four-way tie at 25: 0 (lower rank) + 1 (exact bonus) = 1"
+        );
+        assert_eq!(
+            deltas[3], 1,
+            "Four-way tie at 25: 0 (lower rank) + 1 (exact bonus) = 1"
+        );
+    }
+
+    #[test]
+    fn test_scoring_tie_for_second() {
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+        game.trick_sums = [24, 20, 20, 28];
+        game.carry_over_bonus = 0;
+
+        let deltas = game.calculate_round_scores();
+
+        // Player 0 at 24 gets 1st place (3) + over bonus (1) = 4
+        assert_eq!(deltas[0], 4, "First place gets 3 + 1 over bonus = 4");
+        // Players 1 and 2 tied at 20 - both get 3rd place points (lower rank rule)
+        assert_eq!(
+            deltas[1], 1,
+            "Tied for second gets lower rank (3rd place) = 1"
+        );
+        assert_eq!(
+            deltas[2], 1,
+            "Tied for second gets lower rank (3rd place) = 1"
+        );
+        assert_eq!(deltas[3], -1, "Over 25 loses 1");
+    }
+
+    #[test]
+    fn test_scoring_three_way_tie_for_second() {
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+        game.trick_sums = [24, 20, 20, 20];
+        game.carry_over_bonus = 0;
+
+        let deltas = game.calculate_round_scores();
+
+        // Player 0 at 24 gets 1st place (3)
+        assert_eq!(deltas[0], 3, "First place gets 3");
+        // Players 1, 2, 3 tied at 20 - all get 4th place points (0) - lowest rank in tie
+        assert_eq!(
+            deltas[1], 0,
+            "Three-way tie for second gets lower rank (4th place) = 0"
+        );
+        assert_eq!(
+            deltas[2], 0,
+            "Three-way tie for second gets lower rank (4th place) = 0"
+        );
+        assert_eq!(
+            deltas[3], 0,
+            "Three-way tie for second gets lower rank (4th place) = 0"
+        );
     }
 
     #[test]
