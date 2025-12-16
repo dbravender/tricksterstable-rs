@@ -4,6 +4,7 @@ pub mod kaibosh;
 pub mod kansascity;
 pub mod otter1p;
 pub mod pala;
+pub mod smm;
 pub mod so8;
 pub mod stickem;
 pub mod szs;
