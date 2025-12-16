@@ -141,6 +141,7 @@ pub struct CincosVerdesGame {
     pub green_five_played: bool,         // Track if green 5 already played this trick
     pub selected_card: Option<Card>,     // Card selected by human player (for play style choice)
     pub green_five_available: bool,      // Whether selected card can be played as green 5
+    pub face_down_cards: [Vec<Card>; PLAYER_COUNT], // Cards played face-down per player (hidden info for ISMCTS)
 }
 
 impl CincosVerdesGame {
@@ -162,6 +163,7 @@ impl CincosVerdesGame {
         self.played_face_down = [false; PLAYER_COUNT];
         self.green_five_played = false;
         self.voids = [vec![], vec![], vec![], vec![]];
+        self.face_down_cards = [vec![], vec![], vec![], vec![]];
         self.state = State::Play;
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
 
@@ -529,9 +531,10 @@ impl CincosVerdesGame {
         let card = self.pop_card(card_id);
         let player = self.current_player;
 
-        // Mark if green 5 was played this trick
+        // Mark if green 5 was played this trick and track the card for ISMCTS
         if face_down {
             self.green_five_played = true;
+            self.face_down_cards[player].push(card);
         }
 
         // Animate card play
@@ -1081,9 +1084,45 @@ impl ismcts::Game for CincosVerdesGame {
     type PlayerTag = usize;
     type MoveList = Vec<i32>;
 
+    #[allow(clippy::needless_range_loop)]
     fn randomize_determination(&mut self, observer: Self::PlayerTag) {
         let rng = &mut thread_rng();
 
+        // Collect all non-observer face_down_cards into a combined hidden pool
+        let mut hidden_pool: Vec<Card> = Vec::new();
+        let mut hidden_counts = [0usize; PLAYER_COUNT];
+        for p in 0..PLAYER_COUNT {
+            if p != observer {
+                hidden_counts[p] = self.face_down_cards[p].len();
+                hidden_pool.append(&mut self.face_down_cards[p]);
+            }
+        }
+
+        // For each non-observer, shuffle their hand against the hidden pool
+        // This allows face-down card identities to be randomized across all hidden info
+        for p in 0..PLAYER_COUNT {
+            if p == observer || hidden_pool.is_empty() {
+                continue;
+            }
+
+            let mut hands = vec![self.hands[p].clone(), hidden_pool];
+            shuffle_and_divide_matching_cards(
+                |_: &Card| true, // No suit constraints for hidden pool
+                &mut hands,
+                rng,
+            );
+            self.hands[p] = hands[0].clone();
+            hidden_pool = hands[1].clone();
+        }
+
+        // Redistribute the hidden pool back to face_down_cards
+        for p in 0..PLAYER_COUNT {
+            if p != observer && hidden_counts[p] > 0 {
+                self.face_down_cards[p] = hidden_pool.drain(..hidden_counts[p]).collect();
+            }
+        }
+
+        // Shuffle hands between non-observers (respecting void constraints)
         for p1 in 0..PLAYER_COUNT {
             for p2 in 0..PLAYER_COUNT {
                 if p1 == p2 || p1 == observer || p2 == observer {
@@ -1627,5 +1666,113 @@ mod tests {
 
         assert_eq!(game.current_player, green_zero_holder);
         assert_eq!(game.lead_player, green_zero_holder);
+    }
+
+    #[test]
+    fn test_face_down_cards_tracked() {
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+        game.state = State::Play;
+        game.current_player = 1;
+        game.lead_player = 1;
+
+        // Give player 1 a specific card
+        let card = Card {
+            id: 50,
+            suit: Suit::Orange,
+            value: 7,
+        };
+        game.hands[1] = vec![card];
+
+        // Play face-down (id + 100)
+        game.apply_move(150);
+
+        // Verify the card was tracked in face_down_cards
+        assert_eq!(game.face_down_cards[1].len(), 1);
+        assert_eq!(game.face_down_cards[1][0].id, 50);
+    }
+
+    #[test]
+    fn test_randomize_determination_shuffles_face_down_cards() {
+        use ismcts::Game;
+
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+
+        // Set up a scenario where player 1 has face-down cards
+        let face_down_card = Card {
+            id: 50,
+            suit: Suit::Orange,
+            value: 7,
+        };
+        game.face_down_cards[1] = vec![face_down_card];
+
+        // Player 2 has some cards in hand
+        game.hands[2] = vec![
+            Card {
+                id: 51,
+                suit: Suit::Pink,
+                value: 3,
+            },
+            Card {
+                id: 52,
+                suit: Suit::Green,
+                value: 8,
+            },
+        ];
+
+        // Observer is player 0 - they should not know what player 1's face-down card is
+        // After randomization, the face-down card could have been swapped with player 2's hand
+
+        // Run randomization many times to verify cards can be swapped
+        let mut face_down_changed = false;
+        for _ in 0..100 {
+            let mut test_game = game.clone();
+            test_game.randomize_determination(0);
+
+            // Check if the face-down card was swapped
+            if test_game.face_down_cards[1][0].id != 50 {
+                face_down_changed = true;
+                break;
+            }
+        }
+
+        assert!(
+            face_down_changed,
+            "Face-down cards should be shuffled with other hidden cards"
+        );
+    }
+
+    #[test]
+    fn test_randomize_determination_preserves_observer_face_down() {
+        use ismcts::Game;
+
+        let mut game = CincosVerdesGame::new();
+        game.no_changes = true;
+
+        // Observer (player 0) has a face-down card - they know what it is
+        let observer_face_down = Card {
+            id: 99,
+            suit: Suit::Purple,
+            value: 10,
+        };
+        game.face_down_cards[0] = vec![observer_face_down];
+
+        // Other player has cards
+        game.hands[1] = vec![Card {
+            id: 51,
+            suit: Suit::Pink,
+            value: 3,
+        }];
+
+        // Run randomization with player 0 as observer
+        game.randomize_determination(0);
+
+        // Observer's face-down card should NOT be shuffled
+        assert_eq!(game.face_down_cards[0].len(), 1);
+        assert_eq!(
+            game.face_down_cards[0][0].id, 99,
+            "Observer's face-down card should be preserved"
+        );
     }
 }
