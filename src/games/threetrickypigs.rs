@@ -48,6 +48,19 @@ enum State {
 struct Card {
     value: i32,
     suit: Suit,
+    id: i32,
+}
+
+impl Card {
+    fn is_puff(&self) -> bool {
+        self.suit == Suit::Puff
+    }
+    fn is_huff(&self) -> bool {
+        self.suit == Suit::Huff
+    }
+    fn is_regular(&self) -> bool {
+        !self.is_huff() && !self.is_puff()
+    }
 }
 
 struct ThreeTrickyPigsGame {
@@ -77,16 +90,70 @@ fn deck() -> Vec<Card> {
         (Suit::Huff, (1..=4).collect()),
         (Suit::Puff, (2..=5).collect()),
     ];
+    let mut id = 0;
     let mut cards: Vec<Card> = vec![];
     for (suit, values) in &distributions {
         for value in values {
             cards.push(Card {
                 value: *value,
                 suit: *suit,
+                id: id,
             });
+            id += 1;
         }
     }
     cards
+}
+
+/// Returns possible moves
+fn get_moves(
+    state: State,
+    lead_player: usize,
+    trick_regular: [Option<Card>; PLAYER_COUNT],
+    trick_huff: [Option<Card>; PLAYER_COUNT],
+    trick_puff: [Option<Card>; PLAYER_COUNT],
+    hand: Vec<Card>,
+    current_player: usize,
+) -> Vec<i32> {
+    match state {
+        // 4 bid options
+        State::Bid => (0..=3).collect(),
+        // Regular trick play
+        State::Play => {
+            let lead_suit = trick_regular[lead_player].map(|c| c.suit);
+            let puff_played = trick_puff[current_player].is_some();
+            let huff_played = trick_huff[current_player].is_some();
+
+            // Find playable regular cards
+
+            // Find all cards in the current lead suit
+            let follow_suit_cards: Vec<&Card> = hand
+                .iter()
+                .filter(|c| lead_suit.map_or(false, |s| c.suit == s))
+                .collect();
+
+            let playable_regular_cards: Vec<&Card> = if follow_suit_cards.is_empty() {
+                // No lead card or no cards in lead suit - any card in hand
+                // can be played
+                hand.iter().filter(|c| c.is_regular()).collect()
+            } else {
+                // Must follow suit in 3 Tricky Pigs
+                follow_suit_cards
+            };
+
+            // Find playable huff and puff cards
+            let playable_huff_and_puff_cards = hand
+                .iter()
+                .filter(|c| (!puff_played && c.is_puff()) || (!huff_played && c.is_huff()));
+
+            // Return all playable cards
+            playable_regular_cards
+                .into_iter()
+                .chain(playable_huff_and_puff_cards)
+                .map(|c| c.id)
+                .collect()
+        }
+    }
 }
 
 /// Returns the player index that won the trick
@@ -97,6 +164,7 @@ fn trick_winner(
     trick_puff: [Option<Card>; PLAYER_COUNT],
 ) -> usize {
     let empty_card = Card {
+        id: -1,
         value: 0,
         suit: Suit::Bricks,
     };
@@ -138,7 +206,11 @@ mod tests {
 
     // Helper to create a card
     fn card(value: i32, suit: Suit) -> Option<Card> {
-        Some(Card { value, suit })
+        Some(Card {
+            id: -1,
+            value,
+            suit,
+        })
     }
 
     // Helper for no huff/puff
@@ -400,5 +472,311 @@ mod tests {
         // All 15s, wolf present, last played wins (Player 3)
         let winner = trick_winner(0, trick_regular, no_modifiers(), no_modifiers());
         assert_eq!(winner, 3);
+    }
+
+    // ==================== get_moves tests ====================
+
+    // Helper to create a card with id
+    fn card_with_id(id: i32, value: i32, suit: Suit) -> Card {
+        Card { id, value, suit }
+    }
+
+    // Bid state returns all 4 bid options
+    #[test]
+    fn test_get_moves_bid_state() {
+        let moves = get_moves(
+            State::Bid,
+            0,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            vec![],
+            0,
+        );
+        assert_eq!(moves, vec![0, 1, 2, 3]);
+    }
+
+    // Leading player (no lead card) can play any card
+    #[test]
+    fn test_get_moves_leading_player_any_card() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 10, Suit::Sticks),
+            card_with_id(2, 25, Suit::Bricks),
+        ];
+
+        let moves = get_moves(
+            State::Play,
+            0,              // lead player
+            no_modifiers(), // no cards played yet
+            no_modifiers(),
+            no_modifiers(),
+            hand,
+            0, // current player is lead player
+        );
+
+        // All cards playable when leading
+        assert!(moves.contains(&0));
+        assert!(moves.contains(&1));
+        assert!(moves.contains(&2));
+    }
+
+    // Must follow suit when able
+    #[test]
+    fn test_get_moves_must_follow_suit() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 7, Suit::Straw),
+            card_with_id(2, 25, Suit::Bricks),
+        ];
+
+        // Player 0 led with Straw
+        let mut trick_regular = no_modifiers();
+        trick_regular[0] = Some(Card {
+            id: 99,
+            value: 3,
+            suit: Suit::Straw,
+        });
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            trick_regular,
+            no_modifiers(),
+            no_modifiers(),
+            hand,
+            1, // player 1's turn
+        );
+
+        // Only Straw cards playable
+        assert!(moves.contains(&0)); // Straw
+        assert!(moves.contains(&1)); // Straw
+        assert!(!moves.contains(&2)); // Bricks - can't play
+    }
+
+    // Can play any card if can't follow suit
+    #[test]
+    fn test_get_moves_cant_follow_suit() {
+        let hand = vec![
+            card_with_id(0, 25, Suit::Bricks),
+            card_with_id(1, 26, Suit::Bricks),
+            card_with_id(2, 15, Suit::Wolf),
+        ];
+
+        // Player 0 led with Straw
+        let mut trick_regular = no_modifiers();
+        trick_regular[0] = Some(Card {
+            id: 99,
+            value: 3,
+            suit: Suit::Straw,
+        });
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            trick_regular,
+            no_modifiers(),
+            no_modifiers(),
+            hand,
+            1,
+        );
+
+        // No Straw in hand, can play anything
+        assert!(moves.contains(&0));
+        assert!(moves.contains(&1));
+        assert!(moves.contains(&2));
+    }
+
+    // Huff cards are playable when not already played
+    #[test]
+    fn test_get_moves_huff_playable() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 2, Suit::Huff),
+        ];
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            no_modifiers(),
+            no_modifiers(), // no huff played
+            no_modifiers(),
+            hand,
+            0,
+        );
+
+        assert!(moves.contains(&0)); // regular card
+        assert!(moves.contains(&1)); // huff card
+    }
+
+    // Huff cards not playable when already played this trick
+    #[test]
+    fn test_get_moves_huff_already_played() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 2, Suit::Huff),
+        ];
+
+        let mut trick_huff = no_modifiers();
+        trick_huff[0] = Some(Card {
+            id: 99,
+            value: 1,
+            suit: Suit::Huff,
+        });
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            no_modifiers(),
+            trick_huff, // huff already played by player 0
+            no_modifiers(),
+            hand,
+            0,
+        );
+
+        assert!(moves.contains(&0)); // regular card still playable
+        assert!(!moves.contains(&1)); // huff card NOT playable
+    }
+
+    // Puff cards are playable when not already played
+    #[test]
+    fn test_get_moves_puff_playable() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 3, Suit::Puff),
+        ];
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(), // no puff played
+            hand,
+            0,
+        );
+
+        assert!(moves.contains(&0)); // regular card
+        assert!(moves.contains(&1)); // puff card
+    }
+
+    // Puff cards not playable when already played this trick
+    #[test]
+    fn test_get_moves_puff_already_played() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 3, Suit::Puff),
+        ];
+
+        let mut trick_puff = no_modifiers();
+        trick_puff[0] = Some(Card {
+            id: 99,
+            value: 2,
+            suit: Suit::Puff,
+        });
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            no_modifiers(),
+            no_modifiers(),
+            trick_puff, // puff already played by player 0
+            hand,
+            0,
+        );
+
+        assert!(moves.contains(&0)); // regular card still playable
+        assert!(!moves.contains(&1)); // puff card NOT playable
+    }
+
+    // Both huff and puff playable
+    #[test]
+    fn test_get_moves_huff_and_puff_both_playable() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 2, Suit::Huff),
+            card_with_id(2, 3, Suit::Puff),
+        ];
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            hand,
+            0,
+        );
+
+        assert!(moves.contains(&0)); // regular
+        assert!(moves.contains(&1)); // huff
+        assert!(moves.contains(&2)); // puff
+    }
+
+    // Following player with huff/puff in hand, must follow suit for regular
+    #[test]
+    fn test_get_moves_follow_suit_with_huff_puff() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 25, Suit::Bricks),
+            card_with_id(2, 2, Suit::Huff),
+            card_with_id(3, 3, Suit::Puff),
+        ];
+
+        let mut trick_regular = no_modifiers();
+        trick_regular[0] = Some(Card {
+            id: 99,
+            value: 3,
+            suit: Suit::Straw,
+        });
+
+        let moves = get_moves(
+            State::Play,
+            0,
+            trick_regular,
+            no_modifiers(),
+            no_modifiers(),
+            hand,
+            1,
+        );
+
+        assert!(moves.contains(&0)); // Straw - must follow
+        assert!(!moves.contains(&1)); // Bricks - can't play
+        assert!(moves.contains(&2)); // Huff - always playable if not used
+        assert!(moves.contains(&3)); // Puff - always playable if not used
+    }
+
+    // Player 2 following, player 0 led
+    #[test]
+    fn test_get_moves_different_lead_and_current_player() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Sticks),
+            card_with_id(1, 25, Suit::Bricks),
+        ];
+
+        let mut trick_regular = no_modifiers();
+        trick_regular[0] = Some(Card {
+            id: 99,
+            value: 3,
+            suit: Suit::Sticks,
+        });
+        trick_regular[1] = Some(Card {
+            id: 98,
+            value: 7,
+            suit: Suit::Sticks,
+        });
+
+        let moves = get_moves(
+            State::Play,
+            0, // player 0 led
+            trick_regular,
+            no_modifiers(),
+            no_modifiers(),
+            hand,
+            2, // player 2's turn
+        );
+
+        assert!(moves.contains(&0)); // Sticks - follows suit
+        assert!(!moves.contains(&1)); // Bricks - can't play
     }
 }
