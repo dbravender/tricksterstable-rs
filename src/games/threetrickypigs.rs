@@ -280,9 +280,11 @@ impl ThreeTrickyPigsGame {
                         }
                     }
                     Bid::Eat => {
-                        // Check if this player won the most tricks
-                        let max_tricks = self.tricks_won.iter().max().unwrap();
-                        if self.tricks_won[player] == *max_tricks {
+                        // Check if this player won strictly the most tricks (no ties)
+                        let max_tricks = *self.tricks_won.iter().max().unwrap();
+                        let players_with_max =
+                            self.tricks_won.iter().filter(|&&t| t == max_tricks).count();
+                        if self.tricks_won[player] == max_tricks && players_with_max == 1 {
                             self.scores[player] += 2 * tricks;
                         }
                     }
@@ -1204,10 +1206,22 @@ mod tests {
         // Set up a 4-player trick where player 0 leads
         // Each player has an extra card so round doesn't end
         let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
-        hands[0] = vec![card_with_id(0, 5, Suit::Straw), card_with_id(10, 1, Suit::Sticks)];
-        hands[1] = vec![card_with_id(1, 3, Suit::Straw), card_with_id(11, 2, Suit::Sticks)]; // Lowest - will win
-        hands[2] = vec![card_with_id(2, 7, Suit::Straw), card_with_id(12, 3, Suit::Sticks)];
-        hands[3] = vec![card_with_id(3, 9, Suit::Straw), card_with_id(13, 4, Suit::Sticks)];
+        hands[0] = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(10, 1, Suit::Sticks),
+        ];
+        hands[1] = vec![
+            card_with_id(1, 3, Suit::Straw),
+            card_with_id(11, 2, Suit::Sticks),
+        ]; // Lowest - will win
+        hands[2] = vec![
+            card_with_id(2, 7, Suit::Straw),
+            card_with_id(12, 3, Suit::Sticks),
+        ];
+        hands[3] = vec![
+            card_with_id(3, 9, Suit::Straw),
+            card_with_id(13, 4, Suit::Sticks),
+        ];
 
         let mut game = ThreeTrickyPigsGame {
             state: State::Play,
@@ -1355,9 +1369,18 @@ mod tests {
             card_with_id(10, 4, Suit::Huff),
             card_with_id(20, 5, Suit::Sticks), // Extra regular card
         ];
-        hands[1] = vec![card_with_id(1, 8, Suit::Straw), card_with_id(11, 1, Suit::Sticks)];
-        hands[2] = vec![card_with_id(2, 9, Suit::Straw), card_with_id(12, 2, Suit::Sticks)];
-        hands[3] = vec![card_with_id(3, 7, Suit::Straw), card_with_id(13, 3, Suit::Sticks)];
+        hands[1] = vec![
+            card_with_id(1, 8, Suit::Straw),
+            card_with_id(11, 1, Suit::Sticks),
+        ];
+        hands[2] = vec![
+            card_with_id(2, 9, Suit::Straw),
+            card_with_id(12, 2, Suit::Sticks),
+        ];
+        hands[3] = vec![
+            card_with_id(3, 7, Suit::Straw),
+            card_with_id(13, 3, Suit::Sticks),
+        ];
 
         let mut game = ThreeTrickyPigsGame {
             state: State::Play,
@@ -1671,6 +1694,34 @@ mod tests {
 
         // Player 0 won 1 trick (most) with Eat bid: 1 + 2*1 = 3 points
         assert_eq!(game.scores[0], 3);
+    }
+
+    // Scoring: Eat bid fails on tie (no bonus if tied for most tricks)
+    #[test]
+    fn test_scoring_eat_bid_tie_no_bonus() {
+        // Players 0 and 1 each win 1 trick - tied for most
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            current_trick_regular: no_modifiers(),
+            current_trick_huff: no_modifiers(),
+            current_trick_puff: no_modifiers(),
+            hands: Default::default(),
+            bids: [Some(Bid::Eat), Some(Bid::Eat), None, None],
+            tricks_won: [1, 1, 0, 0], // Tied for most
+            current_round: 1,
+            scores: [0; PLAYER_COUNT],
+        };
+
+        game.end_round();
+
+        // Neither player gets the Eat bonus due to tie
+        // Player 0: 1 trick = 1 point (no 2x bonus)
+        // Player 1: 1 trick = 1 point (no 2x bonus)
+        assert_eq!(game.scores[0], 1);
+        assert_eq!(game.scores[1], 1);
     }
 
     // Game ends after 4 rounds
