@@ -84,6 +84,8 @@ struct ThreeTrickyPigsGame {
     hands: [Vec<Card>; PLAYER_COUNT],
     /// Each player's current bid
     bids: [Option<Bid>; PLAYER_COUNT],
+    /// Tricks won by each player this round
+    tricks_won: [usize; PLAYER_COUNT],
 }
 
 impl ThreeTrickyPigsGame {
@@ -133,6 +135,97 @@ impl ThreeTrickyPigsGame {
                     .chain(playable_huff_and_puff_cards)
                     .map(|c| c.id)
                     .collect()
+            }
+        }
+    }
+
+    /// Apply a move to the game state
+    fn apply_move(&mut self, card_id: i32) {
+        // Validate move is legal
+        let valid_moves = self.get_moves();
+        if !valid_moves.contains(&card_id) {
+            panic!(
+                "Invalid move: {} not in valid moves {:?}",
+                card_id, valid_moves
+            );
+        }
+
+        match self.state {
+            State::Bid => {
+                // card_id 0-3 maps to bid variants
+                let bid = match card_id {
+                    0 => Bid::Sleep,
+                    1 => Bid::Play,
+                    2 => Bid::Work,
+                    3 => Bid::Eat,
+                    _ => panic!("Invalid bid"),
+                };
+                self.bids[self.current_player] = Some(bid);
+                self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+
+                // If all players have bid, move to play state
+                if self.bids.iter().all(|b| b.is_some()) {
+                    self.state = State::Play;
+                    // Reset current_player to lead_player for first trick
+                    self.current_player = self.lead_player;
+                }
+            }
+            State::Play => {
+                let hand = &mut self.hands[self.current_player];
+
+                // Find and remove the card from hand
+                let card_index = hand.iter().position(|c| c.id == card_id).unwrap();
+                let card = hand.remove(card_index);
+
+                // Place card in appropriate trick slot
+                if card.is_huff() {
+                    self.current_trick_huff[self.current_player] = Some(card);
+                } else if card.is_puff() {
+                    self.current_trick_puff[self.current_player] = Some(card);
+                } else {
+                    // After a regular card (pig or wolf) is played the move is
+                    // committed
+                    self.current_trick_regular[self.current_player] = Some(card);
+
+                    // Check if wolf was played when couldn't follow suit (breaks wolf)
+                    if card.suit == Suit::Wolf && !self.wolf_suit_broken {
+                        let lead_suit =
+                            self.current_trick_regular[self.lead_player].map(|c| c.suit);
+                        // Wolf is broken if player couldn't follow lead suit
+                        // (lead_suit exists and player played wolf instead)
+                        if lead_suit.is_some() && lead_suit != Some(Suit::Wolf) {
+                            self.wolf_suit_broken = true;
+                        }
+                    }
+
+                    // Advance to next player
+                    self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+
+                    // Check if trick is complete (all players have played a regular card)
+                    let trick_complete = self.current_trick_regular.iter().all(|c| c.is_some());
+
+                    if trick_complete {
+                        // Determine winner
+                        let winner = trick_winner(
+                            self.lead_player,
+                            self.current_trick_regular,
+                            self.current_trick_huff,
+                            self.current_trick_puff,
+                        );
+
+                        // Award trick to winner
+                        self.tricks_won[winner] += 1;
+
+                        // Clear trick slots
+                        self.current_trick_regular = [None; PLAYER_COUNT];
+                        self.current_trick_huff = [None; PLAYER_COUNT];
+                        self.current_trick_puff = [None; PLAYER_COUNT];
+
+                        // Winner leads next trick
+                        self.lead_player = winner;
+                        self.current_player = winner;
+                    }
+                }
             }
         }
     }
@@ -512,6 +605,7 @@ mod tests {
             current_trick_puff: trick_puff,
             hands,
             bids: [None; PLAYER_COUNT],
+            tricks_won: [0; PLAYER_COUNT],
         }
     }
 
@@ -528,6 +622,7 @@ mod tests {
             current_trick_puff: no_modifiers(),
             hands: Default::default(),
             bids: [None; PLAYER_COUNT],
+            tricks_won: [0; PLAYER_COUNT],
         };
         let moves = game.get_moves();
         assert_eq!(moves, vec![0, 1, 2, 3]);
@@ -857,5 +952,342 @@ mod tests {
 
         assert!(moves.contains(&0)); // Straw - can lead
         assert!(moves.contains(&1)); // Wolf - can lead when broken
+    }
+
+    // ==================== apply_move tests ====================
+
+    // Helper to create a game in bid state
+    fn game_in_bid_state() -> ThreeTrickyPigsGame {
+        ThreeTrickyPigsGame {
+            state: State::Bid,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            current_trick_regular: no_modifiers(),
+            current_trick_huff: no_modifiers(),
+            current_trick_puff: no_modifiers(),
+            hands: Default::default(),
+            bids: [None; PLAYER_COUNT],
+            tricks_won: [0; PLAYER_COUNT],
+        }
+    }
+
+    // Bidding advances current player
+    #[test]
+    fn test_apply_move_bid_advances_player() {
+        let mut game = game_in_bid_state();
+        assert_eq!(game.current_player, 0);
+
+        game.apply_move(0); // Player 0 bids Sleep
+        assert_eq!(game.current_player, 1);
+
+        game.apply_move(1); // Player 1 bids Play
+        assert_eq!(game.current_player, 2);
+    }
+
+    // All bids complete transitions to Play state
+    #[test]
+    fn test_apply_move_bid_transitions_to_play() {
+        let mut game = game_in_bid_state();
+
+        game.apply_move(0); // Player 0
+        game.apply_move(1); // Player 1
+        game.apply_move(2); // Player 2
+        assert!(matches!(game.state, State::Bid)); // Still bidding
+
+        game.apply_move(3); // Player 3
+        assert!(matches!(game.state, State::Play)); // Now playing
+    }
+
+    // Playing a regular card removes it from hand
+    #[test]
+    fn test_apply_move_removes_card_from_hand() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 10, Suit::Sticks),
+        ];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        assert_eq!(game.hands[0].len(), 2);
+        game.apply_move(0); // Play Straw card
+        assert_eq!(game.hands[0].len(), 1);
+        assert_eq!(game.hands[0][0].id, 1); // Only Sticks card remains
+    }
+
+    // Playing a regular card places it in trick
+    #[test]
+    fn test_apply_move_places_regular_card_in_trick() {
+        let hand = vec![card_with_id(0, 5, Suit::Straw)];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        game.apply_move(0);
+        assert!(game.current_trick_regular[0].is_some());
+        assert_eq!(game.current_trick_regular[0].unwrap().id, 0);
+    }
+
+    // Playing a huff card places it in huff slot
+    #[test]
+    fn test_apply_move_places_huff_card() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 2, Suit::Huff),
+        ];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        game.apply_move(1); // Play huff
+        assert!(game.current_trick_huff[0].is_some());
+        assert_eq!(game.current_trick_huff[0].unwrap().id, 1);
+        // Player doesn't advance after huff
+        assert_eq!(game.current_player, 0);
+    }
+
+    // Playing a puff card places it in puff slot
+    #[test]
+    fn test_apply_move_places_puff_card() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 3, Suit::Puff),
+        ];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        game.apply_move(1); // Play puff
+        assert!(game.current_trick_puff[0].is_some());
+        assert_eq!(game.current_trick_puff[0].unwrap().id, 1);
+        // Player doesn't advance after puff
+        assert_eq!(game.current_player, 0);
+    }
+
+    // Regular card advances to next player
+    #[test]
+    fn test_apply_move_regular_card_advances_player() {
+        let hand = vec![card_with_id(0, 5, Suit::Straw)];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        assert_eq!(game.current_player, 0);
+        game.apply_move(0);
+        assert_eq!(game.current_player, 1);
+    }
+
+    // Complete trick determines winner and clears slots
+    #[test]
+    fn test_apply_move_complete_trick() {
+        // Set up a 4-player trick where player 0 leads
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)]; // Lowest - will win
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            current_trick_regular: no_modifiers(),
+            current_trick_huff: no_modifiers(),
+            current_trick_puff: no_modifiers(),
+            hands,
+            bids: [None; PLAYER_COUNT],
+            tricks_won: [0; PLAYER_COUNT],
+        };
+
+        game.apply_move(0); // Player 0 plays 5
+        game.apply_move(1); // Player 1 plays 3
+        game.apply_move(2); // Player 2 plays 7
+        game.apply_move(3); // Player 3 plays 9
+
+        // Player 1 wins (lowest card, no wolf)
+        assert_eq!(game.tricks_won[1], 1);
+        assert_eq!(game.lead_player, 1);
+        assert_eq!(game.current_player, 1);
+
+        // Trick slots cleared
+        assert!(game.current_trick_regular.iter().all(|c| c.is_none()));
+    }
+
+    // Wolf breaks when played because can't follow suit
+    #[test]
+    fn test_apply_move_wolf_breaks() {
+        // Player 0 leads Straw, Player 1 has no Straw so plays Wolf
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[1] = vec![card_with_id(1, 15, Suit::Wolf)];
+
+        let mut trick_regular = no_modifiers();
+        trick_regular[0] = Some(Card {
+            id: 0,
+            value: 5,
+            suit: Suit::Straw,
+        });
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 1,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            current_trick_regular: trick_regular,
+            current_trick_huff: no_modifiers(),
+            current_trick_puff: no_modifiers(),
+            hands,
+            bids: [None; PLAYER_COUNT],
+            tricks_won: [0; PLAYER_COUNT],
+        };
+
+        assert!(!game.wolf_suit_broken);
+        game.apply_move(1); // Player 1 plays Wolf
+        assert!(game.wolf_suit_broken);
+    }
+
+    // Wolf doesn't break when leading (after already broken)
+    #[test]
+    fn test_apply_move_wolf_lead_doesnt_rebreak() {
+        let hand = vec![card_with_id(0, 15, Suit::Wolf)];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true, // Already broken
+        );
+
+        game.apply_move(0); // Lead with Wolf
+        assert!(game.wolf_suit_broken); // Still broken (unchanged)
+    }
+
+    // Invalid move panics
+    #[test]
+    #[should_panic(expected = "Invalid move")]
+    fn test_apply_move_invalid_move_panics() {
+        let hand = vec![card_with_id(0, 5, Suit::Straw)];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        game.apply_move(99); // Invalid card id
+    }
+
+    // Huff then puff then regular card sequence
+    #[test]
+    fn test_apply_move_huff_puff_regular_sequence() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 2, Suit::Huff),
+            card_with_id(2, 3, Suit::Puff),
+        ];
+
+        let mut game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        // Play huff - stays on same player
+        game.apply_move(1);
+        assert_eq!(game.current_player, 0);
+        assert!(game.current_trick_huff[0].is_some());
+
+        // Play puff - stays on same player
+        game.apply_move(2);
+        assert_eq!(game.current_player, 0);
+        assert!(game.current_trick_puff[0].is_some());
+
+        // Play regular - advances player
+        game.apply_move(0);
+        assert_eq!(game.current_player, 1);
+        assert!(game.current_trick_regular[0].is_some());
+    }
+
+    // Trick winner with huff/puff modifiers
+    #[test]
+    fn test_apply_move_trick_winner_with_modifiers() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![
+            card_with_id(0, 2, Suit::Straw),
+            card_with_id(10, 4, Suit::Huff),
+        ];
+        hands[1] = vec![card_with_id(1, 8, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 9, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 7, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            current_trick_regular: no_modifiers(),
+            current_trick_huff: no_modifiers(),
+            current_trick_puff: no_modifiers(),
+            hands,
+            bids: [None; PLAYER_COUNT],
+            tricks_won: [0; PLAYER_COUNT],
+        };
+
+        // Player 0 plays huff (+4) then 2 = 6 total
+        game.apply_move(10); // Huff
+        game.apply_move(0); // 2 Straw (total 6)
+        game.apply_move(1); // Player 1: 8
+        game.apply_move(2); // Player 2: 9
+        game.apply_move(3); // Player 3: 7
+
+        // Player 0 wins with 6 (2 base + 4 huff), lowest value
+        assert_eq!(game.tricks_won[0], 1);
     }
 }
