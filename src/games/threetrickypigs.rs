@@ -26,6 +26,7 @@ enum Suit {
     Puff,
 }
 
+#[derive(Copy, Clone)]
 enum Bid {
     /// Try to win 0 tricks
     Sleep,
@@ -37,6 +38,7 @@ enum Bid {
     Eat,
 }
 
+#[derive(Copy, Clone)]
 enum State {
     /// Select one of the bid cards
     Bid,
@@ -64,6 +66,12 @@ impl Card {
 }
 
 struct ThreeTrickyPigsGame {
+    /// Current game state
+    state: State,
+    /// Current player
+    current_player: usize,
+    /// Lead player for the current trick
+    lead_player: usize,
     /// Whether or not the Wolf suit has been broken yet
     wolf_suit_broken: bool,
     /// Regular cards in a trick (indexed by player)
@@ -71,11 +79,63 @@ struct ThreeTrickyPigsGame {
     /// Huff cards in the current trick (indexed by player)
     current_trick_huff: [Option<Card>; PLAYER_COUNT],
     /// Puff cards in the current trick (indexed by player)
-    curent_trick_puff: [Option<Card>; PLAYER_COUNT],
+    current_trick_puff: [Option<Card>; PLAYER_COUNT],
     /// Each player's hand
     hands: [Vec<Card>; PLAYER_COUNT],
     /// Each player's current bid
     bids: [Option<Bid>; PLAYER_COUNT],
+}
+
+impl ThreeTrickyPigsGame {
+    /// Returns possible moves
+    fn get_moves(&self) -> Vec<i32> {
+        match self.state {
+            // 4 bid options
+            State::Bid => (0..=3).collect(),
+            // Regular trick play
+            State::Play => {
+                let lead_suit = self.current_trick_regular[self.lead_player].map(|c| c.suit);
+                let puff_played = self.current_trick_puff[self.current_player].is_some();
+                let huff_played = self.current_trick_huff[self.current_player].is_some();
+                let hand = &self.hands[self.current_player];
+                let is_leading = lead_suit.is_none();
+
+                // Find playable regular cards
+
+                // Find all cards in the current lead suit
+                let follow_suit_cards: Vec<&Card> = hand
+                    .iter()
+                    .filter(|c| lead_suit.map_or(false, |s| c.suit == s))
+                    .collect();
+
+                let playable_regular_cards: Vec<&Card> = if follow_suit_cards.is_empty() {
+                    // No lead card or no cards in lead suit - any regular card in hand
+                    // can be played (but wolves only if broken or not leading)
+                    hand.iter()
+                        .filter(|c| {
+                            c.is_regular()
+                                && (c.suit != Suit::Wolf || self.wolf_suit_broken || !is_leading)
+                        })
+                        .collect()
+                } else {
+                    // Must follow suit in 3 Tricky Pigs
+                    follow_suit_cards
+                };
+
+                // Find playable huff and puff cards
+                let playable_huff_and_puff_cards = hand
+                    .iter()
+                    .filter(|c| (!puff_played && c.is_puff()) || (!huff_played && c.is_huff()));
+
+                // Return all playable cards
+                playable_regular_cards
+                    .into_iter()
+                    .chain(playable_huff_and_puff_cards)
+                    .map(|c| c.id)
+                    .collect()
+            }
+        }
+    }
 }
 
 fn deck() -> Vec<Card> {
@@ -103,57 +163,6 @@ fn deck() -> Vec<Card> {
         }
     }
     cards
-}
-
-/// Returns possible moves
-fn get_moves(
-    state: State,
-    lead_player: usize,
-    trick_regular: [Option<Card>; PLAYER_COUNT],
-    trick_huff: [Option<Card>; PLAYER_COUNT],
-    trick_puff: [Option<Card>; PLAYER_COUNT],
-    hand: Vec<Card>,
-    current_player: usize,
-) -> Vec<i32> {
-    match state {
-        // 4 bid options
-        State::Bid => (0..=3).collect(),
-        // Regular trick play
-        State::Play => {
-            let lead_suit = trick_regular[lead_player].map(|c| c.suit);
-            let puff_played = trick_puff[current_player].is_some();
-            let huff_played = trick_huff[current_player].is_some();
-
-            // Find playable regular cards
-
-            // Find all cards in the current lead suit
-            let follow_suit_cards: Vec<&Card> = hand
-                .iter()
-                .filter(|c| lead_suit.map_or(false, |s| c.suit == s))
-                .collect();
-
-            let playable_regular_cards: Vec<&Card> = if follow_suit_cards.is_empty() {
-                // No lead card or no cards in lead suit - any card in hand
-                // can be played
-                hand.iter().filter(|c| c.is_regular()).collect()
-            } else {
-                // Must follow suit in 3 Tricky Pigs
-                follow_suit_cards
-            };
-
-            // Find playable huff and puff cards
-            let playable_huff_and_puff_cards = hand
-                .iter()
-                .filter(|c| (!puff_played && c.is_puff()) || (!huff_played && c.is_huff()));
-
-            // Return all playable cards
-            playable_regular_cards
-                .into_iter()
-                .chain(playable_huff_and_puff_cards)
-                .map(|c| c.id)
-                .collect()
-        }
-    }
 }
 
 /// Returns the player index that won the trick
@@ -481,18 +490,46 @@ mod tests {
         Card { id, value, suit }
     }
 
+    // Helper to create a game with specific state
+    fn game_with_hand(
+        current_player: usize,
+        lead_player: usize,
+        hand: Vec<Card>,
+        trick_regular: [Option<Card>; PLAYER_COUNT],
+        trick_huff: [Option<Card>; PLAYER_COUNT],
+        trick_puff: [Option<Card>; PLAYER_COUNT],
+        wolf_suit_broken: bool,
+    ) -> ThreeTrickyPigsGame {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[current_player] = hand;
+        ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player,
+            lead_player,
+            wolf_suit_broken,
+            current_trick_regular: trick_regular,
+            current_trick_huff: trick_huff,
+            current_trick_puff: trick_puff,
+            hands,
+            bids: [None; PLAYER_COUNT],
+        }
+    }
+
     // Bid state returns all 4 bid options
     #[test]
     fn test_get_moves_bid_state() {
-        let moves = get_moves(
-            State::Bid,
-            0,
-            no_modifiers(),
-            no_modifiers(),
-            no_modifiers(),
-            vec![],
-            0,
-        );
+        let game = ThreeTrickyPigsGame {
+            state: State::Bid,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            current_trick_regular: no_modifiers(),
+            current_trick_huff: no_modifiers(),
+            current_trick_puff: no_modifiers(),
+            hands: Default::default(),
+            bids: [None; PLAYER_COUNT],
+        };
+        let moves = game.get_moves();
         assert_eq!(moves, vec![0, 1, 2, 3]);
     }
 
@@ -505,15 +542,16 @@ mod tests {
             card_with_id(2, 25, Suit::Bricks),
         ];
 
-        let moves = get_moves(
-            State::Play,
-            0,              // lead player
-            no_modifiers(), // no cards played yet
-            no_modifiers(),
-            no_modifiers(),
+        let game = game_with_hand(
+            0,
+            0,
             hand,
-            0, // current player is lead player
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
         );
+        let moves = game.get_moves();
 
         // All cards playable when leading
         assert!(moves.contains(&0));
@@ -538,15 +576,16 @@ mod tests {
             suit: Suit::Straw,
         });
 
-        let moves = get_moves(
-            State::Play,
+        let game = game_with_hand(
+            1,
             0,
+            hand,
             trick_regular,
             no_modifiers(),
             no_modifiers(),
-            hand,
-            1, // player 1's turn
+            true,
         );
+        let moves = game.get_moves();
 
         // Only Straw cards playable
         assert!(moves.contains(&0)); // Straw
@@ -571,15 +610,16 @@ mod tests {
             suit: Suit::Straw,
         });
 
-        let moves = get_moves(
-            State::Play,
+        let game = game_with_hand(
+            1,
             0,
+            hand,
             trick_regular,
             no_modifiers(),
             no_modifiers(),
-            hand,
-            1,
+            true,
         );
+        let moves = game.get_moves();
 
         // No Straw in hand, can play anything
         assert!(moves.contains(&0));
@@ -595,15 +635,16 @@ mod tests {
             card_with_id(1, 2, Suit::Huff),
         ];
 
-        let moves = get_moves(
-            State::Play,
+        let game = game_with_hand(
             0,
-            no_modifiers(),
-            no_modifiers(), // no huff played
-            no_modifiers(),
+            0,
             hand,
-            0,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
         );
+        let moves = game.get_moves();
 
         assert!(moves.contains(&0)); // regular card
         assert!(moves.contains(&1)); // huff card
@@ -624,15 +665,8 @@ mod tests {
             suit: Suit::Huff,
         });
 
-        let moves = get_moves(
-            State::Play,
-            0,
-            no_modifiers(),
-            trick_huff, // huff already played by player 0
-            no_modifiers(),
-            hand,
-            0,
-        );
+        let game = game_with_hand(0, 0, hand, no_modifiers(), trick_huff, no_modifiers(), true);
+        let moves = game.get_moves();
 
         assert!(moves.contains(&0)); // regular card still playable
         assert!(!moves.contains(&1)); // huff card NOT playable
@@ -646,15 +680,16 @@ mod tests {
             card_with_id(1, 3, Suit::Puff),
         ];
 
-        let moves = get_moves(
-            State::Play,
+        let game = game_with_hand(
             0,
-            no_modifiers(),
-            no_modifiers(),
-            no_modifiers(), // no puff played
+            0,
             hand,
-            0,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
         );
+        let moves = game.get_moves();
 
         assert!(moves.contains(&0)); // regular card
         assert!(moves.contains(&1)); // puff card
@@ -675,15 +710,8 @@ mod tests {
             suit: Suit::Puff,
         });
 
-        let moves = get_moves(
-            State::Play,
-            0,
-            no_modifiers(),
-            no_modifiers(),
-            trick_puff, // puff already played by player 0
-            hand,
-            0,
-        );
+        let game = game_with_hand(0, 0, hand, no_modifiers(), no_modifiers(), trick_puff, true);
+        let moves = game.get_moves();
 
         assert!(moves.contains(&0)); // regular card still playable
         assert!(!moves.contains(&1)); // puff card NOT playable
@@ -698,15 +726,16 @@ mod tests {
             card_with_id(2, 3, Suit::Puff),
         ];
 
-        let moves = get_moves(
-            State::Play,
+        let game = game_with_hand(
             0,
-            no_modifiers(),
-            no_modifiers(),
-            no_modifiers(),
+            0,
             hand,
-            0,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
         );
+        let moves = game.get_moves();
 
         assert!(moves.contains(&0)); // regular
         assert!(moves.contains(&1)); // huff
@@ -730,15 +759,16 @@ mod tests {
             suit: Suit::Straw,
         });
 
-        let moves = get_moves(
-            State::Play,
+        let game = game_with_hand(
+            1,
             0,
+            hand,
             trick_regular,
             no_modifiers(),
             no_modifiers(),
-            hand,
-            1,
+            true,
         );
+        let moves = game.get_moves();
 
         assert!(moves.contains(&0)); // Straw - must follow
         assert!(!moves.contains(&1)); // Bricks - can't play
@@ -766,17 +796,66 @@ mod tests {
             suit: Suit::Sticks,
         });
 
-        let moves = get_moves(
-            State::Play,
-            0, // player 0 led
+        let game = game_with_hand(
+            2,
+            0,
+            hand,
             trick_regular,
             no_modifiers(),
             no_modifiers(),
-            hand,
-            2, // player 2's turn
+            true,
         );
+        let moves = game.get_moves();
 
         assert!(moves.contains(&0)); // Sticks - follows suit
         assert!(!moves.contains(&1)); // Bricks - can't play
+    }
+
+    // Cannot lead wolf when wolf not broken
+    #[test]
+    fn test_get_moves_cannot_lead_wolf_when_not_broken() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 15, Suit::Wolf),
+        ];
+
+        // Leading (no cards played), wolf not broken
+        let game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            false,
+        );
+        let moves = game.get_moves();
+
+        assert!(moves.contains(&0)); // Straw - can lead
+        assert!(!moves.contains(&1)); // Wolf - cannot lead when not broken
+    }
+
+    // Can lead wolf when wolf is broken
+    #[test]
+    fn test_get_moves_can_lead_wolf_when_broken() {
+        let hand = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(1, 15, Suit::Wolf),
+        ];
+
+        // Leading (no cards played), wolf IS broken
+        let game = game_with_hand(
+            0,
+            0,
+            hand,
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+        let moves = game.get_moves();
+
+        assert!(moves.contains(&0)); // Straw - can lead
+        assert!(moves.contains(&1)); // Wolf - can lead when broken
     }
 }
