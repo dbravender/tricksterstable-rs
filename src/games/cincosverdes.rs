@@ -1086,6 +1086,11 @@ impl ismcts::Game for CincosVerdesGame {
 
     #[allow(clippy::needless_range_loop)]
     fn randomize_determination(&mut self, observer: Self::PlayerTag) {
+        // Force simulation to end after current hand for faster/better ISMCTS evaluation
+        // Reset scores so bot optimizes for current hand, not past results
+        self.round = ROUNDS as i32;
+        self.scores = [0; PLAYER_COUNT];
+
         let rng = &mut thread_rng();
 
         // Collect all non-observer face_down_cards into a combined hidden pool
@@ -1167,23 +1172,41 @@ impl ismcts::Game for CincosVerdesGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        // Evaluate at end of hand (game over since round is set to 4 in randomize_determination)
         if self.state != State::GameOver {
-            return None; // ISMCTS continues simulation
+            return None; // Hand still in progress
         }
 
-        // Exponential reward - amplifies score differences
-        // Lowest bust rate (~38%) and avg sum closest to target (25)
-        let scores = self.scores;
-        let player_score = scores[player] as f64;
-        let max_score = *scores.iter().max().unwrap() as f64;
-        let min_score = *scores.iter().min().unwrap() as f64;
+        let my_sum = self.trick_sums[player];
+        let busted = my_sum > TARGET_SUM;
 
-        if max_score == min_score {
-            return Some(0.0);
+        if busted {
+            // Stronger penalty for busting, scaled by how much over
+            let over = (my_sum - TARGET_SUM) as f64;
+            Some(-1.0 - (over * 0.1).min(1.0)) // -1.0 to -2.0
+        } else {
+            // Exponential reward among non-busted players
+            let valid_sums: Vec<i32> = self
+                .trick_sums
+                .iter()
+                .filter(|&&s| s <= TARGET_SUM)
+                .copied()
+                .collect();
+
+            if valid_sums.is_empty() {
+                return Some(0.0); // Everyone busted
+            }
+
+            let max = *valid_sums.iter().max().unwrap();
+            let min = *valid_sums.iter().min().unwrap();
+
+            if max == min {
+                Some(0.5) // Tied for first
+            } else {
+                let linear = 2.0 * (my_sum as f64 - min as f64) / (max as f64 - min as f64) - 1.0;
+                Some(linear.signum() * linear.abs().powf(2.0))
+            }
         }
-        let linear = 2.0 * (player_score - min_score) / (max_score - min_score) - 1.0;
-        // Apply exponential transformation: sign(x) * |x|^2
-        Some(linear.signum() * linear.abs().powf(2.0))
     }
 }
 
