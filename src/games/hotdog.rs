@@ -1148,6 +1148,30 @@ impl HotdogGame {
             })
             .collect()
     }
+
+    /// Check if the picker made their bid
+    /// Returns (bid_succeeded, player_is_picker) for the given player
+    pub fn bid_result_for_player(&self, player: usize) -> (bool, bool) {
+        // If hand is not over, return false
+        if self.tricks_taken[0] + self.tricks_taken[1] < 12 {
+            return (false, false);
+        }
+
+        // Determine picker (either set, or player with most tricks if both passed)
+        let picker = if let Some(p) = self.picker {
+            p
+        } else if self.tricks_taken[0] > self.tricks_taken[1] {
+            0
+        } else {
+            1
+        };
+
+        let player_is_picker = picker == player;
+        let tricks_taken_by_picker = self.tricks_taken[picker];
+        let bid_succeeded = tricks_taken_by_picker >= self.winning_bid.required_tricks();
+
+        (bid_succeeded, player_is_picker)
+    }
 }
 
 impl ismcts::Game for HotdogGame {
@@ -1156,6 +1180,9 @@ impl ismcts::Game for HotdogGame {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        // Reset scores for single-hand evaluation
+        self.scores = [0; 2];
+
         let rng = &mut thread_rng();
         let mut remaining_cards: Vec<Card> = self.cards.clone();
         let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
@@ -1221,24 +1248,31 @@ impl ismcts::Game for HotdogGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        // Check if the game is completely over
         if let Some(winner) = self.winner {
-            // someone won the game
             if winner == player {
-                Some(1.0)
+                return Some(1.0);
             } else {
-                Some(0.0)
+                return Some(0.0);
             }
-        } else if self.scores == [0, 0] {
-            // the hand is not over
-            None
+        }
+
+        // Check if the hand is over (12 tricks played)
+        if self.tricks_taken[0] + self.tricks_taken[1] < 12 {
+            return None;
+        }
+
+        // Always use binary bid evaluation - tournament testing showed this performs best
+        // For the picker: success = made the bid
+        // For the setter: success = picker failed
+        let (bid_succeeded, player_is_picker) = self.bid_result_for_player(player);
+
+        if player_is_picker {
+            // Picker wants bid to succeed
+            Some(if bid_succeeded { 1.0 } else { -1.0 })
         } else {
-            let current_player_score = self.scores[player] as f64;
-            let other_player_score = self.scores[(player + 1) % 2] as f64;
-            if current_player_score > other_player_score {
-                Some(0.8 + ((current_player_score / 5.0) * 0.2))
-            } else {
-                Some(0.2 - ((other_player_score / 5.0) * 0.2))
-            }
+            // Setter wants bid to fail
+            Some(if bid_succeeded { -1.0 } else { 1.0 })
         }
     }
 }
