@@ -12,12 +12,17 @@ Planned flow:
 - We'll play the actual card on top of the huff and puff cards
 */
 
+use ismcts::IsmctsHandler;
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
+use serde::{Deserialize, Serialize};
+
 const PLAYER_COUNT: usize = 4;
 const HAND_SIZE: usize = 12;
 const ROUNDS: usize = 4;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Suit {
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub enum Suit {
     Straw,
     Sticks,
     Bricks,
@@ -26,8 +31,8 @@ enum Suit {
     Puff,
 }
 
-#[derive(Copy, Clone)]
-enum Bid {
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum Bid {
     /// Try to win 0 tricks
     Sleep,
     /// Win 2 tricks
@@ -38,19 +43,20 @@ enum Bid {
     Eat,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum State {
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub enum State {
     /// Select one of the bid cards
+    #[default]
     Bid,
     /// Standard must-follow trick taking
     Play,
 }
 
-#[derive(Copy, Clone, Debug)]
-struct Card {
-    value: i32,
-    suit: Suit,
-    id: i32,
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Card {
+    pub value: i32,
+    pub suit: Suit,
+    pub id: i32,
 }
 
 impl Card {
@@ -65,36 +71,63 @@ impl Card {
     }
 }
 
-struct ThreeTrickyPigsGame {
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ThreeTrickyPigsGame {
     /// Current game state
-    state: State,
+    pub state: State,
     /// Current player
-    current_player: usize,
+    pub current_player: usize,
     /// Lead player for the current trick
-    lead_player: usize,
+    pub lead_player: usize,
     /// Whether or not the Wolf suit has been broken yet
-    wolf_suit_broken: bool,
+    pub wolf_suit_broken: bool,
     /// Regular cards in a trick (indexed by player)
-    current_trick_regular: [Option<Card>; PLAYER_COUNT],
+    pub current_trick_regular: [Option<Card>; PLAYER_COUNT],
     /// Huff cards in the current trick (indexed by player)
-    current_trick_huff: [Option<Card>; PLAYER_COUNT],
+    pub current_trick_huff: [Option<Card>; PLAYER_COUNT],
     /// Puff cards in the current trick (indexed by player)
-    current_trick_puff: [Option<Card>; PLAYER_COUNT],
+    pub current_trick_puff: [Option<Card>; PLAYER_COUNT],
     /// Each player's hand
-    hands: [Vec<Card>; PLAYER_COUNT],
+    pub hands: [Vec<Card>; PLAYER_COUNT],
     /// Each player's current bid
-    bids: [Option<Bid>; PLAYER_COUNT],
+    pub bids: [Option<Bid>; PLAYER_COUNT],
     /// Tricks won by each player this round
-    tricks_won: [usize; PLAYER_COUNT],
+    pub tricks_won: [usize; PLAYER_COUNT],
     /// Current round (1-4)
-    current_round: usize,
+    pub current_round: usize,
     /// Total scores for each player
-    scores: [i32; PLAYER_COUNT],
+    pub scores: [i32; PLAYER_COUNT],
+    /// Known voids for each player (used for ISMCTS determination)
+    pub voids: [Vec<Suit>; PLAYER_COUNT],
+    /// Skip generating change animations (for MCTS simulations)
+    pub no_changes: bool,
 }
 
 impl ThreeTrickyPigsGame {
+    /// Create a new game with shuffled and dealt cards
+    pub fn new() -> Self {
+        let mut game = ThreeTrickyPigsGame {
+            current_round: 1,
+            ..Default::default()
+        };
+        game.deal();
+        game
+    }
+
+    /// Deal cards for a new round
+    pub fn deal(&mut self) {
+        let mut cards = deck();
+        let rng = &mut thread_rng();
+        cards.shuffle(rng);
+
+        // Deal 12 cards to each player (includes huff/puff cards)
+        for player in 0..PLAYER_COUNT {
+            self.hands[player] = cards.drain(..HAND_SIZE).collect();
+        }
+    }
+
     /// Returns possible moves
-    fn get_moves(&self) -> Vec<i32> {
+    pub fn get_moves(&self) -> Vec<i32> {
         match self.state {
             // 4 bid options
             State::Bid => (0..=3).collect(),
@@ -114,13 +147,19 @@ impl ThreeTrickyPigsGame {
                     .filter(|c| lead_suit.map_or(false, |s| c.suit == s))
                     .collect();
 
+                // Check if player has any pig cards (non-wolf regular cards)
+                let has_pig_cards = hand.iter().any(|c| c.is_regular() && c.suit != Suit::Wolf);
+
                 let playable_regular_cards: Vec<&Card> = if follow_suit_cards.is_empty() {
                     // No lead card or no cards in lead suit - any regular card in hand
-                    // can be played (but wolves only if broken or not leading)
+                    // can be played (wolves allowed if broken, or not leading, or player has no pigs)
                     hand.iter()
                         .filter(|c| {
                             c.is_regular()
-                                && (c.suit != Suit::Wolf || self.wolf_suit_broken || !is_leading)
+                                && (c.suit != Suit::Wolf
+                                    || self.wolf_suit_broken
+                                    || !is_leading
+                                    || !has_pig_cards)
                         })
                         .collect()
                 } else {
@@ -144,7 +183,7 @@ impl ThreeTrickyPigsGame {
     }
 
     /// Apply a move to the game state
-    fn apply_move(&mut self, card_id: i32) {
+    pub fn apply_move(&mut self, card_id: i32) {
         // Validate move is legal
         let valid_moves = self.get_moves();
         if !valid_moves.contains(&card_id) {
@@ -175,7 +214,8 @@ impl ThreeTrickyPigsGame {
                 }
             }
             State::Play => {
-                let hand = &mut self.hands[self.current_player];
+                let current_player = self.current_player;
+                let hand = &mut self.hands[current_player];
 
                 // Find and remove the card from hand
                 let card_index = hand.iter().position(|c| c.id == card_id).unwrap();
@@ -183,18 +223,24 @@ impl ThreeTrickyPigsGame {
 
                 // Place card in appropriate trick slot
                 if card.is_huff() {
-                    self.current_trick_huff[self.current_player] = Some(card);
+                    self.current_trick_huff[current_player] = Some(card);
                 } else if card.is_puff() {
-                    self.current_trick_puff[self.current_player] = Some(card);
+                    self.current_trick_puff[current_player] = Some(card);
                 } else {
                     // After a regular card (pig or wolf) is played the move is
                     // committed
-                    self.current_trick_regular[self.current_player] = Some(card);
+                    self.current_trick_regular[current_player] = Some(card);
+
+                    // Track voids - if player couldn't follow suit
+                    let lead_suit = self.current_trick_regular[self.lead_player].map(|c| c.suit);
+                    if let Some(ls) = lead_suit {
+                        if card.suit != ls && !self.voids[current_player].contains(&ls) {
+                            self.voids[current_player].push(ls);
+                        }
+                    }
 
                     // Check if wolf was played when couldn't follow suit (breaks wolf)
                     if card.suit == Suit::Wolf && !self.wolf_suit_broken {
-                        let lead_suit =
-                            self.current_trick_regular[self.lead_player].map(|c| c.suit);
                         // Wolf is broken if player couldn't follow lead suit
                         // (lead_suit exists and player played wolf instead)
                         if lead_suit.is_some() && lead_suit != Some(Suit::Wolf) {
@@ -203,7 +249,7 @@ impl ThreeTrickyPigsGame {
                     }
 
                     // Advance to next player
-                    self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+                    self.current_player = (current_player + 1) % PLAYER_COUNT;
 
                     // Check if trick is complete (all players have played a regular card)
                     let trick_complete = self.current_trick_regular.iter().all(|c| c.is_some());
@@ -244,9 +290,25 @@ impl ThreeTrickyPigsGame {
         }
     }
 
+    /// Check if a player made their bid
+    pub fn bid_succeeded(&self, player: usize) -> bool {
+        let tricks = self.tricks_won[player];
+        match self.bids[player] {
+            Some(Bid::Sleep) => tricks == 0,
+            Some(Bid::Play) => tricks == 2,
+            Some(Bid::Work) => tricks >= 3,
+            Some(Bid::Eat) => {
+                let max_tricks = *self.tricks_won.iter().max().unwrap();
+                let players_with_max = self.tricks_won.iter().filter(|&&t| t == max_tricks).count();
+                tricks == max_tricks && players_with_max == 1
+            }
+            None => false,
+        }
+    }
+
     /// End the current round and calculate scores
     /// Note: Dealing new hands should be done separately
-    fn end_round(&mut self) {
+    pub fn end_round(&mut self) {
         // Calculate scores for each player
         for player in 0..PLAYER_COUNT {
             let tricks = self.tricks_won[player] as i32;
@@ -303,16 +365,122 @@ impl ThreeTrickyPigsGame {
             self.wolf_suit_broken = false;
             self.state = State::Bid;
             self.current_player = self.lead_player;
+            // Clear hands - leftover huff/puff cards have been scored
+            self.hands = Default::default();
+            self.voids = Default::default();
         }
     }
 
     /// Check if the game is over (4 rounds completed)
-    fn is_game_over(&self) -> bool {
+    pub fn is_game_over(&self) -> bool {
         self.current_round > ROUNDS
     }
 }
 
-fn deck() -> Vec<Card> {
+/// ISMCTS Game trait implementation
+impl ismcts::Game for ThreeTrickyPigsGame {
+    type Move = i32;
+    type PlayerTag = usize;
+    type MoveList = Vec<i32>;
+
+    fn randomize_determination(&mut self, observer: Self::PlayerTag) {
+        // Force single-hand evaluation: set to last round and reset scores
+        self.current_round = ROUNDS;
+        self.scores = [0; PLAYER_COUNT];
+
+        let rng = &mut thread_rng();
+
+        // Randomize hidden bids - each non-observer player could have chosen any bid
+        let all_bids = [Bid::Sleep, Bid::Play, Bid::Work, Bid::Eat];
+        for player in 0..PLAYER_COUNT {
+            if player != observer && self.bids[player].is_some() {
+                self.bids[player] = Some(*all_bids.choose(rng).unwrap());
+            }
+        }
+
+        // Shuffle hands between each pair of non-observer players, respecting void constraints
+        // This properly randomizes hidden information while maintaining valid hands
+        for p1 in 0..PLAYER_COUNT {
+            for p2 in (p1 + 1)..PLAYER_COUNT {
+                if p1 == observer || p2 == observer {
+                    continue;
+                }
+
+                // Combine voids from both players - cards in these suits can't be exchanged
+                let mut combined_voids = [false; 6]; // 6 suits: Straw, Sticks, Bricks, Wolf, Huff, Puff
+                for suit in &self.voids[p1] {
+                    combined_voids[*suit as usize] = true;
+                }
+                for suit in &self.voids[p2] {
+                    combined_voids[*suit as usize] = true;
+                }
+
+                // Shuffle cards between these two players for non-void suits
+                let mut hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
+                crate::utils::shuffle_and_divide_matching_cards(
+                    |c: &Card| !combined_voids[c.suit as usize],
+                    &mut hands,
+                    rng,
+                );
+                self.hands[p1] = hands[0].clone();
+                self.hands[p2] = hands[1].clone();
+            }
+        }
+    }
+
+    fn current_player(&self) -> Self::PlayerTag {
+        self.current_player
+    }
+
+    fn next_player(&self) -> Self::PlayerTag {
+        (self.current_player + 1) % PLAYER_COUNT
+    }
+
+    fn available_moves(&self) -> Self::MoveList {
+        self.get_moves()
+    }
+
+    fn make_move(&mut self, mov: &Self::Move) {
+        self.apply_move(*mov);
+    }
+
+    fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        // Only evaluate when the round/game is over
+        if !self.is_game_over() {
+            return None;
+        }
+
+        // Rank-based evaluation - tournament testing showed this performs best
+        let scores = self.scores;
+        let mut score_ranks: Vec<(i32, usize)> =
+            scores.iter().enumerate().map(|(i, &s)| (s, i)).collect();
+        score_ranks.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
+
+        let player_rank = score_ranks.iter().position(|(_, p)| *p == player).unwrap();
+        match player_rank {
+            0 => Some(1.0),
+            1 => Some(0.33),
+            2 => Some(-0.33),
+            3 => Some(-1.0),
+            _ => Some(0.0),
+        }
+    }
+}
+
+/// Get the best move using ISMCTS
+pub fn get_mcts_move(game: &ThreeTrickyPigsGame, iterations: i32) -> i32 {
+    let mut new_game = game.clone();
+    new_game.no_changes = true;
+    let mut ismcts = IsmctsHandler::new(new_game);
+    let parallel_threads: usize = 4;
+    ismcts.run_iterations(
+        parallel_threads,
+        (iterations as f64 / parallel_threads as f64) as usize,
+    );
+    ismcts.best_move().expect("should have a move to make")
+}
+
+pub fn deck() -> Vec<Card> {
     let distributions: Vec<(Suit, Vec<i32>)> = vec![
         (Suit::Straw, (1..=10).collect()),
         (Suit::Sticks, (1..=10).collect()),
@@ -331,7 +499,7 @@ fn deck() -> Vec<Card> {
             cards.push(Card {
                 value: *value,
                 suit: *suit,
-                id: id,
+                id,
             });
             id += 1;
         }
@@ -685,10 +853,8 @@ mod tests {
             current_trick_huff: trick_huff,
             current_trick_puff: trick_puff,
             hands,
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         }
     }
 
@@ -707,7 +873,7 @@ mod tests {
             bids: [None; PLAYER_COUNT],
             tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
         let moves = game.get_moves();
         assert_eq!(moves, vec![0, 1, 2, 3]);
@@ -1045,17 +1211,8 @@ mod tests {
     fn game_in_bid_state() -> ThreeTrickyPigsGame {
         ThreeTrickyPigsGame {
             state: State::Bid,
-            current_player: 0,
-            lead_player: 0,
-            wolf_suit_broken: false,
-            current_trick_regular: no_modifiers(),
-            current_trick_huff: no_modifiers(),
-            current_trick_puff: no_modifiers(),
-            hands: Default::default(),
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         }
     }
 
@@ -1232,10 +1389,8 @@ mod tests {
             current_trick_huff: no_modifiers(),
             current_trick_puff: no_modifiers(),
             hands,
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         game.apply_move(0); // Player 0 plays 5
@@ -1275,10 +1430,8 @@ mod tests {
             current_trick_huff: no_modifiers(),
             current_trick_puff: no_modifiers(),
             hands,
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         assert!(!game.wolf_suit_broken);
@@ -1391,10 +1544,8 @@ mod tests {
             current_trick_huff: no_modifiers(),
             current_trick_puff: no_modifiers(),
             hands,
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         // Player 0 plays huff (+4) then 2 = 6 total
@@ -1430,9 +1581,8 @@ mod tests {
             current_trick_puff: no_modifiers(),
             hands,
             bids: [Some(Bid::Work); PLAYER_COUNT], // Everyone bid Work
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         assert_eq!(game.current_round, 1);
@@ -1466,10 +1616,8 @@ mod tests {
             current_trick_huff: no_modifiers(),
             current_trick_puff: no_modifiers(),
             hands,
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         game.apply_move(0);
@@ -1504,10 +1652,8 @@ mod tests {
             current_trick_huff: no_modifiers(),
             current_trick_puff: no_modifiers(),
             hands,
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         game.apply_move(0); // Player 0 plays regular, keeps huff and puff
@@ -1538,9 +1684,8 @@ mod tests {
             current_trick_puff: no_modifiers(),
             hands,
             bids: [Some(Bid::Sleep), None, None, None],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         game.apply_move(0);
@@ -1584,9 +1729,8 @@ mod tests {
             current_trick_puff: no_modifiers(),
             hands,
             bids: [Some(Bid::Play), None, None, None],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         // Trick 1
@@ -1641,9 +1785,8 @@ mod tests {
             current_trick_puff: no_modifiers(),
             hands,
             bids: [Some(Bid::Work), None, None, None],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         // Play 3 tricks
@@ -1682,9 +1825,8 @@ mod tests {
             current_trick_puff: no_modifiers(),
             hands,
             bids: [Some(Bid::Eat), None, None, None],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         game.apply_move(0);
@@ -1702,17 +1844,11 @@ mod tests {
         // Players 0 and 1 each win 1 trick - tied for most
         let mut game = ThreeTrickyPigsGame {
             state: State::Play,
-            current_player: 0,
-            lead_player: 0,
             wolf_suit_broken: true,
-            current_trick_regular: no_modifiers(),
-            current_trick_huff: no_modifiers(),
-            current_trick_puff: no_modifiers(),
-            hands: Default::default(),
             bids: [Some(Bid::Eat), Some(Bid::Eat), None, None],
             tricks_won: [1, 1, 0, 0], // Tied for most
             current_round: 1,
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         game.end_round();
@@ -1735,17 +1871,10 @@ mod tests {
 
         let mut game = ThreeTrickyPigsGame {
             state: State::Play,
-            current_player: 0,
-            lead_player: 0,
             wolf_suit_broken: true,
-            current_trick_regular: no_modifiers(),
-            current_trick_huff: no_modifiers(),
-            current_trick_puff: no_modifiers(),
             hands,
-            bids: [None; PLAYER_COUNT],
-            tricks_won: [0; PLAYER_COUNT],
             current_round: 4, // Last round
-            scores: [0; PLAYER_COUNT],
+            ..Default::default()
         };
 
         assert!(!game.is_game_over());
