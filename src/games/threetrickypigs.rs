@@ -15,11 +15,17 @@ Planned flow:
 use ismcts::IsmctsHandler;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 const PLAYER_COUNT: usize = 4;
 const HAND_SIZE: usize = 12;
 const ROUNDS: usize = 4;
+
+// Special move values
+const UNDO: i32 = -2; // Undo modifier or bid selection (human player only)
+
+use std::collections::HashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Suit {
@@ -29,6 +35,67 @@ pub enum Suit {
     Wolf,
     Huff,
     Puff,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Location {
+    #[default]
+    Deck,
+    Hand,
+    Score,
+    Message,
+    Play,
+    TricksTaken,
+    ReorderHand,
+    ScoreCards,
+    Modifier,     // Location for staged huff/puff cards
+    UndoOption,   // Location for the undo button
+    BidSelection, // Location for bid cards during selection
+    BidConfirm,   // Location for selected bid card during confirmation
+    BidOffscreen, // Location for bid cards moved offscreen
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeType {
+    #[default]
+    Deal,
+    Play,
+    Shuffle,
+    ShowPlayable,
+    HidePlayable,
+    ShowWinningCard,
+    Message,
+    Score,
+    GameOver,
+    OptionalPause,
+    TricksToWinner,
+    Reorder,
+    ShowScoringCards,
+    UpdateTrickCount,
+    PlayModifier, // Play a huff or puff card
+    ShowBidCards, // Show all bid cards for selection
+    MoveBidCard,  // Move a bid card to a location
+    HideBidCards, // Hide all bid cards
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Change {
+    #[serde(rename(serialize = "type", deserialize = "type"))]
+    pub change_type: ChangeType,
+    pub object_id: i32,
+    pub dest: Location,
+    pub start_score: i32,
+    pub end_score: i32,
+    pub offset: usize,
+    pub player: usize,
+    pub length: usize,
+    pub message: Option<String>,
+    pub animate_score: bool,
+    pub trick_count: i32,
+    pub disabled: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -43,11 +110,25 @@ pub enum Bid {
     Eat,
 }
 
+impl Bid {
+    /// Convert bid to display string for UI
+    pub fn to_display_string(&self) -> &'static str {
+        match self {
+            Bid::Sleep => "0",
+            Bid::Play => "2",
+            Bid::Work => "3+",
+            Bid::Eat => "⬆",
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum State {
     /// Select one of the bid cards
     #[default]
     Bid,
+    /// Confirm the selected bid (human player only)
+    BidConfirm,
     /// Standard must-follow trick taking
     Play,
 }
@@ -91,6 +172,8 @@ pub struct ThreeTrickyPigsGame {
     pub hands: [Vec<Card>; PLAYER_COUNT],
     /// Each player's current bid
     pub bids: [Option<Bid>; PLAYER_COUNT],
+    /// Selected bid pending confirmation (for human player)
+    pub selected_bid: Option<Bid>,
     /// Tricks won by each player this round
     pub tricks_won: [usize; PLAYER_COUNT],
     /// Current round (1-4)
@@ -99,23 +182,45 @@ pub struct ThreeTrickyPigsGame {
     pub scores: [i32; PLAYER_COUNT],
     /// Known voids for each player (used for ISMCTS determination)
     pub voids: [Vec<Suit>; PLAYER_COUNT],
+    /// Players who can undo (typically just the human player)
+    #[serde(default)]
+    pub undo_players: HashSet<usize>,
     /// Skip generating change animations (for MCTS simulations)
     pub no_changes: bool,
+    /// Animation changes for UI
+    pub changes: Vec<Vec<Change>>,
+    /// Winner of the game (if game over)
+    pub winner: Option<usize>,
 }
 
 impl ThreeTrickyPigsGame {
     /// Create a new game with shuffled and dealt cards
     pub fn new() -> Self {
+        let mut rng = thread_rng();
+        let starting_player = rng.gen_range(0..PLAYER_COUNT);
         let mut game = ThreeTrickyPigsGame {
             current_round: 1,
+            lead_player: starting_player,
+            current_player: starting_player,
+            undo_players: HashSet::from([0]), // Human player can undo
             ..Default::default()
         };
-        game.deal();
+        game.deal(true);
         game
     }
 
+    /// Set which players can undo moves
+    pub fn with_undo_players(&mut self, players: HashSet<usize>) {
+        self.undo_players = players;
+    }
+
+    /// Check if current player can undo
+    fn can_undo(&self) -> bool {
+        self.undo_players.contains(&self.current_player)
+    }
+
     /// Deal cards for a new round
-    pub fn deal(&mut self) {
+    pub fn deal(&mut self, animate: bool) {
         let mut cards = deck();
         let rng = &mut thread_rng();
         cards.shuffle(rng);
@@ -124,6 +229,311 @@ impl ThreeTrickyPigsGame {
         for player in 0..PLAYER_COUNT {
             self.hands[player] = cards.drain(..HAND_SIZE).collect();
         }
+
+        // Sort human player's hand by suit then value
+        self.sort_hand(0);
+
+        if !animate {
+            return;
+        }
+
+        let shuffle_index = self.new_change();
+        let deal_index = self.new_change();
+
+        self.add_change(
+            shuffle_index,
+            Change {
+                change_type: ChangeType::Shuffle,
+                object_id: 0,
+                dest: Location::Deck,
+                ..Default::default()
+            },
+        );
+
+        for hand_index in 0..HAND_SIZE {
+            for player in 0..PLAYER_COUNT {
+                if hand_index < self.hands[player].len() {
+                    let card = self.hands[player][hand_index];
+                    self.add_change(
+                        deal_index,
+                        Change {
+                            change_type: ChangeType::Deal,
+                            object_id: card.id,
+                            dest: Location::Hand,
+                            player,
+                            offset: hand_index,
+                            length: self.hands[player].len(),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
+
+        self.show_playable();
+        self.show_message();
+    }
+
+    /// Sort a player's hand by suit then value
+    fn sort_hand(&mut self, player: usize) {
+        self.hands[player].sort_by(|a, b| {
+            // Sort order: Straw, Sticks, Bricks, Wolf, Huff, Puff
+            let suit_order = |s: &Suit| match s {
+                Suit::Straw => 0,
+                Suit::Sticks => 1,
+                Suit::Bricks => 2,
+                Suit::Wolf => 3,
+                Suit::Huff => 4,
+                Suit::Puff => 5,
+            };
+            match suit_order(&a.suit).cmp(&suit_order(&b.suit)) {
+                std::cmp::Ordering::Equal => a.value.cmp(&b.value),
+                other => other,
+            }
+        });
+    }
+
+    #[inline]
+    fn new_change(&mut self) -> usize {
+        self.changes.push(vec![]);
+        self.changes.len() - 1
+    }
+
+    #[inline]
+    fn add_change(&mut self, index: usize, change: Change) {
+        if self.no_changes {
+            return;
+        }
+        self.changes[index].push(change);
+    }
+
+    fn reorder_hand(&mut self, player: usize, force_new_animation: bool) {
+        if self.no_changes {
+            return;
+        }
+        if self.changes.is_empty() || force_new_animation {
+            self.new_change();
+        }
+        let length = self.hands[player].len();
+        let index = self.changes.len() - 1;
+        self.changes[index].extend(self.hands[player].iter().enumerate().map(|(offset, card)| {
+            Change {
+                change_type: ChangeType::Reorder,
+                dest: Location::Hand,
+                object_id: card.id,
+                player,
+                offset,
+                length,
+                ..Default::default()
+            }
+        }));
+    }
+
+    fn show_playable(&mut self) {
+        if self.changes.is_empty() {
+            self.changes = vec![vec![]];
+        }
+        let change_index = self.changes.len() - 1;
+
+        if self.current_player == 0 {
+            let moves = self.get_moves();
+            let undo_available = moves.contains(&UNDO);
+
+            for id in moves {
+                // For bid state, don't show cards as playable (bids are shown differently)
+                if self.state == State::Bid {
+                    continue;
+                }
+                self.add_change(
+                    change_index,
+                    Change {
+                        object_id: id,
+                        change_type: ChangeType::ShowPlayable,
+                        dest: Location::Hand,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Also highlight staged huff/puff cards that can be undone
+            if self.state == State::Play && self.can_undo() {
+                if let Some(huff_card) = self.current_trick_huff[0] {
+                    self.add_change(
+                        change_index,
+                        Change {
+                            object_id: huff_card.id,
+                            change_type: ChangeType::ShowPlayable,
+                            dest: Location::Modifier,
+                            player: 0,
+                            ..Default::default()
+                        },
+                    );
+                }
+                if let Some(puff_card) = self.current_trick_puff[0] {
+                    self.add_change(
+                        change_index,
+                        Change {
+                            object_id: puff_card.id,
+                            change_type: ChangeType::ShowPlayable,
+                            dest: Location::Modifier,
+                            player: 0,
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+
+            // Hide undo button if it's not available
+            if !undo_available && self.state == State::Play {
+                self.add_change(
+                    change_index,
+                    Change {
+                        object_id: UNDO,
+                        change_type: ChangeType::HidePlayable,
+                        dest: Location::UndoOption,
+                        player: 0,
+                        ..Default::default()
+                    },
+                );
+            }
+        } else {
+            self.hide_playable();
+        }
+    }
+
+    fn hide_playable(&mut self) {
+        if self.changes.is_empty() {
+            self.changes = vec![vec![]];
+        }
+        let change_index = self.changes.len() - 1;
+        let cards = self.hands[0].clone();
+        for card in cards {
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: card.id,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    player: 0,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Also hide playable on undo button
+        self.add_change(
+            change_index,
+            Change {
+                object_id: UNDO,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::UndoOption,
+                player: 0,
+                ..Default::default()
+            },
+        );
+
+        // Hide playable on staged modifier cards
+        if let Some(huff_card) = self.current_trick_huff[0] {
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: huff_card.id,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Modifier,
+                    player: 0,
+                    ..Default::default()
+                },
+            );
+        }
+        if let Some(puff_card) = self.current_trick_puff[0] {
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: puff_card.id,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Modifier,
+                    player: 0,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    fn show_message(&mut self) {
+        let message: Option<String> = match self.state {
+            State::Bid if self.current_player == 0 => Some("Select your bid".to_string()),
+            State::BidConfirm if self.current_player == 0 => {
+                Some("Tap to confirm or undo your bid".to_string())
+            }
+            _ => None,
+        };
+
+        let index = self.new_change();
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Message,
+                message,
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            },
+        );
+
+        // Show bid cards at selection positions when entering bid state
+        if self.state == State::Bid && self.current_player == 0 {
+            for i in 0..4 {
+                let bid_card_id = -(10 + i);
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::ShowBidCards,
+                        object_id: bid_card_id,
+                        dest: Location::BidSelection,
+                        offset: i as usize,
+                        ..Default::default()
+                    },
+                );
+            }
+            // Show "?" in trick counter when selecting bid
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::UpdateTrickCount,
+                    player: 0,
+                    trick_count: self.tricks_won[0] as i32,
+                    message: Some("?".to_string()),
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Show undo button when in bid confirm state
+        if self.state == State::BidConfirm && self.current_player == 0 {
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::ShowBidCards,
+                    object_id: UNDO,
+                    dest: Location::UndoOption,
+                    ..Default::default()
+                },
+            );
+            // Show staged bid in trick counter
+            if let Some(bid) = self.selected_bid {
+                self.add_change(
+                    index,
+                    Change {
+                        change_type: ChangeType::UpdateTrickCount,
+                        player: 0,
+                        trick_count: self.tricks_won[0] as i32,
+                        message: Some(bid.to_display_string().to_string()),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
     }
 
     /// Returns possible moves
@@ -131,6 +541,14 @@ impl ThreeTrickyPigsGame {
         match self.state {
             // 4 bid options
             State::Bid => (0..=3).collect(),
+            // Confirm or undo bid selection (human player)
+            State::BidConfirm => {
+                let mut moves = vec![0, 1, 2, 3]; // Tap to confirm (same as bid)
+                if self.can_undo() {
+                    moves.push(UNDO);
+                }
+                moves
+            }
             // Regular trick play
             State::Play => {
                 let lead_suit = self.current_trick_regular[self.lead_player].map(|c| c.suit);
@@ -172,18 +590,27 @@ impl ThreeTrickyPigsGame {
                     .iter()
                     .filter(|c| (!puff_played && c.is_puff()) || (!huff_played && c.is_huff()));
 
-                // Return all playable cards
-                playable_regular_cards
+                // Build the moves list
+                let mut moves: Vec<i32> = playable_regular_cards
                     .into_iter()
                     .chain(playable_huff_and_puff_cards)
                     .map(|c| c.id)
-                    .collect()
+                    .collect();
+
+                // Allow undo if huff or puff was played and player can undo
+                if self.can_undo() && (huff_played || puff_played) {
+                    moves.push(UNDO);
+                }
+
+                moves
             }
         }
     }
 
     /// Apply a move to the game state
     pub fn apply_move(&mut self, card_id: i32) {
+        self.changes = vec![vec![]];
+
         // Validate move is legal
         let valid_moves = self.get_moves();
         if !valid_moves.contains(&card_id) {
@@ -203,17 +630,198 @@ impl ThreeTrickyPigsGame {
                     3 => Bid::Eat,
                     _ => panic!("Invalid bid"),
                 };
-                self.bids[self.current_player] = Some(bid);
-                self.current_player = (self.current_player + 1) % PLAYER_COUNT;
 
-                // If all players have bid, move to play state
-                if self.bids.iter().all(|b| b.is_some()) {
-                    self.state = State::Play;
-                    // Reset current_player to lead_player for first trick
-                    self.current_player = self.lead_player;
+                // If human player, go to confirmation state
+                if self.can_undo() {
+                    self.selected_bid = Some(bid);
+                    self.state = State::BidConfirm;
+
+                    // Move selected bid card to center, others offscreen
+                    let index = self.new_change();
+                    for i in 0..4 {
+                        let bid_card_id = -(10 + i);
+                        if i == card_id {
+                            // Selected bid moves to center
+                            self.add_change(
+                                index,
+                                Change {
+                                    change_type: ChangeType::MoveBidCard,
+                                    object_id: bid_card_id,
+                                    dest: Location::BidConfirm,
+                                    offset: i as usize,
+                                    ..Default::default()
+                                },
+                            );
+                        } else {
+                            // Other bids move offscreen
+                            self.add_change(
+                                index,
+                                Change {
+                                    change_type: ChangeType::MoveBidCard,
+                                    object_id: bid_card_id,
+                                    dest: Location::BidOffscreen,
+                                    offset: i as usize,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+
+                    self.show_message();
+                } else {
+                    // AI players confirm immediately
+                    self.bids[self.current_player] = Some(bid);
+                    self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+
+                    // If all players have bid, move to play state
+                    if self.bids.iter().all(|b| b.is_some()) {
+                        self.state = State::Play;
+                        // Reset current_player to lead_player for first trick
+                        self.current_player = self.lead_player;
+                    }
+
+                    self.show_playable();
+                    self.show_message();
+                }
+            }
+            State::BidConfirm => {
+                if card_id == UNDO {
+                    // Undo bid selection - go back to bid state
+                    self.selected_bid = None;
+                    self.state = State::Bid;
+
+                    // Hide undo button
+                    let index = self.new_change();
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::HideBidCards,
+                            object_id: UNDO,
+                            dest: Location::BidOffscreen,
+                            ..Default::default()
+                        },
+                    );
+
+                    // Move all bid cards back to selection positions
+                    for i in 0..4 {
+                        let bid_card_id = -(10 + i);
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::MoveBidCard,
+                                object_id: bid_card_id,
+                                dest: Location::BidSelection,
+                                offset: i as usize,
+                                ..Default::default()
+                            },
+                        );
+                    }
+
+                    // Just update message, don't re-emit ShowBidCards (MoveBidCard handles positioning)
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::Message,
+                            message: Some("Select your bid".to_string()),
+                            object_id: -1,
+                            dest: Location::Message,
+                            ..Default::default()
+                        },
+                    );
+
+                    // Reset trick counter to show "?" when undoing bid
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::UpdateTrickCount,
+                            player: 0,
+                            trick_count: self.tricks_won[0] as i32,
+                            message: Some("?".to_string()),
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    // Confirm bid - move selected bid offscreen
+                    let selected_bid_index = match self.selected_bid {
+                        Some(Bid::Sleep) => 0,
+                        Some(Bid::Play) => 1,
+                        Some(Bid::Work) => 2,
+                        Some(Bid::Eat) => 3,
+                        None => 0,
+                    };
+
+                    let index = self.new_change();
+
+                    // Hide undo button
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::HideBidCards,
+                            object_id: UNDO,
+                            dest: Location::BidOffscreen,
+                            ..Default::default()
+                        },
+                    );
+
+                    let bid_card_id = -(10 + selected_bid_index);
+                    self.add_change(
+                        index,
+                        Change {
+                            change_type: ChangeType::MoveBidCard,
+                            object_id: bid_card_id,
+                            dest: Location::BidOffscreen,
+                            offset: selected_bid_index as usize,
+                            ..Default::default()
+                        },
+                    );
+
+                    // Update trick counter to show confirmed bid
+                    if let Some(bid) = self.selected_bid {
+                        self.add_change(
+                            index,
+                            Change {
+                                change_type: ChangeType::UpdateTrickCount,
+                                player: 0,
+                                trick_count: self.tricks_won[0] as i32,
+                                message: Some(bid.to_display_string().to_string()),
+                                ..Default::default()
+                            },
+                        );
+                    }
+
+                    self.bids[self.current_player] = self.selected_bid;
+                    self.selected_bid = None;
+                    self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+
+                    // If all players have bid, move to play state
+                    if self.bids.iter().all(|b| b.is_some()) {
+                        self.state = State::Play;
+                        // Reset current_player to lead_player for first trick
+                        self.current_player = self.lead_player;
+                    } else {
+                        self.state = State::Bid;
+                    }
+
+                    self.show_playable();
+                    self.show_message();
                 }
             }
             State::Play => {
+                // Handle undo of modifier cards
+                if card_id == UNDO {
+                    // Return huff and/or puff cards to hand
+                    let current_player = self.current_player;
+                    if let Some(huff_card) = self.current_trick_huff[current_player].take() {
+                        self.hands[current_player].push(huff_card);
+                    }
+                    if let Some(puff_card) = self.current_trick_puff[current_player].take() {
+                        self.hands[current_player].push(puff_card);
+                    }
+                    self.reorder_hand(current_player, true);
+                    self.show_playable();
+                    self.show_message();
+                    return;
+                }
                 let current_player = self.current_player;
                 let hand = &mut self.hands[current_player];
 
@@ -224,12 +832,55 @@ impl ThreeTrickyPigsGame {
                 // Place card in appropriate trick slot
                 if card.is_huff() {
                     self.current_trick_huff[current_player] = Some(card);
+
+                    // Animate huff card play to modifier area
+                    self.add_change(
+                        0,
+                        Change {
+                            change_type: ChangeType::PlayModifier,
+                            object_id: card_id,
+                            dest: Location::Modifier,
+                            player: current_player,
+                            ..Default::default()
+                        },
+                    );
+                    self.reorder_hand(current_player, false);
+                    self.show_playable();
+                    self.show_message();
                 } else if card.is_puff() {
                     self.current_trick_puff[current_player] = Some(card);
+
+                    // Animate puff card play to modifier area
+                    self.add_change(
+                        0,
+                        Change {
+                            change_type: ChangeType::PlayModifier,
+                            object_id: card_id,
+                            dest: Location::Modifier,
+                            player: current_player,
+                            ..Default::default()
+                        },
+                    );
+                    self.reorder_hand(current_player, false);
+                    self.show_playable();
+                    self.show_message();
                 } else {
                     // After a regular card (pig or wolf) is played the move is
                     // committed
                     self.current_trick_regular[current_player] = Some(card);
+
+                    // Animate card play
+                    self.add_change(
+                        0,
+                        Change {
+                            change_type: ChangeType::Play,
+                            object_id: card_id,
+                            dest: Location::Play,
+                            player: current_player,
+                            ..Default::default()
+                        },
+                    );
+                    self.reorder_hand(current_player, false);
 
                     // Track voids - if player couldn't follow suit
                     let lead_suit = self.current_trick_regular[self.lead_player].map(|c| c.suit);
@@ -263,8 +914,84 @@ impl ThreeTrickyPigsGame {
                             self.current_trick_puff,
                         );
 
-                        // Award trick to winner
+                        // Show winning card
+                        let winning_card_id = self.current_trick_regular[winner].unwrap().id;
+                        let pause_index = self.new_change();
+                        self.add_change(
+                            pause_index,
+                            Change {
+                                change_type: ChangeType::ShowWinningCard,
+                                object_id: winning_card_id,
+                                dest: Location::Play,
+                                ..Default::default()
+                            },
+                        );
+
+                        // Pause for player to see the result
+                        self.add_change(
+                            pause_index,
+                            Change {
+                                change_type: ChangeType::OptionalPause,
+                                object_id: 0,
+                                dest: Location::Play,
+                                ..Default::default()
+                            },
+                        );
+
+                        // Update trick count for winner
                         self.tricks_won[winner] += 1;
+
+                        let trick_index = self.new_change();
+                        self.add_change(
+                            trick_index,
+                            Change {
+                                change_type: ChangeType::UpdateTrickCount,
+                                player: winner,
+                                trick_count: self.tricks_won[winner] as i32,
+                                ..Default::default()
+                            },
+                        );
+
+                        // Move all cards in trick to winner
+                        let change_index = self.new_change();
+                        for player in 0..PLAYER_COUNT {
+                            if let Some(card) = self.current_trick_regular[player] {
+                                self.add_change(
+                                    change_index,
+                                    Change {
+                                        change_type: ChangeType::TricksToWinner,
+                                        object_id: card.id,
+                                        dest: Location::Score,
+                                        player: winner,
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                            if let Some(card) = self.current_trick_huff[player] {
+                                self.add_change(
+                                    change_index,
+                                    Change {
+                                        change_type: ChangeType::TricksToWinner,
+                                        object_id: card.id,
+                                        dest: Location::Score,
+                                        player: winner,
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                            if let Some(card) = self.current_trick_puff[player] {
+                                self.add_change(
+                                    change_index,
+                                    Change {
+                                        change_type: ChangeType::TricksToWinner,
+                                        object_id: card.id,
+                                        dest: Location::Score,
+                                        player: winner,
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                        }
 
                         // Clear trick slots
                         self.current_trick_regular = [None; PLAYER_COUNT];
@@ -285,6 +1012,9 @@ impl ThreeTrickyPigsGame {
                             self.end_round();
                         }
                     }
+
+                    self.show_playable();
+                    self.show_message();
                 }
             }
         }
@@ -309,7 +1039,14 @@ impl ThreeTrickyPigsGame {
     /// End the current round and calculate scores
     /// Note: Dealing new hands should be done separately
     pub fn end_round(&mut self) {
+        let preview_index = if !self.changes.is_empty() {
+            self.changes.len() - 1
+        } else {
+            self.new_change()
+        };
+
         // Calculate scores for each player
+        let old_scores = self.scores;
         for player in 0..PLAYER_COUNT {
             let tricks = self.tricks_won[player] as i32;
 
@@ -354,6 +1091,47 @@ impl ThreeTrickyPigsGame {
             }
         }
 
+        // Show score previews
+        for (player, &old_score) in old_scores.iter().enumerate() {
+            self.add_change(
+                preview_index,
+                Change {
+                    change_type: ChangeType::Score,
+                    player,
+                    start_score: old_score,
+                    end_score: self.scores[player],
+                    animate_score: false,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // Pause
+        self.add_change(
+            preview_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: -1,
+                ..Default::default()
+            },
+        );
+
+        // Animate scores
+        let animate_index = self.new_change();
+        for (player, &old_score) in old_scores.iter().enumerate() {
+            self.add_change(
+                animate_index,
+                Change {
+                    change_type: ChangeType::Score,
+                    player,
+                    start_score: old_score,
+                    end_score: self.scores[player],
+                    animate_score: true,
+                    ..Default::default()
+                },
+            );
+        }
+
         // Advance to next round
         self.current_round += 1;
 
@@ -364,10 +1142,32 @@ impl ThreeTrickyPigsGame {
             self.bids = [None; PLAYER_COUNT];
             self.wolf_suit_broken = false;
             self.state = State::Bid;
+            // Lead player rotates clockwise each round
+            self.lead_player = (self.lead_player + 1) % PLAYER_COUNT;
             self.current_player = self.lead_player;
             // Clear hands - leftover huff/puff cards have been scored
             self.hands = Default::default();
             self.voids = Default::default();
+
+            // Deal new hands for next round
+            self.deal(true);
+        } else {
+            // Game over
+            let max_score = self.scores.iter().max().unwrap();
+            for player in 0..PLAYER_COUNT {
+                if self.scores[player] == *max_score {
+                    self.winner = Some(player);
+                    break;
+                }
+            }
+
+            self.add_change(
+                animate_index,
+                Change {
+                    change_type: ChangeType::GameOver,
+                    ..Default::default()
+                },
+            );
         }
     }
 
@@ -1886,5 +2686,77 @@ mod tests {
 
         assert!(game.is_game_over());
         assert_eq!(game.current_round, 5);
+    }
+
+    #[test]
+    fn test_show_playable_after_all_bids() {
+        // Set up a game where human (player 0) is lead_player
+        let hands: [Vec<Card>; PLAYER_COUNT] = [
+            vec![
+                card_with_id(0, 1, Suit::Straw),
+                card_with_id(1, 2, Suit::Straw),
+            ],
+            vec![
+                card_with_id(2, 3, Suit::Straw),
+                card_with_id(3, 4, Suit::Straw),
+            ],
+            vec![
+                card_with_id(4, 5, Suit::Straw),
+                card_with_id(5, 6, Suit::Straw),
+            ],
+            vec![
+                card_with_id(6, 7, Suit::Straw),
+                card_with_id(7, 8, Suit::Straw),
+            ],
+        ];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Bid,
+            current_player: 0,
+            lead_player: 0,
+            hands,
+            undo_players: HashSet::from([0]),
+            ..Default::default()
+        };
+
+        // Human selects bid
+        game.apply_move(0); // Select Sleep bid
+        assert_eq!(game.state, State::BidConfirm);
+
+        // Human confirms bid
+        game.apply_move(0); // Confirm Sleep bid
+        assert_eq!(game.state, State::Bid);
+        assert_eq!(game.current_player, 1);
+
+        // AI player 1 bids
+        game.apply_move(1); // Play bid
+        assert_eq!(game.current_player, 2);
+
+        // AI player 2 bids
+        game.apply_move(2); // Work bid
+        assert_eq!(game.current_player, 3);
+
+        // AI player 3 bids - this should transition to Play state
+        game.apply_move(3); // Eat bid
+        assert_eq!(game.state, State::Play);
+        assert_eq!(game.current_player, 0); // Human should be current player (lead_player)
+
+        // Check that ShowPlayable changes were emitted for human's cards
+        let show_playable_changes: Vec<&Change> = game
+            .changes
+            .iter()
+            .flat_map(|group| group.iter())
+            .filter(|c| c.change_type == ChangeType::ShowPlayable)
+            .collect();
+
+        assert!(
+            !show_playable_changes.is_empty(),
+            "ShowPlayable changes should be emitted after all bids"
+        );
+
+        // Should have ShowPlayable for each playable card in human's hand
+        let playable_ids: Vec<i32> = show_playable_changes.iter().map(|c| c.object_id).collect();
+        assert!(playable_ids.contains(&0), "Card 0 should be playable");
+        assert!(playable_ids.contains(&1), "Card 1 should be playable");
     }
 }
