@@ -49,11 +49,13 @@ pub enum Location {
     TricksTaken,
     ReorderHand,
     ScoreCards,
-    Modifier,     // Location for staged huff/puff cards
-    UndoOption,   // Location for the undo button
-    BidSelection, // Location for bid cards during selection
-    BidConfirm,   // Location for selected bid card during confirmation
-    BidOffscreen, // Location for bid cards moved offscreen
+    Modifier,      // Location for staged huff/puff cards
+    UndoOption,    // Location for the undo button
+    BidSelection,  // Location for bid cards during selection
+    BidConfirm,    // Location for selected bid card during confirmation
+    BidOffscreen,  // Location for bid cards moved offscreen
+    ScoringCenter, // Center of screen for bid card during scoring display
+    ScoringBelow,  // Below the bid card for leftover huff/puff cards
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -74,10 +76,13 @@ pub enum ChangeType {
     Reorder,
     ShowScoringCards,
     UpdateTrickCount,
-    PlayModifier, // Play a huff or puff card
-    ShowBidCards, // Show all bid cards for selection
-    MoveBidCard,  // Move a bid card to a location
-    HideBidCards, // Hide all bid cards
+    PlayModifier,      // Play a huff or puff card
+    ShowBidCards,      // Show all bid cards for selection
+    MoveBidCard,       // Move a bid card to a location
+    HideBidCards,      // Hide all bid cards
+    ShowScoringBid,    // Show bid card during end-of-round scoring
+    ShowLeftoverCards, // Show leftover huff/puff cards during scoring
+    HideScoringCards,  // Hide the scoring bid and leftover cards
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -118,6 +123,16 @@ impl Bid {
             Bid::Play => "2",
             Bid::Work => "3+",
             Bid::Eat => "⬆",
+        }
+    }
+
+    /// Convert bid to index (for bid card IDs)
+    pub fn to_index(&self) -> i32 {
+        match self {
+            Bid::Sleep => 0,
+            Bid::Play => 1,
+            Bid::Work => 2,
+            Bid::Eat => 3,
         }
     }
 }
@@ -333,7 +348,13 @@ impl ThreeTrickyPigsGame {
         if self.changes.is_empty() {
             self.changes = vec![vec![]];
         }
-        let change_index = self.changes.len() - 1;
+        // For Play state, create a new change index so ShowPlayable is processed last
+        // This prevents conflicts with other changes in the same batch
+        let change_index = if self.state == State::Play {
+            self.new_change()
+        } else {
+            self.changes.len() - 1
+        };
 
         if self.current_player == 0 {
             let moves = self.get_moves();
@@ -942,12 +963,19 @@ impl ThreeTrickyPigsGame {
                         self.tricks_won[winner] += 1;
 
                         let trick_index = self.new_change();
+                        // For player 0, always show tricks/bid format
+                        let message = if winner == 0 {
+                            self.bids[0].map(|b| b.to_display_string().to_string())
+                        } else {
+                            None
+                        };
                         self.add_change(
                             trick_index,
                             Change {
                                 change_type: ChangeType::UpdateTrickCount,
                                 player: winner,
                                 trick_count: self.tricks_won[winner] as i32,
+                                message,
                                 ..Default::default()
                             },
                         );
@@ -1037,94 +1065,187 @@ impl ThreeTrickyPigsGame {
     }
 
     /// End the current round and calculate scores
-    /// Note: Dealing new hands should be done separately
+    /// Shows each player one by one with their bid card and leftover modifiers
+    #[allow(clippy::needless_range_loop)]
     pub fn end_round(&mut self) {
-        let preview_index = if !self.changes.is_empty() {
-            self.changes.len() - 1
-        } else {
-            self.new_change()
-        };
-
-        // Calculate scores for each player
+        // Calculate scores for each player first (we need these for the display)
         let old_scores = self.scores;
+        let mut player_scores_breakdown: [(i32, i32, i32); PLAYER_COUNT] =
+            [(0, 0, 0); PLAYER_COUNT]; // (tricks, modifier_penalty, bid_bonus)
+
         for player in 0..PLAYER_COUNT {
             let tricks = self.tricks_won[player] as i32;
-
-            // +1 per trick won
-            self.scores[player] += tricks;
-
-            // -1 per leftover huff/puff in hand
             let leftover_modifiers = self.hands[player]
                 .iter()
                 .filter(|c| c.is_huff() || c.is_puff())
                 .count() as i32;
+
+            // +1 per trick won
+            self.scores[player] += tricks;
+            // -1 per leftover huff/puff in hand
             self.scores[player] -= leftover_modifiers;
 
             // Bid bonuses
-            if let Some(bid) = self.bids[player] {
+            let bid_bonus = if let Some(bid) = self.bids[player] {
                 match bid {
                     Bid::Sleep => {
                         if tricks == 0 {
-                            self.scores[player] += 12;
+                            12
+                        } else {
+                            0
                         }
                     }
                     Bid::Play => {
                         if tricks == 2 {
-                            self.scores[player] += 7;
+                            7
+                        } else {
+                            0
                         }
                     }
                     Bid::Work => {
                         if tricks >= 3 {
-                            self.scores[player] += 3;
+                            3
+                        } else {
+                            0
                         }
                     }
                     Bid::Eat => {
-                        // Check if this player won strictly the most tricks (no ties)
                         let max_tricks = *self.tricks_won.iter().max().unwrap();
                         let players_with_max =
                             self.tricks_won.iter().filter(|&&t| t == max_tricks).count();
                         if self.tricks_won[player] == max_tricks && players_with_max == 1 {
-                            self.scores[player] += 2 * tricks;
+                            2 * tricks
+                        } else {
+                            0
                         }
                     }
                 }
-            }
+            } else {
+                0
+            };
+            self.scores[player] += bid_bonus;
+            player_scores_breakdown[player] = (tricks, leftover_modifiers, bid_bonus);
         }
 
-        // Show score previews
-        for (player, &old_score) in old_scores.iter().enumerate() {
+        // Show each player's score one by one, starting with human player (player 0)
+        let player_names = ["Your", "West player", "North player", "East player"];
+
+        for player in 0..PLAYER_COUNT {
+            let show_index = self.new_change();
+
+            // Show message indicating whose score is being displayed
+            let score_message = format!("{} score this hand", player_names[player]);
             self.add_change(
-                preview_index,
+                show_index,
+                Change {
+                    change_type: ChangeType::Message,
+                    message: Some(score_message),
+                    player,
+                    ..Default::default()
+                },
+            );
+
+            // Show the bid card for this player centered on screen
+            if let Some(bid) = self.bids[player] {
+                let bid_card_id = -(10 + bid.to_index());
+                self.add_change(
+                    show_index,
+                    Change {
+                        change_type: ChangeType::ShowScoringBid,
+                        object_id: bid_card_id,
+                        dest: Location::ScoringCenter,
+                        player,
+                        // Include tricks/bid in message for display
+                        message: Some(format!(
+                            "{}/{}",
+                            self.tricks_won[player],
+                            bid.to_display_string()
+                        )),
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Show leftover huff/puff cards below the bid card
+            // Collect card IDs first to avoid borrow issues
+            let leftover_card_ids: Vec<i32> = self.hands[player]
+                .iter()
+                .filter(|c| c.is_huff() || c.is_puff())
+                .map(|c| c.id)
+                .collect();
+            let leftover_count = leftover_card_ids.len();
+
+            for (offset, card_id) in leftover_card_ids.iter().enumerate() {
+                self.add_change(
+                    show_index,
+                    Change {
+                        change_type: ChangeType::ShowLeftoverCards,
+                        object_id: *card_id,
+                        dest: Location::ScoringBelow,
+                        player,
+                        offset,
+                        length: leftover_count,
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Update trick counter to show tricks/bid for this player (all players during scoring)
+            if let Some(bid) = self.bids[player] {
+                self.add_change(
+                    show_index,
+                    Change {
+                        change_type: ChangeType::UpdateTrickCount,
+                        player,
+                        trick_count: self.tricks_won[player] as i32,
+                        message: Some(bid.to_display_string().to_string()),
+                        ..Default::default()
+                    },
+                );
+            }
+
+            // Show score preview for this player
+            self.add_change(
+                show_index,
                 Change {
                     change_type: ChangeType::Score,
                     player,
-                    start_score: old_score,
+                    start_score: old_scores[player],
                     end_score: self.scores[player],
                     animate_score: false,
                     ..Default::default()
                 },
             );
-        }
 
-        // Pause
-        self.add_change(
-            preview_index,
-            Change {
-                change_type: ChangeType::OptionalPause,
-                object_id: -1,
-                ..Default::default()
-            },
-        );
-
-        // Animate scores
-        let animate_index = self.new_change();
-        for (player, &old_score) in old_scores.iter().enumerate() {
+            // Wait for input before showing next player
             self.add_change(
-                animate_index,
+                show_index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    object_id: -1,
+                    player,
+                    ..Default::default()
+                },
+            );
+
+            // Hide the scoring cards before moving to next player
+            let hide_index = self.new_change();
+            self.add_change(
+                hide_index,
+                Change {
+                    change_type: ChangeType::HideScoringCards,
+                    player,
+                    ..Default::default()
+                },
+            );
+
+            // Animate score for this player
+            self.add_change(
+                hide_index,
                 Change {
                     change_type: ChangeType::Score,
                     player,
-                    start_score: old_score,
+                    start_score: old_scores[player],
                     end_score: self.scores[player],
                     animate_score: true,
                     ..Default::default()
@@ -1136,7 +1257,6 @@ impl ThreeTrickyPigsGame {
         self.current_round += 1;
 
         // Reset for next round (if game not over)
-        // Note: hands need to be dealt separately
         if self.current_round <= ROUNDS {
             self.tricks_won = [0; PLAYER_COUNT];
             self.bids = [None; PLAYER_COUNT];
@@ -1161,8 +1281,9 @@ impl ThreeTrickyPigsGame {
                 }
             }
 
+            let game_over_index = self.new_change();
             self.add_change(
-                animate_index,
+                game_over_index,
                 Change {
                     change_type: ChangeType::GameOver,
                     ..Default::default()
