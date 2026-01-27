@@ -1441,7 +1441,9 @@ fn trick_winner(
         suit: Suit::Bricks,
     };
     let mut winning_player = lead_player;
-    let mut winning_value = trick_regular[lead_player].unwrap().value;
+    let mut winning_value = trick_regular[lead_player].unwrap().value
+        + trick_huff[lead_player].unwrap_or(empty_card).value
+        + trick_puff[lead_player].unwrap_or(empty_card).value;
     let contains_wolf = trick_regular.iter().any(|c| c.unwrap().suit == Suit::Wolf);
     for offset in 0..PLAYER_COUNT {
         let current_player = (offset + lead_player) % PLAYER_COUNT;
@@ -1619,6 +1621,30 @@ mod tests {
         let winner = trick_winner(0, trick_regular, trick_huff, trick_puff);
         // 2+3+4=9, so 5 is now lowest
         assert_eq!(winner, 0);
+    }
+
+    // Bug report: Lead player's huff/puff modifiers not included in initial winning_value
+    // Player 0 leads with 1 + huff 3 + puff 3 = 7, Player 3 plays 3 (no modifiers)
+    // Expected: Player 3 wins (3 is lowest), Actual: Player 0 wins incorrectly
+    #[test]
+    fn test_lead_player_modifiers_counted_in_initial_value() {
+        let trick_regular = [
+            card(1, Suit::Straw), // Player 0 (leads): 1 + 3 + 3 = 7
+            card(7, Suit::Straw), // Player 1: 7 + 1 = 8
+            card(9, Suit::Straw), // Player 2: 9 + 4 + 4 = 17
+            card(3, Suit::Straw), // Player 3: 3 (lowest!)
+        ];
+        let trick_huff = [
+            card(3, Suit::Huff),
+            card(1, Suit::Huff),
+            card(4, Suit::Huff),
+            None,
+        ];
+        let trick_puff = [card(3, Suit::Puff), None, card(4, Suit::Puff), None];
+
+        // No wolf, lowest wins. 3 < 7 < 8 < 17, so Player 3 should win
+        let winner = trick_winner(0, trick_regular, trick_huff, trick_puff);
+        assert_eq!(winner, 3);
     }
 
     // Test with non-zero lead player
