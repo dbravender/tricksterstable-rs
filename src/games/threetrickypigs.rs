@@ -923,6 +923,20 @@ impl ThreeTrickyPigsGame {
                     // Advance to next player
                     self.current_player = (current_player + 1) % PLAYER_COUNT;
 
+                    // Check if any player has cards but no regular cards (only modifiers).
+                    // This can only happen during MCTS simulations when randomize_determination
+                    // shuffles hands and a player ends up with only huff/puff cards.
+                    // If so, they can't complete a trick, so end the round immediately.
+                    let any_player_has_only_modifiers = self
+                        .hands
+                        .iter()
+                        .any(|hand| !hand.is_empty() && !hand.iter().any(|c| c.is_regular()));
+
+                    if any_player_has_only_modifiers {
+                        self.end_round();
+                        return;
+                    }
+
                     // Check if trick is complete (all players have played a regular card)
                     let trick_complete = self.current_trick_regular.iter().all(|c| c.is_some());
 
@@ -2905,5 +2919,172 @@ mod tests {
         let playable_ids: Vec<i32> = show_playable_changes.iter().map(|c| c.object_id).collect();
         assert!(playable_ids.contains(&0), "Card 0 should be playable");
         assert!(playable_ids.contains(&1), "Card 1 should be playable");
+    }
+
+    // Test: After a player plays a card, if any other player has only huff/puff
+    // cards (no regular cards), the round should end immediately.
+    // This can happen after randomize_determination shuffles hands.
+    #[test]
+    fn test_round_ends_after_play_when_any_player_has_only_modifiers() {
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            current_trick_regular: [None; PLAYER_COUNT],
+            current_trick_huff: [None; PLAYER_COUNT],
+            current_trick_puff: [None; PLAYER_COUNT],
+            hands: [
+                // Player 0: Has a regular card to play
+                vec![Card {
+                    value: 1,
+                    suit: Suit::Straw,
+                    id: 0,
+                }],
+                // Player 1: Only has huff/puff - invalid state from randomize_determination
+                vec![
+                    Card {
+                        value: 1,
+                        suit: Suit::Huff,
+                        id: 40,
+                    },
+                    Card {
+                        value: 2,
+                        suit: Suit::Puff,
+                        id: 44,
+                    },
+                ],
+                // Player 2: Has regular cards
+                vec![Card {
+                    value: 3,
+                    suit: Suit::Straw,
+                    id: 2,
+                }],
+                // Player 3: Has regular cards
+                vec![Card {
+                    value: 5,
+                    suit: Suit::Straw,
+                    id: 4,
+                }],
+            ],
+            bids: [
+                Some(Bid::Sleep),
+                Some(Bid::Play),
+                Some(Bid::Work),
+                Some(Bid::Eat),
+            ],
+            selected_bid: None,
+            tricks_won: [0; PLAYER_COUNT],
+            current_round: 1,
+            scores: [0; PLAYER_COUNT],
+            voids: Default::default(),
+            undo_players: HashSet::new(),
+            no_changes: true,
+            changes: vec![],
+            winner: None,
+        };
+
+        // Player 0 plays their card
+        game.apply_move(0);
+
+        // After player 0 plays, the engine should detect that player 1 has only
+        // modifiers and end the round immediately
+        assert!(
+            game.current_round == 2 || game.state == State::Bid,
+            "Round should have ended because player 1 has only modifiers! \
+             Instead: state={:?}, round={}, current_player={}",
+            game.state,
+            game.current_round,
+            game.current_player
+        );
+    }
+
+    // Test: MCTS simulation completes when starting from a state where all
+    // opponents have only modifiers (invalid state from randomize_determination)
+    #[test]
+    fn test_mcts_completes_when_opponents_have_only_modifiers() {
+        let game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            current_trick_regular: [None; PLAYER_COUNT],
+            current_trick_huff: [None; PLAYER_COUNT],
+            current_trick_puff: [None; PLAYER_COUNT],
+            hands: [
+                // Player 0: Has a regular card to play
+                vec![Card {
+                    value: 1,
+                    suit: Suit::Straw,
+                    id: 0,
+                }],
+                // Player 1: Only has huff/puff
+                vec![
+                    Card {
+                        value: 1,
+                        suit: Suit::Huff,
+                        id: 40,
+                    },
+                    Card {
+                        value: 2,
+                        suit: Suit::Puff,
+                        id: 44,
+                    },
+                ],
+                // Player 2: Only has huff/puff
+                vec![
+                    Card {
+                        value: 3,
+                        suit: Suit::Huff,
+                        id: 41,
+                    },
+                    Card {
+                        value: 4,
+                        suit: Suit::Puff,
+                        id: 45,
+                    },
+                ],
+                // Player 3: Only has huff/puff
+                vec![
+                    Card {
+                        value: 2,
+                        suit: Suit::Huff,
+                        id: 42,
+                    },
+                    Card {
+                        value: 3,
+                        suit: Suit::Puff,
+                        id: 46,
+                    },
+                ],
+            ],
+            bids: [
+                Some(Bid::Sleep),
+                Some(Bid::Play),
+                Some(Bid::Work),
+                Some(Bid::Eat),
+            ],
+            selected_bid: None,
+            tricks_won: [0; PLAYER_COUNT],
+            current_round: 1,
+            scores: [0; PLAYER_COUNT],
+            voids: Default::default(),
+            undo_players: HashSet::new(),
+            no_changes: true,
+            changes: vec![],
+            winner: None,
+        };
+
+        // MCTS should complete without hanging
+        let result = get_mcts_move(&game, 100);
+
+        // The move should be valid
+        let valid_moves = game.get_moves();
+        assert!(
+            valid_moves.contains(&result),
+            "MCTS returned invalid move {} (valid moves: {:?})",
+            result,
+            valid_moves
+        );
     }
 }
