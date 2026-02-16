@@ -175,7 +175,7 @@ static ID_TO_BID: Lazy<HashMap<i32, Bid>> = Lazy::new(|| {
 static ID_TO_CARD: Lazy<HashMap<i32, Card>> = Lazy::new(|| {
     let mut m = HashMap::new();
     for card in HotdogGame::deck() {
-        m.insert(card.id as i32, card);
+        m.insert(card.id, card);
     }
     m
 });
@@ -406,7 +406,7 @@ impl HotdogGame {
             },
         );
         for straw_index in 0..5 {
-            for player in 0..2 as usize {
+            for player in 0..2_usize {
                 let card = cards.pop().unwrap();
                 self.add_change(
                     deal_index,
@@ -482,11 +482,7 @@ impl HotdogGame {
         let mut id = 0;
         for suit in all::<Suit>() {
             for value in 1..=9 {
-                deck.push(Card {
-                    id,
-                    value: value,
-                    suit,
-                });
+                deck.push(Card { id, value, suit });
                 id += 1;
             }
         }
@@ -498,8 +494,8 @@ impl HotdogGame {
         assert!(self.current_trick[0].is_some());
         assert!(self.current_trick[1].is_some());
         let cards = (
-            self.current_trick[0].clone().unwrap(),
-            self.current_trick[1].clone().unwrap(),
+            self.current_trick[0].unwrap(),
+            self.current_trick[1].unwrap(),
         );
         if cards.0.suit != cards.1.suit
             && (cards.0.value == self.relish || cards.1.value == self.relish)
@@ -534,7 +530,7 @@ impl HotdogGame {
         }
         // Both players played a different suit, no one played trump or relish, lead player
         // takes the trick
-        return self.lead_player;
+        self.lead_player
     }
 
     pub fn moves_to_string(&self) -> BTreeMap<i32, String> {
@@ -615,23 +611,23 @@ impl HotdogGame {
                 continue;
             }
             if self.straw_top[player][i].is_none() {
-                exposed_cards.insert(card.clone().unwrap());
+                exposed_cards.insert((*card).unwrap());
             }
         }
-        return exposed_cards;
+        exposed_cards
     }
 
     fn visible_straw(&self, player: usize) -> Vec<Card> {
         let mut visible: Vec<Card> = self.straw_top[player].iter().filter_map(|x| *x).collect();
         visible.extend(self.exposed_straw_bottoms(player));
-        return visible;
+        visible
     }
 
     pub fn playable_cards(&self) -> [Vec<Card>; 2] {
         let mut cards = [self.visible_straw(0), self.visible_straw(1)];
 
-        for player in 0..2 {
-            cards[player].extend(self.hands[player].iter().cloned());
+        for (player, card) in cards.iter_mut().enumerate() {
+            card.extend(self.hands[player].iter().cloned());
         }
 
         cards
@@ -641,7 +637,7 @@ impl HotdogGame {
         // Must follow
         let playable_cards = &self.playable_cards()[self.current_player];
         if self.current_trick[self.lead_player].is_some() {
-            let lead_suit = self.current_trick[self.lead_player].clone().unwrap().suit;
+            let lead_suit = self.current_trick[self.lead_player].unwrap().suit;
             let moves: Vec<i32> = playable_cards
                 .iter()
                 .filter(|c| c.suit == lead_suit)
@@ -658,13 +654,10 @@ impl HotdogGame {
         if self.no_changes || self.current_player == 1 {
             return;
         }
-        let proceed: bool = match self.state {
-            State::Bid
-            | State::WorksSelectFirstTrickType
-            | State::NameRelish
-            | State::NameTrump => true,
-            _ => false,
-        };
+        let proceed: bool = matches!(
+            self.state,
+            State::Bid | State::WorksSelectFirstTrickType | State::NameRelish | State::NameTrump
+        );
         if !proceed {
             return;
         }
@@ -816,10 +809,8 @@ impl HotdogGame {
             }
             State::Play => {
                 let card = ID_TO_CARD[&action];
-                let lead_suit = match self.current_trick[self.lead_player] {
-                    Some(lead_card) => Some(lead_card.suit),
-                    None => None,
-                };
+                let lead_suit =
+                    self.current_trick[self.lead_player].map(|lead_card| lead_card.suit);
                 if let Some(index) =
                     self.straw_bottom[self.current_player]
                         .iter()
@@ -859,12 +850,12 @@ impl HotdogGame {
 
                 self.current_trick[self.current_player] = Some(card);
 
-                if lead_suit.is_some() {
+                if let Some(suit) = lead_suit {
                     if Some(card.suit) != lead_suit
-                        && !self.voids[self.current_player].contains(&lead_suit.unwrap())
+                        && !self.voids[self.current_player].contains(&suit)
                     {
                         // Player has revealed a void
-                        self.voids[self.current_player].push(lead_suit.unwrap());
+                        self.voids[self.current_player].push(suit);
                     }
                 }
 
@@ -938,12 +929,10 @@ impl HotdogGame {
 
                         let picker = if self.picker.is_some() {
                             self.picker.unwrap()
+                        } else if self.tricks_taken[0] > self.tricks_taken[1] {
+                            0
                         } else {
-                            if self.tricks_taken[0] > self.tricks_taken[1] {
-                                0
-                            } else {
-                                1
-                            }
+                            1
                         };
 
                         if !self.no_changes {
@@ -1006,7 +995,6 @@ impl HotdogGame {
                             }
                         }
                         self.deal();
-                        return;
                     }
                 }
             }
@@ -1083,7 +1071,7 @@ impl HotdogGame {
             index,
             Change {
                 change_type: ChangeType::Trump,
-                object_id: 999 as usize,
+                object_id: 999_usize,
                 ..Default::default()
             },
         )
@@ -1160,6 +1148,30 @@ impl HotdogGame {
             })
             .collect()
     }
+
+    /// Check if the picker made their bid
+    /// Returns (bid_succeeded, player_is_picker) for the given player
+    pub fn bid_result_for_player(&self, player: usize) -> (bool, bool) {
+        // If hand is not over, return false
+        if self.tricks_taken[0] + self.tricks_taken[1] < 12 {
+            return (false, false);
+        }
+
+        // Determine picker (either set, or player with most tricks if both passed)
+        let picker = if let Some(p) = self.picker {
+            p
+        } else if self.tricks_taken[0] > self.tricks_taken[1] {
+            0
+        } else {
+            1
+        };
+
+        let player_is_picker = picker == player;
+        let tricks_taken_by_picker = self.tricks_taken[picker];
+        let bid_succeeded = tricks_taken_by_picker >= self.winning_bid.required_tricks();
+
+        (bid_succeeded, player_is_picker)
+    }
 }
 
 impl ismcts::Game for HotdogGame {
@@ -1168,22 +1180,25 @@ impl ismcts::Game for HotdogGame {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, _observer: Self::PlayerTag) {
+        // Reset scores for single-hand evaluation
+        self.scores = [0; 2];
+
         let rng = &mut thread_rng();
         let mut remaining_cards: Vec<Card> = self.cards.clone();
         let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
 
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter_mut().enumerate() {
             if player != self.current_player {
                 remaining_cards.extend(self.hands[player].iter());
             }
 
-            hidden_straw_bottoms[player] =
+            *hidden_bottom =
                 HashSet::from_iter(self.straw_bottom[player].iter().filter_map(|&x| x))
                     .difference(&self.exposed_straw_bottoms(player))
                     .cloned()
                     .collect();
 
-            remaining_cards.extend(hidden_straw_bottoms[player].iter());
+            remaining_cards.extend(hidden_bottom.iter());
         }
 
         remaining_cards.shuffle(rng);
@@ -1205,10 +1220,10 @@ impl ismcts::Game for HotdogGame {
         }
 
         remaining_cards.shuffle(rng);
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter().enumerate() {
             for i in 0..self.straw_bottom[player].len() {
                 let card = self.straw_bottom[player][i];
-                if !card.is_none() && hidden_straw_bottoms[player].contains(&card.unwrap()) {
+                if card.is_some() && hidden_bottom.contains(&card.unwrap()) {
                     self.straw_bottom[player][i] = remaining_cards.pop();
                 }
             }
@@ -1233,26 +1248,31 @@ impl ismcts::Game for HotdogGame {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
+        // Check if the game is completely over
         if let Some(winner) = self.winner {
-            // someone won the game
             if winner == player {
-                Some(1.0)
+                return Some(1.0);
             } else {
-                Some(0.0)
+                return Some(0.0);
             }
+        }
+
+        // Check if the hand is over (12 tricks played)
+        if self.tricks_taken[0] + self.tricks_taken[1] < 12 {
+            return None;
+        }
+
+        // Always use binary bid evaluation - tournament testing showed this performs best
+        // For the picker: success = made the bid
+        // For the setter: success = picker failed
+        let (bid_succeeded, player_is_picker) = self.bid_result_for_player(player);
+
+        if player_is_picker {
+            // Picker wants bid to succeed
+            Some(if bid_succeeded { 1.0 } else { -1.0 })
         } else {
-            if self.scores == [0, 0] {
-                // the hand is not over
-                None
-            } else {
-                let current_player_score = self.scores[player] as f64;
-                let other_player_score = self.scores[(player + 1) % 2] as f64;
-                if current_player_score > other_player_score {
-                    Some(0.8 + ((current_player_score / 5.0) * 0.2))
-                } else {
-                    Some(0.2 - ((other_player_score / 5.0) * 0.2))
-                }
-            }
+            // Setter wants bid to fail
+            Some(if bid_succeeded { -1.0 } else { 1.0 })
         }
     }
 }
@@ -1261,10 +1281,10 @@ pub struct PossibleCards {
     leftovers: Vec<Card>,
 }
 
-pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>) -> PossibleCards {
+pub fn extract_short_suited_cards(remaining_cards: &[Card], voids: &Vec<Suit>) -> PossibleCards {
     let mut leftovers: Vec<Card> = vec![];
 
-    let mut possible_cards = remaining_cards.clone();
+    let mut possible_cards = remaining_cards.to_vec();
 
     for suit in voids {
         possible_cards.retain(|card| {
@@ -1275,10 +1295,10 @@ pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>
             !belongs_to_suit
         });
     }
-    return PossibleCards {
+    PossibleCards {
         cards: possible_cards,
         leftovers,
-    };
+    }
 }
 
 pub fn get_mcts_move(game: &HotdogGame, iterations: i32, debug: bool) -> i32 {

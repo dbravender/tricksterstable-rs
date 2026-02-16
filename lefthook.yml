@@ -1,5 +1,13 @@
 pre-commit:
   commands:
+    fmt:
+      run: cargo fmt --check
+      fail_text: "Code is not formatted. Run 'cargo fmt' to fix."
+      stage_fixed: false
+    clippy:
+      run: cargo clippy --lib --bins -- -D warnings
+      fail_text: "Clippy found linting issues. Run 'cargo clippy --lib --bins -- -D warnings' to see them."
+      stage_fixed: false
     test:
       run: cargo test
       fail_text: "Tests failed. Fix failing tests before committing."

@@ -1,3 +1,4 @@
+pub mod cincosverdes;
 pub mod dealers_dilemma;
 pub mod hotdog;
 pub mod kaibosh;
@@ -8,5 +9,7 @@ pub mod smm;
 pub mod so8;
 pub mod stickem;
 pub mod szs;
+pub mod threetrickypigs;
 pub mod torchlit;
+pub mod trickorbid;
 pub mod yokai2p;

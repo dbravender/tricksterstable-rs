@@ -1,4 +1,3 @@
-use rand::{seq::SliceRandom, thread_rng};
 use tricksterstable_rs::games::so8::{get_mcts_move, SixOfVIIIGame};
 
 fn main() {

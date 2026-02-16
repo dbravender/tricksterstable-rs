@@ -197,7 +197,7 @@ impl Yokai2pGame {
         );
         self.straw_bottom = [vec![], vec![]];
         for y in 0..7 {
-            for player in 0..2 as usize {
+            for player in 0..2_usize {
                 let card = cards.pop().unwrap();
                 self.add_change(
                     deal_index,
@@ -336,23 +336,21 @@ impl Yokai2pGame {
             if card.is_none() {
                 continue;
             }
-            let left_open: bool;
-            let right_open: bool;
-            if i == 0 {
-                left_open = true;
+            let left_open: bool = if i == 0 {
+                true
             } else {
-                left_open = self.straw_top[player][i - 1].is_none();
-            }
-            if i == 6 {
-                right_open = true;
+                self.straw_top[player][i - 1].is_none()
+            };
+            let right_open: bool = if i == 6 {
+                true
             } else {
-                right_open = self.straw_top[player][i].is_none();
-            }
+                self.straw_top[player][i].is_none()
+            };
             if left_open && right_open {
                 exposed_cards.insert(card.unwrap());
             }
         }
-        return exposed_cards;
+        exposed_cards
     }
 
     fn get_moves(&self) -> Vec<i32> {
@@ -383,7 +381,7 @@ impl Yokai2pGame {
     fn visible_straw(&self, player: usize) -> Vec<Card> {
         let mut visible: Vec<Card> = self.straw_top[player].iter().filter_map(|x| *x).collect();
         visible.extend(self.exposed_straw_bottoms(player));
-        return visible;
+        visible
     }
 
     pub fn reveal_straw_bottoms(&mut self, player: usize) {
@@ -441,7 +439,7 @@ impl Yokai2pGame {
             panic!("illegal move");
         }
         self.changes = vec![vec![]]; // card from player to table
-        let card: &Card = ID_TO_CARD.get(&action).unwrap();
+        let card: &Card = ID_TO_CARD.get(action).unwrap();
         match self.state {
             State::Discard => {
                 self.hands[self.current_player].retain(|c| c.id != card.id);
@@ -461,7 +459,6 @@ impl Yokai2pGame {
                 }
                 self.current_player = (self.current_player + 1) % 2;
                 self.show_playable();
-                return;
             }
             State::PlayCard => {
                 if let Some(index) =
@@ -527,7 +524,7 @@ impl Yokai2pGame {
                         self.current_trick,
                     );
                     let winning_card = self.current_trick[trick_winner].unwrap();
-                    self.tricks_taken[trick_winner] = self.tricks_taken[trick_winner] + 1;
+                    self.tricks_taken[trick_winner] += 1;
                     // winner of the trick leads
                     self.current_player = trick_winner;
                     let index = self.new_change();
@@ -610,11 +607,10 @@ impl Yokai2pGame {
 
                     if hand_winning_player.is_none() {
                         let mut overall_hands: [Vec<Card>; 2] = [vec![], vec![]];
-                        for player in 0..2 {
-                            overall_hands[player].extend(self.hands[player].clone());
-                            overall_hands[player]
-                                .extend(self.straw_bottom[player].iter().flatten());
-                            overall_hands[player].extend(self.straw_top[player].iter().flatten());
+                        for (player, overall_hand) in overall_hands.iter_mut().enumerate() {
+                            overall_hand.extend(self.hands[player].clone());
+                            overall_hand.extend(self.straw_bottom[player].iter().flatten());
+                            overall_hand.extend(self.straw_top[player].iter().flatten());
                         }
 
                         if overall_hands.iter().all(|h| h.is_empty()) {
@@ -727,7 +723,6 @@ impl Yokai2pGame {
                 }
 
                 self.show_playable();
-                return;
             }
         }
     }
@@ -743,18 +738,18 @@ impl ismcts::Game for Yokai2pGame {
         let mut remaining_cards: Vec<Card> = vec![];
         let mut hidden_straw_bottoms: [HashSet<Card>; 2] = [HashSet::new(), HashSet::new()];
 
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter_mut().enumerate() {
             if player != self.current_player {
                 remaining_cards.extend(self.hands[player].iter());
             }
 
-            hidden_straw_bottoms[player] =
+            *hidden_bottom =
                 HashSet::from_iter(self.straw_bottom[player].iter().filter_map(|&x| x))
                     .difference(&self.exposed_straw_bottoms(player))
                     .cloned()
                     .collect();
 
-            remaining_cards.extend(hidden_straw_bottoms[player].iter());
+            remaining_cards.extend(hidden_bottom.iter());
         }
 
         remaining_cards.shuffle(rng);
@@ -776,10 +771,10 @@ impl ismcts::Game for Yokai2pGame {
         }
 
         remaining_cards.shuffle(rng);
-        for player in 0..2 {
+        for (player, hidden_bottom) in hidden_straw_bottoms.iter().enumerate() {
             for i in 0..self.straw_bottom[player].len() {
                 let card = self.straw_bottom[player][i];
-                if !card.is_none() && hidden_straw_bottoms[player].contains(&card.unwrap()) {
+                if card.is_some() && hidden_bottom.contains(&card.unwrap()) {
                     self.straw_bottom[player][i] = remaining_cards.pop();
                 }
             }
@@ -811,18 +806,16 @@ impl ismcts::Game for Yokai2pGame {
             } else {
                 Some(0.0)
             }
+        } else if self.hand_scores == [0, 0] {
+            // the hand is not over
+            None
         } else {
-            if self.hand_scores == [0, 0] {
-                // the hand is not over
-                None
+            let current_player_score = self.hand_scores[player] as f64;
+            let other_player_score = self.hand_scores[(player + 1) % 2] as f64;
+            if current_player_score > other_player_score {
+                Some(0.2 + ((current_player_score / 7.0) * 0.8))
             } else {
-                let current_player_score = self.hand_scores[player] as f64;
-                let other_player_score = self.hand_scores[(player + 1) % 2] as f64;
-                if current_player_score > other_player_score {
-                    Some(0.2 + ((current_player_score / 7.0) * 0.8))
-                } else {
-                    Some((1.0 - (other_player_score / 7.0)) * 0.2)
-                }
+                Some((1.0 - (other_player_score / 7.0)) * 0.2)
             }
         }
     }
@@ -848,7 +841,7 @@ pub fn value_for_card(lead_suit: Suit, trump_card: Card, card: Card) -> i32 {
     if card.suit == trump_card.suit {
         return card.value + 100;
     }
-    return card.value;
+    card.value
 }
 
 pub fn seven_value(suit: &Suit) -> i32 {
@@ -863,7 +856,7 @@ pub fn seven_value(suit: &Suit) -> i32 {
     }
 }
 
-pub fn score_sevens(sevens: &Vec<Card>, trump_card: &Card) -> i32 {
+pub fn score_sevens(sevens: &[Card], trump_card: &Card) -> i32 {
     sevens
         .iter()
         .filter(|&card| card.suit != trump_card.suit)
@@ -884,10 +877,10 @@ pub struct PossibleCards {
     leftovers: Vec<Card>,
 }
 
-pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>) -> PossibleCards {
+pub fn extract_short_suited_cards(remaining_cards: &[Card], voids: &Vec<Suit>) -> PossibleCards {
     let mut leftovers: Vec<Card> = vec![];
 
-    let mut possible_cards = remaining_cards.clone();
+    let mut possible_cards = remaining_cards.to_vec();
 
     for suit in voids {
         possible_cards.retain(|card| {
@@ -898,10 +891,10 @@ pub fn extract_short_suited_cards(remaining_cards: &Vec<Card>, voids: &Vec<Suit>
             !belongs_to_suit
         });
     }
-    return PossibleCards {
+    PossibleCards {
         cards: possible_cards,
         leftovers,
-    };
+    }
 }
 
 pub fn get_mcts_move(game: &Yokai2pGame, iterations: i32) -> i32 {
@@ -946,7 +939,7 @@ impl Yokai2pDartFormat {
         changes.retain(|x| !x.is_empty());
         Yokai2pGame {
             state: self.state.clone(),
-            trump_card: self.trump_card.clone(),
+            trump_card: self.trump_card,
             hands: self.hands.clone(),
             changes,
             current_trick: [trick1, trick2],
@@ -954,7 +947,7 @@ impl Yokai2pDartFormat {
                 *self.tricks_taken.get(&0).unwrap_or(&0),
                 *self.tricks_taken.get(&1).unwrap_or(&0),
             ],
-            lead_suit: self.lead_suit.clone(),
+            lead_suit: self.lead_suit,
             scores: [
                 *self.scores.get(&0).unwrap_or(&0),
                 *self.scores.get(&1).unwrap_or(&0),

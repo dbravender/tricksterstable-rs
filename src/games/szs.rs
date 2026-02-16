@@ -333,20 +333,18 @@ impl Game {
                 .as_mut(),
             );
             if self.draw_decks[self.current_player as usize].len() == 5 {
-                if !self.no_changes {
-                    if self.current_player == 0 {
-                        let mut cards_remaining_changes: Vec<Change> = vec![];
-                        for card in &self.draw_decks[0] {
-                            cards_remaining_changes.push(Change {
-                                object_id: card.id,
-                                change_type: ChangeType::Discard,
-                                dest: Location::DrawDeck,
-                                cards_remaining: 5,
-                                ..Default::default()
-                            });
-                        }
-                        self.changes.push(cards_remaining_changes);
+                if !self.no_changes && self.current_player == 0 {
+                    let mut cards_remaining_changes: Vec<Change> = vec![];
+                    for card in &self.draw_decks[0] {
+                        cards_remaining_changes.push(Change {
+                            object_id: card.id,
+                            change_type: ChangeType::Discard,
+                            dest: Location::DrawDeck,
+                            cards_remaining: 5,
+                            ..Default::default()
+                        });
                     }
+                    self.changes.push(cards_remaining_changes);
                 }
                 self.current_player = (self.current_player + 1) % 3;
             }
@@ -392,11 +390,9 @@ impl Game {
         self.current_trick[self.current_player as usize] = Some(*card);
         if self.lead_suit.is_none() {
             self.lead_suit = Some(card.suit);
-        } else {
-            if Some(card.suit) != self.lead_suit {
-                // Player has revealed a void
-                self.voids[self.current_player as usize].insert(card.suit);
-            }
+        } else if Some(card.suit) != self.lead_suit {
+            // Player has revealed a void
+            self.voids[self.current_player as usize].insert(card.suit);
         }
         self.current_player = (self.current_player + 1) % 3;
         // end trick
@@ -596,7 +592,7 @@ impl Game {
             }]);
             self.deal();
         }
-        return true;
+        true
     }
 
     fn show_playable(self: &mut Game) -> Vec<Change> {
@@ -737,7 +733,7 @@ pub fn score_game(
     scores
 }
 
-pub fn reorder_hand(player: i32, hand: &Vec<Card>) -> Vec<Change> {
+pub fn reorder_hand(player: i32, hand: &[Card]) -> Vec<Change> {
     let mut changes: Vec<Change> = vec![];
     for (offset_in_hand, card) in hand.iter().enumerate() {
         changes.push(Change {
@@ -823,7 +819,7 @@ impl ismcts::Game for Game {
     }
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
-        if self.winner == None {
+        if self.winner.is_none() {
             None
         } else {
             let mut sorted_scores = self.scores.clone();
@@ -838,13 +834,13 @@ impl ismcts::Game for Game {
                 }
             }
             if score != high_score {
-                let normalized_score = (score.abs() as f64) / 25.0;
+                let normalized_score = score.abs() / 25.0;
                 // Normalizing the score to 0 - .2
                 Some(0.2 * (1.0 - normalized_score))
             } else {
                 // divide by number of > 0 scoring players to incentivize
                 // minimizing the number of other winners
-                let score = (score as f64 / high_score as f64) / winners as f64;
+                let score = (score / high_score) / winners as f64;
                 Some(0.2 + (0.8 * score))
             }
         }

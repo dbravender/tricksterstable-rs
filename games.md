@@ -16,6 +16,7 @@
 | Pala                  | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
 | Otter                 | ❌                                  | ❌                                         | ❌ (single player )                 | ❌                                                                                                                                                                |
 | Stick 'Em             | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
+| Trick or Bid          | ❌                                  | ❌                                         | ✅                                  | ❌                                                                                                                                                                |
 
 * Magic Trick implementation (in Dart): https://github.com/dbravender/magictrick
 * Version of SIMPLE used to train AIs: https://github.com/davidADSP/SIMPLE/pull/34

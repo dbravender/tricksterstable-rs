@@ -4,8 +4,6 @@ Designer:  Klaus Palesch
 BoardGameGeek: https://boardgamegeek.com/boardgame/354/stick-em
 */
 
-use std::collections::BTreeSet;
-
 use enum_iterator::{all, Sequence};
 use ismcts::IsmctsHandler;
 use rand::prelude::SliceRandom;
@@ -60,11 +58,15 @@ pub enum State {
 #[serde(rename_all = "camelCase")]
 pub enum Location {
     #[default]
+    Deck,
     PainColor,
     Hand,
     Score,
     Message,
     Play,
+    TricksTaken,
+    ReorderHand,
+    ScoreCards,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -76,13 +78,19 @@ pub enum ChangeType {
     Shuffle,
     ShowPlayable,
     HidePlayable,
+    ShowWinningCard,
     Message,
     Score,
     GameOver,
     OptionalPause,
+    TricksToWinner,
+    Reorder,
+    ShowScoringCard,
+    HideScoringCards,
+    RevealPainCards,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     #[serde(rename(serialize = "type", deserialize = "type"))]
@@ -142,13 +150,60 @@ impl StickEmGame {
         self.dealer = (self.dealer + 1) % PLAYER_COUNT;
         self.current_player = self.dealer;
         self.lead_player = self.dealer;
+
+        let shuffle_index = self.new_change();
+        let deal_index = self.new_change();
+
+        // Shuffle animation
+        self.add_change(
+            shuffle_index,
+            Change {
+                change_type: ChangeType::Shuffle,
+                object_id: 0,
+                dest: Location::Deck,
+                ..Default::default()
+            },
+        );
+
         self.hands = [
             deck.drain(..15).collect::<Vec<_>>(),
             deck.drain(..15).collect::<Vec<_>>(),
             deck.drain(..15).collect::<Vec<_>>(),
             deck,
         ];
+
+        // Sort player 0's hand by suit, then by value (high to low)
+        self.hands[0].sort_by(|a, b| match a.suit.cmp(&b.suit) {
+            std::cmp::Ordering::Equal => b.value.cmp(&a.value), // Same suit: high to low
+            other => other,                                     // Different suits: sort by suit
+        });
+
+        // Deal animations
+        for hand_index in 0..15 {
+            for player in 0..PLAYER_COUNT {
+                if hand_index < self.hands[player].len() {
+                    let card = self.hands[player][hand_index];
+                    self.add_change(
+                        deal_index,
+                        Change {
+                            change_type: ChangeType::Deal,
+                            object_id: card.id,
+                            dest: Location::Hand,
+                            player,
+                            offset: hand_index,
+                            length: self.hands[player].len(),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
+
         self.round += 1;
+
+        // Show playable cards and message after dealing
+        self.show_playable();
+        self.show_message();
     }
 
     pub fn deck() -> Vec<Card> {
@@ -165,7 +220,7 @@ impl StickEmGame {
 
         deck.shuffle(&mut thread_rng());
 
-        return deck;
+        deck
     }
 
     pub fn get_moves(&self) -> Vec<i32> {
@@ -177,6 +232,8 @@ impl StickEmGame {
     }
 
     pub fn apply_move(&mut self, card_id: i32) {
+        self.changes = vec![vec![]];
+
         if !self.get_moves().contains(&card_id) {
             panic!("invalid move");
         }
@@ -186,15 +243,58 @@ impl StickEmGame {
             State::SelectPainColor => self.select_pain_color(card_id),
             State::Play => self.play(card_id),
         }
-        // TODO: show playable
+        self.show_playable();
+        self.show_message();
     }
 
     pub fn select_pain_color(&mut self, card_id: i32) {
         let card = self.pop_card(card_id);
-        self.pain_cards[self.current_player] = Some(card);
-        // TODO: Animate pain card selection
+        let player = self.current_player;
+
+        // Animate pain card selection (face down initially)
+        self.add_change(
+            0,
+            Change {
+                change_type: ChangeType::Play,
+                object_id: card_id,
+                dest: Location::PainColor,
+                player,
+                offset: self.pain_cards.iter().flatten().count(),
+                ..Default::default()
+            },
+        );
+
+        self.reorder_hand(player, false);
+
+        self.pain_cards[player] = Some(card);
         self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+
+        // If all pain cards have been selected, reveal them all
         if self.pain_cards.iter().all(|c| c.is_some()) {
+            let reveal_index = self.new_change();
+            // Collect pain cards to avoid borrow checker issues
+            let pain_cards_to_reveal: Vec<(usize, Card)> = self
+                .pain_cards
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, card)| card.map(|c| (idx, c)))
+                .collect();
+
+            // Flip all pain cards face up
+            for (player_index, card) in pain_cards_to_reveal {
+                self.add_change(
+                    reveal_index,
+                    Change {
+                        change_type: ChangeType::RevealPainCards,
+                        object_id: card.id,
+                        dest: Location::PainColor,
+                        player: player_index,
+                        offset: player_index,
+                        ..Default::default()
+                    },
+                );
+            }
+
             self.current_player = self.dealer;
             self.state = State::Play;
         }
@@ -202,40 +302,136 @@ impl StickEmGame {
 
     pub fn play(&mut self, card_id: i32) {
         let card = self.pop_card(card_id);
-        self.current_hand[self.current_player] = Some(card);
-        // TODO: Animate played cards
+        let player = self.current_player;
+
+        // Animate played cards
+        self.add_change(
+            0,
+            Change {
+                change_type: ChangeType::Play,
+                object_id: card_id,
+                dest: Location::Play,
+                player,
+                ..Default::default()
+            },
+        );
+
+        self.reorder_hand(player, false);
+
+        self.current_hand[player] = Some(card);
+
         if self.current_hand.iter().any(|c| c.is_none()) {
             self.current_player = (self.current_player + 1) % PLAYER_COUNT;
             return;
         }
+
         // The trick is over
         let trick_result = StickEmGame::trick_winner(self.lead_player, self.current_hand);
-        self.current_player = trick_result.winning_player;
-        self.lead_player = self.current_player;
+        let trick_winner = trick_result.winning_player;
+
+        // Show winning card and pause
+        let index = self.new_change();
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::ShowWinningCard,
+                object_id: self.current_hand[trick_winner].unwrap().id,
+                dest: Location::Play,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::Play,
+                ..Default::default()
+            },
+        );
+
+        self.current_player = trick_winner;
+        self.lead_player = trick_winner;
+
         if trick_result.score_hand {
             // Add won cards to the winner's won cards
-            self.cards_won[self.current_player].extend(self.current_hand.iter().flatten().copied())
-            // TODO: Animate trick won to winner
+            self.cards_won[trick_winner].extend(self.current_hand.iter().flatten().copied());
+
+            // Animate trick won to winner
+            let change_index = self.new_change();
+            for card in self.current_hand {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::TricksToWinner,
+                        object_id: card.unwrap().id,
+                        dest: Location::TricksTaken,
+                        player: trick_winner,
+                        ..Default::default()
+                    },
+                );
+            }
         } else {
             // Animate trick off screen - not to winner
+            let change_index = self.new_change();
+            for card in self.current_hand {
+                self.add_change(
+                    change_index,
+                    Change {
+                        change_type: ChangeType::TricksToWinner,
+                        object_id: card.unwrap().id,
+                        dest: Location::TricksTaken,
+                        player: trick_winner,
+                        ..Default::default()
+                    },
+                );
+            }
         }
 
         // Reset the trick
         self.current_hand = [None; 4];
 
-        if self.hands.iter().any(|h| h.len() > 0) {
+        if self.hands.iter().any(|h| !h.is_empty()) {
             // Hand continues
             return;
         }
 
         // Round is over
+        // Show scoring animations for each player, interleaved with score updates
         for player in 0..PLAYER_COUNT {
+            // Show this player's captured cards
+            self.show_scoring_cards(player);
+
+            // Show score modification for this player
+            let score_index = self.new_change();
             let score = StickEmGame::score_cards_won(
                 self.pain_cards[player].unwrap(),
                 &self.cards_won[player],
             );
-            // TODO: animate score for player from scores[player] to score
+            self.add_change(
+                score_index,
+                Change {
+                    change_type: ChangeType::Score,
+                    player,
+                    start_score: self.scores[player],
+                    end_score: self.scores[player] + score,
+                    ..Default::default()
+                },
+            );
             self.scores[player] += score;
+
+            // Hide the scoring cards before moving to the next player
+            let hide_index = self.new_change();
+            self.add_change(
+                hide_index,
+                Change {
+                    change_type: ChangeType::HideScoringCards,
+                    object_id: 0,
+                    dest: Location::ScoreCards,
+                    player,
+                    ..Default::default()
+                },
+            );
         }
 
         if self.round >= PLAYER_COUNT as i32 {
@@ -248,7 +444,15 @@ impl StickEmGame {
                     break;
                 }
             }
-            return;
+
+            let game_over_index = self.new_change();
+            self.add_change(
+                game_over_index,
+                Change {
+                    change_type: ChangeType::GameOver,
+                    ..Default::default()
+                },
+            );
         } else {
             self.deal();
         }
@@ -287,7 +491,7 @@ impl StickEmGame {
             };
         }
 
-        let mut winning_player = 0;
+        let mut winning_player = lead_player;
         let mut winning_card = current_hand[lead_player].unwrap();
         let lead_suit = winning_card.suit;
         for i in 0..PLAYER_COUNT {
@@ -321,6 +525,212 @@ impl StickEmGame {
             winning_player,
         }
     }
+
+    #[inline]
+    fn new_change(&mut self) -> usize {
+        self.changes.push(vec![]);
+        self.changes.len() - 1
+    }
+
+    #[inline]
+    fn add_change(&mut self, index: usize, change: Change) {
+        if self.no_changes {
+            return;
+        }
+        self.changes[index].push(change);
+    }
+
+    #[inline]
+    pub fn reorder_hand(&mut self, player: usize, force_new_animation: bool) {
+        if self.no_changes {
+            return;
+        }
+        if self.changes.is_empty() || force_new_animation {
+            self.new_change();
+        }
+        let length = self.hands[player].len();
+        let index = self.changes.len() - 1;
+        self.changes[index].extend(self.hands[player].iter().enumerate().map(|(offset, card)| {
+            Change {
+                change_type: ChangeType::Reorder,
+                dest: Location::Hand,
+                object_id: card.id,
+                player,
+                offset,
+                length,
+                ..Default::default()
+            }
+        }));
+    }
+
+    fn show_playable(&mut self) {
+        if self.changes.is_empty() {
+            self.changes = vec![vec![]];
+        }
+        let change_index = self.new_change();
+        if self.current_player == 0 {
+            let moves = self.get_moves();
+            for id in moves {
+                self.add_change(
+                    change_index,
+                    Change {
+                        object_id: id,
+                        change_type: ChangeType::ShowPlayable,
+                        dest: Location::Hand,
+                        player: self.current_player,
+                        ..Default::default()
+                    },
+                );
+            }
+        } else {
+            self.hide_playable();
+        }
+    }
+
+    fn show_message(&mut self) {
+        let player_name = match self.current_player {
+            0 => "You".to_string(),
+            1 => "West".to_string(),
+            2 => "North".to_string(),
+            _ => "East".to_string(),
+        };
+
+        let message = match self.state {
+            State::SelectPainColor => Some(format!("{} must select a pain color", player_name)),
+            State::Play => None,
+            State::GameOver => None,
+        };
+
+        let index = self.new_change();
+        self.set_message(message, index);
+    }
+
+    fn set_message(&mut self, message: Option<String>, index: usize) {
+        self.add_change(
+            index,
+            Change {
+                change_type: ChangeType::Message,
+                message,
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            },
+        );
+    }
+
+    fn hide_playable(&mut self) {
+        if self.changes.is_empty() {
+            self.changes = vec![vec![]];
+        }
+        let change_index = self.changes.len() - 1;
+        let cards = self.hands[0].clone();
+        for card in cards {
+            self.add_change(
+                change_index,
+                Change {
+                    object_id: card.id,
+                    change_type: ChangeType::HidePlayable,
+                    dest: Location::Hand,
+                    player: self.current_player,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    fn show_scoring_cards(&mut self, player: usize) {
+        let pain_card = self.pain_cards[player].unwrap();
+        let cards_won = &self.cards_won[player];
+
+        // Calculate score delta for this player
+        let score_delta = StickEmGame::score_cards_won(pain_card, cards_won);
+
+        // Separate pain cards from other cards
+        let mut pain_cards_won: Vec<Card> = cards_won
+            .iter()
+            .filter(|c| c.suit == pain_card.suit)
+            .copied()
+            .collect();
+        let mut other_cards: Vec<Card> = cards_won
+            .iter()
+            .filter(|c| c.suit != pain_card.suit)
+            .copied()
+            .collect();
+
+        // Add the selected pain card to the pain cards list so it's sorted with them
+        pain_cards_won.push(pain_card);
+
+        // Sort ALL pain cards by value (high to low)
+        // This ensures the selected pain card appears in the correct sorted position
+        pain_cards_won.sort_by(|a, b| b.value.cmp(&a.value));
+
+        // Sort other cards by suit, then by value (high to low)
+        other_cards.sort_by(|a, b| {
+            match a.suit.cmp(&b.suit) {
+                std::cmp::Ordering::Equal => b.value.cmp(&a.value), // Same suit: high to low
+                other => other,                                     // Different suits: sort by suit
+            }
+        });
+
+        // Total cards to display = captured cards + selected pain card
+        let total_length = cards_won.len() + 1;
+
+        let change_index = self.new_change();
+        let mut offset = 0;
+
+        // Show all pain cards (including selected) in sorted order (high to low)
+        for card in pain_cards_won {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::ShowScoringCard,
+                    object_id: card.id,
+                    dest: Location::ScoreCards,
+                    player,
+                    offset,
+                    length: total_length,
+                    start_score: self.scores[player],
+                    end_score: self.scores[player] + score_delta,
+                    ..Default::default()
+                },
+            );
+            offset += 1;
+        }
+
+        // Show other cards
+        for card in other_cards {
+            self.add_change(
+                change_index,
+                Change {
+                    change_type: ChangeType::ShowScoringCard,
+                    object_id: card.id,
+                    dest: Location::ScoreCards,
+                    player,
+                    offset,
+                    length: total_length,
+                    start_score: self.scores[player],
+                    end_score: self.scores[player] + score_delta,
+                    ..Default::default()
+                },
+            );
+            offset += 1;
+        }
+
+        // Add optional pause after all cards are shown
+        // User can review all cards and the score delta before score is updated
+        self.add_change(
+            change_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                object_id: 0,
+                dest: Location::ScoreCards,
+                player,
+                start_score: self.scores[player],
+                end_score: self.scores[player] + score_delta,
+                ..Default::default()
+            },
+        );
+    }
 }
 
 impl ismcts::Game for StickEmGame {
@@ -352,20 +762,17 @@ impl ismcts::Game for StickEmGame {
                     // Don't swap current player's cards - player knows exactly what they have
                     continue;
                 }
-                let mut new_hands = vec![
-                    self.hands[p1 as usize].clone(),
-                    self.hands[p2 as usize].clone(),
-                ];
+                let mut new_hands = vec![self.hands[p1].clone(), self.hands[p2].clone()];
 
                 shuffle_and_divide_matching_cards(|_: &Card| true, &mut new_hands, rng);
 
-                self.hands[p1 as usize] = new_hands[0].clone();
-                self.hands[p2 as usize] = new_hands[1].clone();
+                self.hands[p1] = new_hands[0].clone();
+                self.hands[p2] = new_hands[1].clone();
             }
         }
 
-        for player in 0..PLAYER_COUNT {
-            if pain_card_played[player] {
+        for (player, &played) in pain_card_played.iter().enumerate().take(PLAYER_COUNT) {
+            if played {
                 let card = self.hands[player].pop();
                 self.pain_cards[player] = card;
             }
@@ -415,7 +822,7 @@ impl ismcts::Game for StickEmGame {
     }
 }
 
-pub fn get_mcts_move(game: &StickEmGame, iterations: i32, debug: bool) -> i32 {
+pub fn get_mcts_move(game: &StickEmGame, iterations: i32, _debug: bool) -> i32 {
     let mut new_game = game.clone();
     new_game.no_changes = true;
     let mut ismcts = IsmctsHandler::new(new_game);
@@ -679,6 +1086,62 @@ mod tests {
                     }), // lead
                 ],
                 expected_winning_player: 1,
+                expected_score_hand: true,
+            },
+            TrickWinnerScenario {
+                name: "BUG: Lead player 2 has highest card, all same suit - should win".to_string(),
+                lead_player: 2,
+                current_hand: [
+                    Some(Card {
+                        id: 0,
+                        suit: Suit::Blue,
+                        value: 3,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        suit: Suit::Blue,
+                        value: 7,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        suit: Suit::Blue,
+                        value: 11,
+                    }), // lead - highest card
+                    Some(Card {
+                        id: 3,
+                        suit: Suit::Blue,
+                        value: 5,
+                    }),
+                ],
+                expected_winning_player: 2,
+                expected_score_hand: true,
+            },
+            TrickWinnerScenario {
+                name: "BUG: Lead player 3 plays only non-zero card - should win".to_string(),
+                lead_player: 3,
+                current_hand: [
+                    Some(Card {
+                        id: 0,
+                        suit: Suit::Blue,
+                        value: 0,
+                    }),
+                    Some(Card {
+                        id: 1,
+                        suit: Suit::Red,
+                        value: 0,
+                    }),
+                    Some(Card {
+                        id: 2,
+                        suit: Suit::Green,
+                        value: 0,
+                    }),
+                    Some(Card {
+                        id: 3,
+                        suit: Suit::Yellow,
+                        value: 5,
+                    }), // lead - only non-zero
+                ],
+                expected_winning_player: 3,
                 expected_score_hand: true,
             },
         ];
