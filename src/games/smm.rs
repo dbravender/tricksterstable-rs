@@ -306,8 +306,8 @@ impl SMMGame {
             return moves;
         }
 
-        // Lucky coin (only when leading, before playing)
-        if self.has_lucky_coin[self.current_player] && self.current_meld.is_empty() {
+        // Lucky coin (before any play - leading or following)
+        if self.has_lucky_coin[self.current_player] {
             moves.push(USE_LUCKY_COIN);
         }
 
@@ -553,7 +553,10 @@ impl SMMGame {
                 .filter(|&p| !self.shed_out_order.contains(&p))
                 .collect();
 
-            let passed_count = active.iter().filter(|&&p| self.passed_this_round[p]).count();
+            let passed_count = active
+                .iter()
+                .filter(|&&p| self.passed_this_round[p])
+                .count();
 
             if passed_count >= active.len() - 1 && self.meld_leader.is_some() {
                 self.meld_wins();
@@ -635,9 +638,8 @@ impl SMMGame {
 
     fn play_meld(&mut self, cards: Vec<Card>) {
         let suit = cards[0].suit;
-        let is_adding = self.current_meld_suit == Some(suit)
-            && cards.len() == 1
-            && self.current_meld.len() < 3;
+        let is_adding =
+            self.current_meld_suit == Some(suit) && cards.len() == 1 && self.current_meld.len() < 3;
 
         if is_adding {
             self.current_meld.extend(cards.iter().cloned());
@@ -1073,7 +1075,11 @@ mod tests {
 
         for suit in Suit::all() {
             let count = deck.iter().filter(|c| c.suit == suit).count();
-            assert_eq!(count, CARDS_PER_SUIT, "Suit {:?} should have {} cards", suit, CARDS_PER_SUIT);
+            assert_eq!(
+                count, CARDS_PER_SUIT,
+                "Suit {:?} should have {} cards",
+                suit, CARDS_PER_SUIT
+            );
         }
     }
 
@@ -1097,7 +1103,10 @@ mod tests {
         game.current_player = 0;
 
         // Setup: Cherry meld wins
-        game.current_meld = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
         game.current_meld_suit = Some(Suit::Cherry);
         game.meld_leader = Some(0);
 
@@ -1131,7 +1140,10 @@ mod tests {
         game.no_changes = true;
 
         // Setup meld
-        game.current_meld = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
         game.current_meld_suit = Some(Suit::Cherry);
         game.meld_leader = Some(1);
         game.current_player = 0;
@@ -1177,16 +1189,80 @@ mod tests {
     }
 
     #[test]
-    fn test_lucky_coin_not_available_when_following() {
+    fn test_lucky_coin_available_when_following() {
         let mut game = SMMGame::new();
         game.no_changes = true;
         game.current_player = 0;
-        game.current_meld = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
         game.current_meld_suit = Some(Suit::Cherry);
+        game.meld_leader = Some(1);
         game.has_lucky_coin[0] = true;
+        // Give player some cards so they have moves
+        game.hands[0] = vec![Card {
+            id: 48,
+            suit: Suit::Seven,
+        }];
 
         let moves = game.get_moves();
-        assert!(!moves.contains(&USE_LUCKY_COIN));
+        // Lucky coin should be available before ANY play, not just when leading
+        assert!(moves.contains(&USE_LUCKY_COIN));
+    }
+
+    #[test]
+    fn test_lucky_coin_while_following_changes_hierarchy() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // There's a meld on the table
+        game.current_meld = vec![Card {
+            id: 8,
+            suit: Suit::Diamond,
+        }];
+        game.current_meld_suit = Some(Suit::Diamond);
+        game.meld_leader = Some(1);
+        game.has_lucky_coin[0] = true;
+        game.hands[0] = vec![
+            Card {
+                id: 48,
+                suit: Suit::Seven,
+            },
+            Card {
+                id: 49,
+                suit: Suit::Seven,
+            },
+        ];
+
+        // Seven is power 6 (weakest), can't beat Diamond (power 1)
+        let moves_before = game.get_moves();
+        assert!(!moves_before.contains(&48)); // Can't play Seven to beat Diamond
+
+        // Use lucky coin to reverse hierarchy
+        game.apply_move(USE_LUCKY_COIN);
+
+        // Now Seven is power 0 (strongest), Diamond is power 5
+        assert_eq!(game.hierarchy[0], Suit::Seven);
+        assert!(!game.has_lucky_coin[0]);
+
+        // Still same player's turn, still same meld
+        assert_eq!(game.current_player, 0);
+        assert_eq!(game.current_meld.len(), 1);
+
+        // Now Seven cards can beat Diamond
+        let moves_after = game.get_moves();
+        assert!(moves_after.contains(&48) || moves_after.contains(&49));
     }
 
     #[test]
@@ -1196,19 +1272,33 @@ mod tests {
 
         // Set hierarchy: Cherry most powerful, Seven least
         game.hierarchy = vec![
-            Suit::Cherry, Suit::Diamond, Suit::Bell,
-            Suit::Clover, Suit::Horseshoe, Suit::Bar, Suit::Seven,
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
         ];
 
         // Current meld is Diamond (power 1)
-        game.current_meld = vec![Card { id: 10, suit: Suit::Diamond }];
+        game.current_meld = vec![Card {
+            id: 10,
+            suit: Suit::Diamond,
+        }];
         game.current_meld_suit = Some(Suit::Diamond);
         game.meld_leader = Some(1);
 
         // Player 0 has Cherry cards (power 0, can beat)
         game.hands[0] = vec![
-            Card { id: 0, suit: Suit::Cherry },
-            Card { id: 1, suit: Suit::Cherry },
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
         ];
         game.current_player = 0;
 
@@ -1223,24 +1313,39 @@ mod tests {
         game.no_changes = true;
 
         game.hierarchy = vec![
-            Suit::Cherry, Suit::Diamond, Suit::Bell,
-            Suit::Clover, Suit::Horseshoe, Suit::Bar, Suit::Seven,
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
         ];
 
         // Current meld is Cherry (power 0, most powerful)
-        game.current_meld = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
         game.current_meld_suit = Some(Suit::Cherry);
         game.meld_leader = Some(1);
 
         // Player 0 only has Seven cards (power 6, cannot beat)
         game.hands[0] = vec![
-            Card { id: 48, suit: Suit::Seven },
-            Card { id: 49, suit: Suit::Seven },
+            Card {
+                id: 48,
+                suit: Suit::Seven,
+            },
+            Card {
+                id: 49,
+                suit: Suit::Seven,
+            },
         ];
         game.current_player = 0;
+        game.has_lucky_coin[0] = false;
 
         let moves = game.get_moves();
-        // Should only be able to pass (can't beat or add)
+        // Should only be able to pass (can't beat or add, no lucky coin)
         assert_eq!(moves, vec![PASS]);
     }
 
@@ -1250,12 +1355,18 @@ mod tests {
         game.no_changes = true;
 
         // Current meld is 1 Cherry
-        game.current_meld = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
         game.current_meld_suit = Some(Suit::Cherry);
         game.meld_leader = Some(1);
 
         // Player 0 has a Cherry
-        game.hands[0] = vec![Card { id: 1, suit: Suit::Cherry }];
+        game.hands[0] = vec![Card {
+            id: 1,
+            suit: Suit::Cherry,
+        }];
         game.current_player = 0;
 
         let moves = game.get_moves();
@@ -1269,19 +1380,32 @@ mod tests {
 
         // Current meld is 3 Cherries (full)
         game.current_meld = vec![
-            Card { id: 0, suit: Suit::Cherry },
-            Card { id: 1, suit: Suit::Cherry },
-            Card { id: 2, suit: Suit::Cherry },
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Cherry,
+            },
         ];
         game.current_meld_suit = Some(Suit::Cherry);
         game.meld_leader = Some(1);
 
         // Player 0 has a Cherry but can't add (meld full)
-        game.hands[0] = vec![Card { id: 3, suit: Suit::Cherry }];
+        game.hands[0] = vec![Card {
+            id: 3,
+            suit: Suit::Cherry,
+        }];
         game.current_player = 0;
+        game.has_lucky_coin[0] = false;
 
         let moves = game.get_moves();
-        // Can only pass (can't add to full meld, can't beat Cherry with Cherry)
+        // Can only pass (can't add to full meld, can't beat Cherry with Cherry, no lucky coin)
         assert_eq!(moves, vec![PASS]);
     }
 
@@ -1346,8 +1470,14 @@ mod tests {
 
         // Stage 2 Cherries
         game.staged_cards = vec![
-            Card { id: 0, suit: Suit::Cherry },
-            Card { id: 1, suit: Suit::Cherry },
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
         ];
 
         assert!(game.is_valid_staged_meld());
@@ -1361,8 +1491,14 @@ mod tests {
 
         // Stage mixed suits - invalid
         game.staged_cards = vec![
-            Card { id: 0, suit: Suit::Cherry },
-            Card { id: 8, suit: Suit::Diamond },
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 8,
+                suit: Suit::Diamond,
+            },
         ];
 
         assert!(!game.is_valid_staged_meld());
@@ -1376,10 +1512,22 @@ mod tests {
 
         // Stage 4 cards - invalid
         game.staged_cards = vec![
-            Card { id: 0, suit: Suit::Cherry },
-            Card { id: 1, suit: Suit::Cherry },
-            Card { id: 2, suit: Suit::Cherry },
-            Card { id: 3, suit: Suit::Cherry },
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 3,
+                suit: Suit::Cherry,
+            },
         ];
 
         assert!(!game.is_valid_staged_meld());
@@ -1391,23 +1539,40 @@ mod tests {
         game.no_changes = true;
 
         game.hierarchy = vec![
-            Suit::Cherry, Suit::Diamond, Suit::Bell,
-            Suit::Clover, Suit::Horseshoe, Suit::Bar, Suit::Seven,
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
         ];
 
         // Current meld is 2 Diamonds
         game.current_meld = vec![
-            Card { id: 8, suit: Suit::Diamond },
-            Card { id: 9, suit: Suit::Diamond },
+            Card {
+                id: 8,
+                suit: Suit::Diamond,
+            },
+            Card {
+                id: 9,
+                suit: Suit::Diamond,
+            },
         ];
         game.current_meld_suit = Some(Suit::Diamond);
         game.meld_leader = Some(1);
 
         // Player has only 1 Cherry - can't beat 2-card meld
-        game.hands[0] = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.hands[0] = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
         game.current_player = 0;
         game.state = State::SelectingMeld;
-        game.staged_cards = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.staged_cards = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
 
         // Single Cherry can't beat a 2-card meld
         assert!(!game.is_valid_staged_meld());
@@ -1441,7 +1606,10 @@ mod tests {
         // 3 players * 15 cards = 45 cards dealt
         // 56 total cards - 45 = 11 cards remaining (not used)
         assert_eq!(PLAYER_COUNT * CARDS_PER_PLAYER, 45);
-        assert_eq!(SUIT_COUNT * CARDS_PER_SUIT - PLAYER_COUNT * CARDS_PER_PLAYER, 11);
+        assert_eq!(
+            SUIT_COUNT * CARDS_PER_SUIT - PLAYER_COUNT * CARDS_PER_PLAYER,
+            11
+        );
     }
 
     #[test]
@@ -1462,11 +1630,18 @@ mod tests {
         game.no_changes = true;
 
         // Setup: meld exists, player 0's turn
-        game.current_meld = vec![Card { id: 0, suit: Suit::Cherry }];
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
         game.current_meld_suit = Some(Suit::Cherry);
         game.meld_leader = Some(2);
         game.current_player = 0;
-        game.hands[0] = vec![Card { id: 48, suit: Suit::Seven }]; // Can't beat
+        game.hands[0] = vec![Card {
+            id: 48,
+            suit: Suit::Seven,
+        }]; // Can't beat
+        game.has_lucky_coin[0] = false;
 
         // Player passes
         game.apply_move(PASS);
@@ -1481,5 +1656,40 @@ mod tests {
 
         let moves = game.get_moves();
         assert!(moves.contains(&PASS)); // Can still participate
+    }
+
+    #[test]
+    fn test_full_game_simulation() {
+        // Run multiple full games to verify no panics or infinite loops
+        for _ in 0..10 {
+            let mut game = SMMGame::new();
+            game.no_changes = true;
+            let mut moves_count = 0;
+
+            while game.state != State::GameOver {
+                let moves = game.get_moves();
+                if moves.is_empty() {
+                    break;
+                }
+
+                // Pick a random valid move
+                let mov = moves[moves_count % moves.len()];
+                game.apply_move(mov);
+                moves_count += 1;
+
+                // Safety: prevent infinite loops
+                assert!(
+                    moves_count < 10000,
+                    "Game seems stuck after {} moves",
+                    moves_count
+                );
+            }
+
+            assert_eq!(game.state, State::GameOver);
+            assert_eq!(game.round, ROUNDS as i32);
+            // Verify someone has points
+            let total: i32 = game.scores.iter().sum();
+            assert!(total > 0, "Someone should have scored");
+        }
     }
 }
