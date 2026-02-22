@@ -20,7 +20,6 @@ const ROUNDS: usize = 3;
 
 const PASS: i32 = -1;
 const USE_LUCKY_COIN: i32 = -2;
-const COMMIT_MELD: i32 = -3;
 
 #[derive(
     Debug,
@@ -74,7 +73,6 @@ pub struct Card {
 pub enum State {
     #[default]
     Play,
-    SelectingMeld, // Human player staging cards
     GameOver,
 }
 
@@ -90,7 +88,6 @@ pub enum Location {
     Score,
     Message,
     LuckyCoin,
-    Staged,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -110,8 +107,6 @@ pub enum ChangeType {
     ClearMeld,
     UpdateHierarchy,
     UseLuckyCoin,
-    StageCard,
-    UnstageCard,
     PlayerOut,
 }
 
@@ -161,9 +156,6 @@ pub struct SMMGame {
 
     // Shed out tracking
     pub shed_out_order: Vec<usize>,
-
-    // Staged cards for human
-    pub staged_cards: Vec<Card>,
 }
 
 impl SMMGame {
@@ -192,7 +184,6 @@ impl SMMGame {
         self.passed_this_round = [false; PLAYER_COUNT];
         self.consecutive_passes = 0;
         self.shed_out_order.clear();
-        self.staged_cards.clear();
         self.state = State::Play;
 
         // First round: random start. Later: lowest score starts
@@ -271,6 +262,32 @@ impl SMMGame {
         self.hierarchy.iter().position(|&s| s == suit).unwrap_or(6)
     }
 
+    /// Returns the number of cards that will be played when a given
+    /// card is selected. The card's position within its suit group
+    /// determines the meld size: last card = max available (up to 3),
+    /// second-to-last = one fewer, etc. When following, beating
+    /// requires exactly meld_size so only the trigger card at
+    /// suit_cards.len() - meld_size is offered. Adding is always 1.
+    pub fn cards_to_play(&self, card_id: i32) -> usize {
+        let hand = &self.hands[self.current_player];
+        let card_suit = hand.iter().find(|c| c.id == card_id).unwrap().suit;
+
+        if !self.current_meld.is_empty() {
+            let meld_suit = self.current_meld_suit.unwrap();
+            if card_suit == meld_suit {
+                // Adding to meld: always 1
+                return 1;
+            }
+            // Beating: always exactly meld_size
+            return self.current_meld.len();
+        }
+
+        // Leading: position to end of suit group, capped at 3
+        let suit_cards: Vec<&Card> = hand.iter().filter(|c| c.suit == card_suit).collect();
+        let pos = suit_cards.iter().position(|c| c.id == card_id).unwrap();
+        (suit_cards.len() - pos).min(3)
+    }
+
     pub fn get_moves(&self) -> Vec<i32> {
         if self.state == State::GameOver {
             return vec![];
@@ -283,58 +300,40 @@ impl SMMGame {
         let mut moves = Vec::new();
         let hand = &self.hands[self.current_player];
 
-        // Staging mode (human selecting meld)
-        if self.state == State::SelectingMeld {
-            // Can commit if valid meld
-            if self.is_valid_staged_meld() {
-                moves.push(COMMIT_MELD);
-            }
-            // Can unstage cards (id + 1000)
-            for card in &self.staged_cards {
-                moves.push(card.id + 1000);
-            }
-            // Can stage more of same suit
-            if let Some(staged_suit) = self.staged_cards.first().map(|c| c.suit) {
-                for card in hand {
-                    if card.suit == staged_suit && self.staged_cards.len() < 3 {
-                        moves.push(card.id);
-                    }
-                }
-            }
-            // Can cancel (pass)
-            moves.push(PASS);
-            return moves;
-        }
-
         // Lucky coin (before any play - leading or following)
         if self.has_lucky_coin[self.current_player] {
             moves.push(USE_LUCKY_COIN);
         }
 
-        // Normal play
         if self.current_meld.is_empty() {
-            // Leading - can play any card
-            for card in hand {
-                moves.push(card.id);
+            // Leading: for each suit, the last min(count, 3) cards are playable.
+            // Tapping a card plays it and all cards after it in the suit group.
+            for suit in Suit::all() {
+                let suit_cards: Vec<&Card> = hand.iter().filter(|c| c.suit == suit).collect();
+                let playable_count = suit_cards.len().min(3);
+                // Offer the last `playable_count` cards in the suit
+                for card in suit_cards.iter().skip(suit_cards.len() - playable_count) {
+                    moves.push(card.id);
+                }
             }
         } else {
             let meld_size = self.current_meld.len();
             let meld_suit = self.current_meld_suit.unwrap();
             let meld_power = self.suit_power(meld_suit);
 
-            // Can beat with higher power suit (same count)
+            // Beat with higher power suit: need exactly meld_size cards,
+            // so only the card at position len - meld_size is the trigger
             for suit in Suit::all() {
                 if self.suit_power(suit) < meld_power {
                     let suit_cards: Vec<&Card> = hand.iter().filter(|c| c.suit == suit).collect();
                     if suit_cards.len() >= meld_size {
-                        for card in suit_cards {
-                            moves.push(card.id);
-                        }
+                        let trigger_idx = suit_cards.len() - meld_size;
+                        moves.push(suit_cards[trigger_idx].id);
                     }
                 }
             }
 
-            // Can add to meld if size < 3
+            // Add to meld if size < 3: any card of meld suit, plays 1
             if meld_size < 3 {
                 for card in hand {
                     if card.suit == meld_suit {
@@ -352,38 +351,6 @@ impl SMMGame {
         moves
     }
 
-    fn is_valid_staged_meld(&self) -> bool {
-        if self.staged_cards.is_empty() || self.staged_cards.len() > 3 {
-            return false;
-        }
-
-        let suit = self.staged_cards[0].suit;
-        if !self.staged_cards.iter().all(|c| c.suit == suit) {
-            return false;
-        }
-
-        if self.current_meld.is_empty() {
-            return true; // Leading: any 1-3 cards of same suit
-        }
-
-        let meld_size = self.current_meld.len();
-        let meld_suit = self.current_meld_suit.unwrap();
-        let meld_power = self.suit_power(meld_suit);
-        let staged_power = self.suit_power(suit);
-
-        // Adding to meld
-        if suit == meld_suit && self.staged_cards.len() == 1 && meld_size < 3 {
-            return true;
-        }
-
-        // Beating the meld
-        if self.staged_cards.len() == meld_size && staged_power < meld_power {
-            return true;
-        }
-
-        false
-    }
-
     pub fn apply_move(&mut self, mov: i32) {
         self.changes = vec![vec![]];
 
@@ -398,145 +365,11 @@ impl SMMGame {
 
         match self.state {
             State::GameOver => return,
-            State::SelectingMeld => self.apply_staging_move(mov),
             State::Play => self.apply_play_move(mov),
         }
 
         self.show_playable();
         self.show_message();
-    }
-
-    fn apply_staging_move(&mut self, mov: i32) {
-        if mov == PASS {
-            // Cancel staging
-            for card in self.staged_cards.drain(..) {
-                self.hands[self.current_player].push(card);
-            }
-            self.sort_hand(self.current_player);
-            self.state = State::Play;
-            self.reorder_hand(self.current_player);
-            return;
-        }
-
-        if mov >= 1000 {
-            // Unstage card
-            let card_id = mov - 1000;
-            if let Some(pos) = self.staged_cards.iter().position(|c| c.id == card_id) {
-                let card = self.staged_cards.remove(pos);
-                self.hands[self.current_player].push(card);
-                self.sort_hand(self.current_player);
-                self.add_change(
-                    0,
-                    Change {
-                        change_type: ChangeType::UnstageCard,
-                        object_id: card_id,
-                        dest: Location::Hand,
-                        player: self.current_player,
-                        ..Default::default()
-                    },
-                );
-                if self.staged_cards.is_empty() {
-                    self.state = State::Play;
-                }
-            }
-            return;
-        }
-
-        if mov == COMMIT_MELD {
-            self.commit_staged_meld();
-            return;
-        }
-
-        // Stage another card
-        if let Some(pos) = self.hands[self.current_player]
-            .iter()
-            .position(|c| c.id == mov)
-        {
-            let card = self.hands[self.current_player].remove(pos);
-            self.staged_cards.push(card);
-            self.add_change(
-                0,
-                Change {
-                    change_type: ChangeType::StageCard,
-                    object_id: card.id,
-                    dest: Location::Staged,
-                    player: self.current_player,
-                    ..Default::default()
-                },
-            );
-        }
-    }
-
-    fn commit_staged_meld(&mut self) {
-        let staged_suit = self.staged_cards[0].suit;
-        let is_adding = self.current_meld_suit == Some(staged_suit)
-            && self.staged_cards.len() == 1
-            && self.current_meld.len() < 3;
-
-        if is_adding {
-            let card = self.staged_cards.remove(0);
-            self.current_meld.push(card);
-            self.add_change(
-                0,
-                Change {
-                    change_type: ChangeType::Play,
-                    object_id: card.id,
-                    dest: Location::Play,
-                    player: self.current_player,
-                    length: self.current_meld.len(),
-                    ..Default::default()
-                },
-            );
-        } else {
-            // Clear old meld
-            if !self.current_meld.is_empty() {
-                let clear_index = self.new_change();
-                let old_card_ids: Vec<i32> = self.current_meld.iter().map(|c| c.id).collect();
-                for card_id in old_card_ids {
-                    self.add_change(
-                        clear_index,
-                        Change {
-                            change_type: ChangeType::ClearMeld,
-                            object_id: card_id,
-                            dest: Location::Discard,
-                            ..Default::default()
-                        },
-                    );
-                }
-                self.current_meld.clear();
-            }
-
-            // Play new meld
-            let play_index = self.new_change();
-            let staged: Vec<Card> = self.staged_cards.drain(..).collect();
-            for card in staged {
-                self.current_meld.push(card);
-                self.add_change(
-                    play_index,
-                    Change {
-                        change_type: ChangeType::Play,
-                        object_id: card.id,
-                        dest: Location::Play,
-                        player: self.current_player,
-                        length: self.current_meld.len(),
-                        ..Default::default()
-                    },
-                );
-            }
-            self.current_meld_suit = Some(staged_suit);
-            self.meld_leader = Some(self.current_player);
-        }
-
-        self.staged_cards.clear();
-        self.state = State::Play;
-        self.passed_this_round = [false; PLAYER_COUNT];
-        self.consecutive_passes = 0;
-
-        if self.hands[self.current_player].is_empty() {
-            self.player_sheds_out(self.current_player);
-        }
-
-        self.advance_player();
     }
 
     fn apply_play_move(&mut self, mov: i32) {
@@ -566,74 +399,37 @@ impl SMMGame {
             return;
         }
 
-        // Human player -> staging mode
-        if self.current_player == 0 && !self.no_changes {
-            self.start_staging(mov);
-            return;
-        }
+        // Determine how many cards to play based on card position in suit
+        let count = self.cards_to_play(mov);
+        let suit = self.hands[self.current_player]
+            .iter()
+            .find(|c| c.id == mov)
+            .unwrap()
+            .suit;
 
-        // AI plays directly
-        let card = self.pop_card(mov);
-        let suit = card.suit;
-        let cards_to_play = self.ai_select_meld_size(suit);
+        // Take the last `count` cards of this suit from the hand
+        let suit_card_ids: Vec<i32> = self.hands[self.current_player]
+            .iter()
+            .filter(|c| c.suit == suit)
+            .collect::<Vec<&Card>>()
+            .iter()
+            .rev()
+            .take(count)
+            .rev()
+            .map(|c| c.id)
+            .collect();
 
-        let mut meld_cards = vec![card];
-        for _ in 1..cards_to_play {
+        let mut meld_cards = Vec::new();
+        for id in suit_card_ids {
             if let Some(pos) = self.hands[self.current_player]
                 .iter()
-                .position(|c| c.suit == suit)
+                .position(|c| c.id == id)
             {
                 meld_cards.push(self.hands[self.current_player].remove(pos));
             }
         }
 
         self.play_meld(meld_cards);
-    }
-
-    fn start_staging(&mut self, card_id: i32) {
-        if let Some(pos) = self.hands[self.current_player]
-            .iter()
-            .position(|c| c.id == card_id)
-        {
-            let card = self.hands[self.current_player].remove(pos);
-            self.staged_cards.push(card);
-            self.state = State::SelectingMeld;
-            self.add_change(
-                0,
-                Change {
-                    change_type: ChangeType::StageCard,
-                    object_id: card.id,
-                    dest: Location::Staged,
-                    player: self.current_player,
-                    ..Default::default()
-                },
-            );
-        }
-    }
-
-    fn ai_select_meld_size(&self, suit: Suit) -> usize {
-        let suit_count = self.hands[self.current_player]
-            .iter()
-            .filter(|c| c.suit == suit)
-            .count();
-
-        if self.current_meld.is_empty() {
-            // Leading: prefer larger melds to shed faster
-            if suit_count >= 3 && self.hands[self.current_player].len() > 5 {
-                3
-            } else if suit_count >= 2 && self.hands[self.current_player].len() > 3 {
-                2
-            } else {
-                1
-            }
-        } else {
-            let meld_suit = self.current_meld_suit.unwrap();
-            if suit == meld_suit && self.current_meld.len() < 3 {
-                1 // Adding
-            } else {
-                self.current_meld.len() // Beating
-            }
-        }
     }
 
     fn play_meld(&mut self, cards: Vec<Card>) {
@@ -757,6 +553,10 @@ impl SMMGame {
         );
 
         self.update_hierarchy_display();
+
+        // Resort and reposition hand after hierarchy change
+        self.sort_hand(self.current_player);
+        self.reorder_hand(self.current_player);
     }
 
     fn update_hierarchy_display(&mut self) {
@@ -858,14 +658,6 @@ impl SMMGame {
             next = (next + 1) % PLAYER_COUNT;
         }
         self.current_player = next;
-    }
-
-    fn pop_card(&mut self, card_id: i32) -> Card {
-        let pos = self.hands[self.current_player]
-            .iter()
-            .position(|c| c.id == card_id)
-            .unwrap();
-        self.hands[self.current_player].remove(pos)
     }
 
     fn sort_hand(&mut self, player: usize) {
@@ -1266,6 +1058,15 @@ mod tests {
     }
 
     #[test]
+    fn test_lucky_coin_apply_move_on_new_game() {
+        let mut game = SMMGame::new();
+        game.current_player = 0;
+        assert!(game.get_moves().contains(&USE_LUCKY_COIN));
+        game.apply_move(USE_LUCKY_COIN);
+        assert!(!game.has_lucky_coin[0]);
+    }
+
+    #[test]
     fn test_can_beat_meld_with_higher_power() {
         let mut game = SMMGame::new();
         game.no_changes = true;
@@ -1303,7 +1104,7 @@ mod tests {
         game.current_player = 0;
 
         let moves = game.get_moves();
-        assert!(moves.contains(&0)); // Can play Cherry
+        // Only the last Cherry (id:1) is the trigger to beat a 1-card meld
         assert!(moves.contains(&1));
     }
 
@@ -1462,14 +1263,13 @@ mod tests {
     }
 
     #[test]
-    fn test_staging_valid_meld() {
+    fn test_cards_to_play_leading() {
         let mut game = SMMGame::new();
         game.no_changes = true;
         game.current_player = 0;
-        game.state = State::SelectingMeld;
 
-        // Stage 2 Cherries
-        game.staged_cards = vec![
+        // Hand has 3 Cherries (ids 0,1,2) and 1 Diamond (id 8)
+        game.hands[0] = vec![
             Card {
                 id: 0,
                 suit: Suit::Cherry,
@@ -1478,21 +1278,8 @@ mod tests {
                 id: 1,
                 suit: Suit::Cherry,
             },
-        ];
-
-        assert!(game.is_valid_staged_meld());
-    }
-
-    #[test]
-    fn test_staging_invalid_mixed_suits() {
-        let mut game = SMMGame::new();
-        game.no_changes = true;
-        game.state = State::SelectingMeld;
-
-        // Stage mixed suits - invalid
-        game.staged_cards = vec![
             Card {
-                id: 0,
+                id: 2,
                 suit: Suit::Cherry,
             },
             Card {
@@ -1501,17 +1288,30 @@ mod tests {
             },
         ];
 
-        assert!(!game.is_valid_staged_meld());
+        // Last Cherry (id:2) = play 1, second-to-last (id:1) = play 2, third-to-last (id:0) = play 3
+        assert_eq!(game.cards_to_play(2), 1);
+        assert_eq!(game.cards_to_play(1), 2);
+        assert_eq!(game.cards_to_play(0), 3);
+
+        // Only Diamond = play 1
+        assert_eq!(game.cards_to_play(8), 1);
+
+        // All 4 cards should be valid moves when leading
+        let moves = game.get_moves();
+        assert!(moves.contains(&0));
+        assert!(moves.contains(&1));
+        assert!(moves.contains(&2));
+        assert!(moves.contains(&8));
     }
 
     #[test]
-    fn test_staging_too_many_cards() {
+    fn test_cards_to_play_leading_four_of_suit() {
         let mut game = SMMGame::new();
         game.no_changes = true;
-        game.state = State::SelectingMeld;
+        game.current_player = 0;
 
-        // Stage 4 cards - invalid
-        game.staged_cards = vec![
+        // Hand has 4 Cherries - only last 3 are playable (max meld is 3)
+        game.hands[0] = vec![
             Card {
                 id: 0,
                 suit: Suit::Cherry,
@@ -1530,7 +1330,67 @@ mod tests {
             },
         ];
 
-        assert!(!game.is_valid_staged_meld());
+        let moves = game.get_moves();
+        // Card 0 is not offered (4th from end, beyond max 3)
+        assert!(!moves.contains(&0));
+        // Cards 1,2,3 are playable
+        assert!(moves.contains(&1)); // play 3
+        assert!(moves.contains(&2)); // play 2
+        assert!(moves.contains(&3)); // play 1
+    }
+
+    #[test]
+    fn test_cards_to_play_beating() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // Current meld is 2 Diamonds
+        game.current_meld = vec![
+            Card {
+                id: 8,
+                suit: Suit::Diamond,
+            },
+            Card {
+                id: 9,
+                suit: Suit::Diamond,
+            },
+        ];
+        game.current_meld_suit = Some(Suit::Diamond);
+        game.meld_leader = Some(1);
+
+        // Player has 3 Cherries - can beat 2-card meld
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Cherry,
+            },
+        ];
+
+        let moves = game.get_moves();
+        // Trigger card for beating 2-card meld is at index len-2 = 1, which is card id:1
+        assert!(moves.contains(&1));
+        // Card 0 and 2 are not triggers for beating
+        assert!(!moves.contains(&0));
+        assert!(!moves.contains(&2));
     }
 
     #[test]
@@ -1568,14 +1428,239 @@ mod tests {
             suit: Suit::Cherry,
         }];
         game.current_player = 0;
-        game.state = State::SelectingMeld;
-        game.staged_cards = vec![Card {
-            id: 0,
-            suit: Suit::Cherry,
-        }];
+        game.has_lucky_coin[0] = false;
 
-        // Single Cherry can't beat a 2-card meld
-        assert!(!game.is_valid_staged_meld());
+        let moves = game.get_moves();
+        // Can only pass - not enough Cherries to beat
+        assert_eq!(moves, vec![PASS]);
+    }
+
+    #[test]
+    fn test_adding_same_suit_always_plays_one() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // Current meld is 1 Horseshoe
+        game.current_meld = vec![Card {
+            id: 32,
+            suit: Suit::Horseshoe,
+        }];
+        game.current_meld_suit = Some(Suit::Horseshoe);
+        game.meld_leader = Some(1);
+
+        // Player has 3 Horseshoes
+        game.hands[0] = vec![
+            Card {
+                id: 33,
+                suit: Suit::Horseshoe,
+            },
+            Card {
+                id: 34,
+                suit: Suit::Horseshoe,
+            },
+            Card {
+                id: 35,
+                suit: Suit::Horseshoe,
+            },
+        ];
+
+        // Each horseshoe should play exactly 1 (adding, not beating)
+        assert_eq!(game.cards_to_play(33), 1);
+        assert_eq!(game.cards_to_play(34), 1);
+        assert_eq!(game.cards_to_play(35), 1);
+
+        // All 3 should be available moves (each adds 1)
+        let moves = game.get_moves();
+        assert!(moves.contains(&33));
+        assert!(moves.contains(&34));
+        assert!(moves.contains(&35));
+    }
+
+    #[test]
+    fn test_adding_to_two_card_meld_plays_one() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // Current meld is 2 Horseshoes
+        game.current_meld = vec![
+            Card {
+                id: 32,
+                suit: Suit::Horseshoe,
+            },
+            Card {
+                id: 33,
+                suit: Suit::Horseshoe,
+            },
+        ];
+        game.current_meld_suit = Some(Suit::Horseshoe);
+        game.meld_leader = Some(1);
+
+        // Player has 2 Horseshoes
+        game.hands[0] = vec![
+            Card {
+                id: 34,
+                suit: Suit::Horseshoe,
+            },
+            Card {
+                id: 35,
+                suit: Suit::Horseshoe,
+            },
+        ];
+
+        // Adding to a 2-card meld: each plays 1
+        assert_eq!(game.cards_to_play(34), 1);
+        assert_eq!(game.cards_to_play(35), 1);
+
+        let moves = game.get_moves();
+        assert!(moves.contains(&34));
+        assert!(moves.contains(&35));
+    }
+
+    #[test]
+    fn test_beating_with_higher_suit_plays_meld_size() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // Current meld is 2 Bars (power 5)
+        game.current_meld = vec![
+            Card {
+                id: 40,
+                suit: Suit::Bar,
+            },
+            Card {
+                id: 41,
+                suit: Suit::Bar,
+            },
+        ];
+        game.current_meld_suit = Some(Suit::Bar);
+        game.meld_leader = Some(1);
+
+        // Player has 3 Cherries (power 0, beats Bar)
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 2,
+                suit: Suit::Cherry,
+            },
+        ];
+
+        // Beating a 2-card meld: trigger card plays exactly 2
+        // Trigger is at index len-meld_size = 3-2 = 1, card id:1
+        assert_eq!(game.cards_to_play(1), 2);
+
+        let moves = game.get_moves();
+        assert!(moves.contains(&1));
+        // Cards 0 and 2 are not valid beat triggers
+        assert!(!moves.contains(&0));
+        assert!(!moves.contains(&2));
+    }
+
+    #[test]
+    fn test_can_add_or_beat_different_suits() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // Current meld is 1 Horseshoe (power 4)
+        game.current_meld = vec![Card {
+            id: 32,
+            suit: Suit::Horseshoe,
+        }];
+        game.current_meld_suit = Some(Suit::Horseshoe);
+        game.meld_leader = Some(1);
+
+        // Player has 3 Horseshoes (for adding) and 2 Cherries (for beating)
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 33,
+                suit: Suit::Horseshoe,
+            },
+            Card {
+                id: 34,
+                suit: Suit::Horseshoe,
+            },
+            Card {
+                id: 35,
+                suit: Suit::Horseshoe,
+            },
+        ];
+
+        // Horseshoes: adding, each plays 1
+        assert_eq!(game.cards_to_play(33), 1);
+        assert_eq!(game.cards_to_play(34), 1);
+        assert_eq!(game.cards_to_play(35), 1);
+
+        // Cherry: beating 1-card meld, plays 1
+        // Trigger is last Cherry (id:1)
+        assert_eq!(game.cards_to_play(1), 1);
+
+        let moves = game.get_moves();
+        // All horseshoes available for adding
+        assert!(moves.contains(&33));
+        assert!(moves.contains(&34));
+        assert!(moves.contains(&35));
+        // Last Cherry available for beating
+        assert!(moves.contains(&1));
+        // First Cherry not a trigger for beating a 1-card meld
+        assert!(!moves.contains(&0));
     }
 
     #[test]
