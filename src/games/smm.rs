@@ -438,16 +438,21 @@ impl SMMGame {
             self.current_meld_suit == Some(suit) && cards.len() == 1 && self.current_meld.len() < 3;
 
         if is_adding {
+            self.meld_leader = Some(self.current_player);
             self.current_meld.extend(cards.iter().cloned());
-            for card in &cards {
+            let total = self.current_meld.len();
+            let meld_ids: Vec<i32> = self.current_meld.iter().map(|c| c.id).collect();
+            // Re-emit all meld cards so frontend re-spaces them
+            for (i, id) in meld_ids.iter().enumerate() {
                 self.add_change(
                     0,
                     Change {
                         change_type: ChangeType::Play,
-                        object_id: card.id,
+                        object_id: *id,
                         dest: Location::Play,
                         player: self.current_player,
-                        length: self.current_meld.len(),
+                        offset: i,
+                        length: total,
                         ..Default::default()
                     },
                 );
@@ -497,6 +502,9 @@ impl SMMGame {
 
         if self.hands[self.current_player].is_empty() {
             self.player_sheds_out(self.current_player);
+            if self.shed_out_order.len() >= 2 {
+                return;
+            }
         }
 
         self.advance_player();
@@ -528,6 +536,13 @@ impl SMMGame {
         self.meld_leader = None;
 
         self.update_hierarchy_display();
+
+        // Resort and reposition all hands after hierarchy change
+        for player in 0..PLAYER_COUNT {
+            self.sort_hand(player);
+        }
+        self.reorder_hand(0);
+
         self.passed_this_round = [false; PLAYER_COUNT];
         self.consecutive_passes = 0;
 
@@ -554,9 +569,11 @@ impl SMMGame {
 
         self.update_hierarchy_display();
 
-        // Resort and reposition hand after hierarchy change
-        self.sort_hand(self.current_player);
-        self.reorder_hand(self.current_player);
+        // Resort and reposition all hands after hierarchy change
+        for player in 0..PLAYER_COUNT {
+            self.sort_hand(player);
+        }
+        self.reorder_hand(0);
     }
 
     fn update_hierarchy_display(&mut self) {
@@ -602,21 +619,6 @@ impl SMMGame {
     }
 
     fn end_round(&mut self) {
-        let score_index = self.new_change();
-        for player in 0..PLAYER_COUNT {
-            self.add_change(
-                score_index,
-                Change {
-                    change_type: ChangeType::Score,
-                    player,
-                    start_score: self.scores[player],
-                    end_score: self.scores[player],
-                    animate_score: true,
-                    ..Default::default()
-                },
-            );
-        }
-
         if self.round >= ROUNDS as i32 {
             self.state = State::GameOver;
             let max_score = *self.scores.iter().max().unwrap();
@@ -627,8 +629,9 @@ impl SMMGame {
                 }
             }
 
+            let game_over_index = self.new_change();
             self.add_change(
-                score_index,
+                game_over_index,
                 Change {
                     change_type: ChangeType::GameOver,
                     ..Default::default()
@@ -709,10 +712,7 @@ impl SMMGame {
     }
 
     fn show_playable(&mut self) {
-        if self.changes.is_empty() {
-            self.changes = vec![vec![]];
-        }
-        let change_index = self.changes.len() - 1;
+        let change_index = self.new_change();
 
         if self.current_player == 0 && self.state != State::GameOver {
             let moves = self.get_moves();
@@ -750,10 +750,7 @@ impl SMMGame {
     }
 
     fn hide_playable(&mut self) {
-        if self.changes.is_empty() {
-            self.changes = vec![vec![]];
-        }
-        let change_index = self.changes.len() - 1;
+        let change_index = self.new_change();
         let cards = self.hands[0].clone();
         for card in cards {
             self.add_change(
@@ -1172,6 +1169,39 @@ mod tests {
 
         let moves = game.get_moves();
         assert!(moves.contains(&1)); // Can add Cherry
+    }
+
+    #[test]
+    fn test_adding_to_meld_changes_leader() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+
+        // Player 1 leads a Cherry meld
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
+        game.current_meld_suit = Some(Suit::Cherry);
+        game.meld_leader = Some(1);
+
+        // Player 0 has a Cherry and adds to the meld
+        game.hands[0] = vec![
+            Card {
+                id: 1,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 8,
+                suit: Suit::Diamond,
+            },
+        ];
+        game.current_player = 0;
+        game.has_lucky_coin[0] = false;
+
+        game.apply_move(1); // Add cherry to meld
+
+        // Player 0 should now be the meld leader
+        assert_eq!(game.meld_leader, Some(0));
     }
 
     #[test]
