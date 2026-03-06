@@ -996,15 +996,24 @@ impl ismcts::Game for SMMGame {
         let player_score = self.scores[player];
         let max_score = *self.scores.iter().max().unwrap();
 
-        if player_score == max_score {
+        let base = if player_score == max_score {
             if self.scores.iter().filter(|&&s| s == player_score).count() > 1 {
-                Some(0.0)
+                0.0
             } else {
-                Some(1.0)
+                1.0
             }
         } else {
-            Some(-1.0)
-        }
+            -1.0
+        };
+
+        // Small bonus for retaining lucky coin — discourages wasteful early use
+        let coin_bonus = if self.has_lucky_coin[player] {
+            0.05
+        } else {
+            0.0
+        };
+
+        Some(base + coin_bonus)
     }
 }
 
