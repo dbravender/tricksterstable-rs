@@ -558,6 +558,26 @@ impl SMMGame {
             }
         }
 
+        // Emit meld player label
+        {
+            let player_name = match self.current_player {
+                0 => "You",
+                1 => "West",
+                _ => "East",
+            };
+            let msg_index = self.new_change();
+            self.add_change(
+                msg_index,
+                Change {
+                    change_type: ChangeType::Message,
+                    message: Some(format!("Meld player: {}", player_name)),
+                    object_id: -1,
+                    dest: Location::Message,
+                    ..Default::default()
+                },
+            );
+        }
+
         self.reorder_hand(self.current_player);
         self.emit_card_counts();
         self.passed_this_round = [false; PLAYER_COUNT];
