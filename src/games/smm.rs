@@ -21,6 +21,14 @@ const ROUNDS: usize = 3;
 const PASS: i32 = -1;
 const USE_LUCKY_COIN: i32 = -2;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ResultMode {
+    FullGame,
+    #[default]
+    RoundOnly,
+}
+
 #[derive(
     Debug,
     Clone,
@@ -88,6 +96,7 @@ pub enum Location {
     Score,
     Message,
     LuckyCoin,
+    PreviousMeld,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -108,6 +117,7 @@ pub enum ChangeType {
     UpdateHierarchy,
     UseLuckyCoin,
     PlayerOut,
+    CardCount,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -146,6 +156,9 @@ pub struct SMMGame {
     pub current_meld: Vec<Card>,
     pub current_meld_suit: Option<Suit>,
     pub meld_leader: Option<usize>,
+    // Previous meld cards (for display when current meld beats them)
+    #[serde(default)]
+    pub previous_meld: Vec<Card>,
 
     // Pass tracking (soft pass)
     pub passed_this_round: [bool; PLAYER_COUNT],
@@ -156,6 +169,10 @@ pub struct SMMGame {
 
     // Shed out tracking
     pub shed_out_order: Vec<usize>,
+
+    // ISMCTS result evaluation mode
+    #[serde(default)]
+    pub result_mode: ResultMode,
 }
 
 impl SMMGame {
@@ -181,6 +198,7 @@ impl SMMGame {
         self.current_meld.clear();
         self.current_meld_suit = None;
         self.meld_leader = None;
+        self.previous_meld.clear();
         self.passed_this_round = [false; PLAYER_COUNT];
         self.consecutive_passes = 0;
         self.shed_out_order.clear();
@@ -237,6 +255,7 @@ impl SMMGame {
         }
 
         self.update_hierarchy_display();
+        self.emit_card_counts();
         self.round += 1;
         self.show_playable();
         self.show_message();
@@ -333,12 +352,10 @@ impl SMMGame {
                 }
             }
 
-            // Add to meld if size < 3: any card of meld suit, plays 1
+            // Add to meld if size < 3: only the last (rightmost) card of meld suit
             if meld_size < 3 {
-                for card in hand {
-                    if card.suit == meld_suit {
-                        moves.push(card.id);
-                    }
+                if let Some(last_card) = hand.iter().rev().find(|c| c.suit == meld_suit) {
+                    moves.push(last_card.id);
                 }
             }
 
@@ -373,6 +390,9 @@ impl SMMGame {
     }
 
     fn apply_play_move(&mut self, mov: i32) {
+        // Hide playable indicators for all moves
+        self.hide_playable();
+
         if mov == USE_LUCKY_COIN {
             self.use_lucky_coin();
             return;
@@ -439,13 +459,31 @@ impl SMMGame {
 
         if is_adding {
             self.meld_leader = Some(self.current_player);
+
+            // Mark old meld cards as transparent (start_score=1 means in-place transparency)
+            let old_ids: Vec<i32> = self.current_meld.iter().map(|c| c.id).collect();
+            let dim_index = self.new_change();
+            for card_id in &old_ids {
+                self.add_change(
+                    dim_index,
+                    Change {
+                        change_type: ChangeType::ClearMeld,
+                        object_id: *card_id,
+                        dest: Location::PreviousMeld,
+                        start_score: 1, // flag: in-place transparency (no movement)
+                        ..Default::default()
+                    },
+                );
+            }
+
             self.current_meld.extend(cards.iter().cloned());
             let total = self.current_meld.len();
             let meld_ids: Vec<i32> = self.current_meld.iter().map(|c| c.id).collect();
             // Re-emit all meld cards so frontend re-spaces them
+            let play_index = self.new_change();
             for (i, id) in meld_ids.iter().enumerate() {
                 self.add_change(
-                    0,
+                    play_index,
                     Change {
                         change_type: ChangeType::Play,
                         object_id: *id,
@@ -459,15 +497,39 @@ impl SMMGame {
             }
         } else {
             if !self.current_meld.is_empty() {
+                // Move beaten meld cards to previous meld display
                 let clear_index = self.new_change();
-                let old_ids: Vec<i32> = self.current_meld.iter().map(|c| c.id).collect();
-                for card_id in old_ids {
+                let old_len = self.current_meld.len();
+                // First discard any existing previous meld cards
+                let prev_ids: Vec<i32> = self.previous_meld.iter().map(|c| c.id).collect();
+                for card_id in prev_ids {
                     self.add_change(
                         clear_index,
                         Change {
                             change_type: ChangeType::ClearMeld,
                             object_id: card_id,
                             dest: Location::Discard,
+                            ..Default::default()
+                        },
+                    );
+                }
+                // Move current meld to previous meld
+                self.previous_meld = self.current_meld.clone();
+                let prev_meld: Vec<(usize, i32)> = self
+                    .previous_meld
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (i, c.id))
+                    .collect();
+                for (i, card_id) in prev_meld {
+                    self.add_change(
+                        clear_index,
+                        Change {
+                            change_type: ChangeType::ClearMeld,
+                            object_id: card_id,
+                            dest: Location::PreviousMeld,
+                            offset: i,
+                            length: old_len,
                             ..Default::default()
                         },
                     );
@@ -497,6 +559,7 @@ impl SMMGame {
         }
 
         self.reorder_hand(self.current_player);
+        self.emit_card_counts();
         self.passed_this_round = [false; PLAYER_COUNT];
         self.consecutive_passes = 0;
 
@@ -514,11 +577,51 @@ impl SMMGame {
         let leader = self.meld_leader.unwrap();
         let winning_suit = self.current_meld_suit.unwrap();
 
+        // Show who won with a pause
+        let player_name = match leader {
+            0 => "You",
+            1 => "West",
+            _ => "East",
+        };
+        let msg_index = self.new_change();
+        self.add_change(
+            msg_index,
+            Change {
+                change_type: ChangeType::Message,
+                message: Some(format!("{} won!", player_name)),
+                object_id: -1,
+                dest: Location::Message,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            msg_index,
+            Change {
+                change_type: ChangeType::OptionalPause,
+                ..Default::default()
+            },
+        );
+
         // Move winning suit to bottom of hierarchy
         self.hierarchy.retain(|&s| s != winning_suit);
         self.hierarchy.push(winning_suit);
 
         let clear_index = self.new_change();
+        // Clear previous meld cards first
+        let prev_ids: Vec<i32> = self.previous_meld.iter().map(|c| c.id).collect();
+        for card_id in prev_ids {
+            self.add_change(
+                clear_index,
+                Change {
+                    change_type: ChangeType::ClearMeld,
+                    object_id: card_id,
+                    dest: Location::Discard,
+                    ..Default::default()
+                },
+            );
+        }
+        self.previous_meld.clear();
+        // Clear current meld cards
         let meld_ids: Vec<i32> = self.current_meld.iter().map(|c| c.id).collect();
         for card_id in meld_ids {
             self.add_change(
@@ -601,8 +704,9 @@ impl SMMGame {
         let old_score = self.scores[player];
         self.scores[player] += points;
 
+        let out_index = self.new_change();
         self.add_change(
-            0,
+            out_index,
             Change {
                 change_type: ChangeType::PlayerOut,
                 player,
@@ -717,21 +821,36 @@ impl SMMGame {
         if self.current_player == 0 && self.state != State::GameOver {
             let moves = self.get_moves();
             for id in &moves {
-                if *id >= 0 && *id < 1000 {
-                    self.add_change(
-                        change_index,
-                        Change {
-                            object_id: *id,
-                            change_type: ChangeType::ShowPlayable,
-                            dest: Location::Hand,
-                            player: 0,
-                            ..Default::default()
-                        },
-                    );
-                }
+                let count = if *id >= 0 { self.cards_to_play(*id) } else { 0 };
+                self.add_change(
+                    change_index,
+                    Change {
+                        object_id: *id,
+                        change_type: ChangeType::ShowPlayable,
+                        dest: Location::Hand,
+                        player: 0,
+                        length: count,
+                        ..Default::default()
+                    },
+                );
             }
         } else {
             self.hide_playable();
+        }
+    }
+
+    fn emit_card_counts(&mut self) {
+        let index = self.new_change();
+        for player in 0..PLAYER_COUNT {
+            self.add_change(
+                index,
+                Change {
+                    change_type: ChangeType::CardCount,
+                    player,
+                    length: self.hands[player].len(),
+                    ..Default::default()
+                },
+            );
         }
     }
 
@@ -751,6 +870,27 @@ impl SMMGame {
 
     fn hide_playable(&mut self) {
         let change_index = self.new_change();
+        // Hide pass button and lucky coin
+        self.add_change(
+            change_index,
+            Change {
+                object_id: PASS,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: 0,
+                ..Default::default()
+            },
+        );
+        self.add_change(
+            change_index,
+            Change {
+                object_id: USE_LUCKY_COIN,
+                change_type: ChangeType::HidePlayable,
+                dest: Location::Hand,
+                player: 0,
+                ..Default::default()
+            },
+        );
         let cards = self.hands[0].clone();
         for card in cards {
             self.add_change(
@@ -773,6 +913,12 @@ impl ismcts::Game for SMMGame {
     type MoveList = Vec<i32>;
 
     fn randomize_determination(&mut self, observer: Self::PlayerTag) {
+        // In RoundOnly mode, force current round to be the last
+        // so simulation ends after this hand (like Cincos Verdes)
+        if self.result_mode == ResultMode::RoundOnly {
+            self.round = ROUNDS as i32;
+        }
+
         let rng = &mut thread_rng();
 
         // Shuffle cards between non-observer players
@@ -824,20 +970,20 @@ impl ismcts::Game for SMMGame {
 
     fn result(&self, player: Self::PlayerTag) -> Option<f64> {
         if self.state != State::GameOver {
-            None
-        } else {
-            let player_score = self.scores[player];
-            let max_score = *self.scores.iter().max().unwrap();
+            return None;
+        }
 
-            if player_score == max_score {
-                if self.scores.iter().filter(|&&s| s == player_score).count() > 1 {
-                    Some(0.0)
-                } else {
-                    Some(1.0)
-                }
+        let player_score = self.scores[player];
+        let max_score = *self.scores.iter().max().unwrap();
+
+        if player_score == max_score {
+            if self.scores.iter().filter(|&&s| s == player_score).count() > 1 {
+                Some(0.0)
             } else {
-                Some(-1.0)
+                Some(1.0)
             }
+        } else {
+            Some(-1.0)
         }
     }
 }
@@ -1510,10 +1656,10 @@ mod tests {
         assert_eq!(game.cards_to_play(34), 1);
         assert_eq!(game.cards_to_play(35), 1);
 
-        // All 3 should be available moves (each adds 1)
+        // Only the last (rightmost) horseshoe should be an available move
         let moves = game.get_moves();
-        assert!(moves.contains(&33));
-        assert!(moves.contains(&34));
+        assert!(!moves.contains(&33));
+        assert!(!moves.contains(&34));
         assert!(moves.contains(&35));
     }
 
@@ -1563,8 +1709,9 @@ mod tests {
         assert_eq!(game.cards_to_play(34), 1);
         assert_eq!(game.cards_to_play(35), 1);
 
+        // Only the last (rightmost) horseshoe should be an available move
         let moves = game.get_moves();
-        assert!(moves.contains(&34));
+        assert!(!moves.contains(&34));
         assert!(moves.contains(&35));
     }
 
@@ -1683,9 +1830,9 @@ mod tests {
         assert_eq!(game.cards_to_play(1), 1);
 
         let moves = game.get_moves();
-        // All horseshoes available for adding
-        assert!(moves.contains(&33));
-        assert!(moves.contains(&34));
+        // Only the last horseshoe available for adding
+        assert!(!moves.contains(&33));
+        assert!(!moves.contains(&34));
         assert!(moves.contains(&35));
         // Last Cherry available for beating
         assert!(moves.contains(&1));
@@ -1806,5 +1953,72 @@ mod tests {
             let total: i32 = game.scores.iter().sum();
             assert!(total > 0, "Someone should have scored");
         }
+    }
+
+    #[test]
+    fn test_following_with_lucky_coin_and_no_playable_cards_has_both_coin_and_pass() {
+        // Reproduces bug: when following a meld, player has lucky coin but
+        // cannot beat or add to the meld. Both USE_LUCKY_COIN and PASS
+        // should be available moves.
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+
+        // Set hierarchy: Cherry most powerful, Seven least
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // Current meld is Cherry (power 0, most powerful) — cannot be beaten
+        game.current_meld = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
+        game.current_meld_suit = Some(Suit::Cherry);
+        game.meld_leader = Some(1);
+
+        // Player 0 has only Seven cards (power 6, cannot beat Cherry)
+        // and no Cherry cards (cannot add to meld)
+        game.hands[0] = vec![
+            Card {
+                id: 48,
+                suit: Suit::Seven,
+            },
+            Card {
+                id: 49,
+                suit: Suit::Seven,
+            },
+        ];
+
+        // Player has the lucky coin
+        game.has_lucky_coin[0] = true;
+
+        let moves = game.get_moves();
+
+        // Both USE_LUCKY_COIN and PASS must be available
+        assert!(
+            moves.contains(&USE_LUCKY_COIN),
+            "USE_LUCKY_COIN should be available when following with lucky coin. Moves: {:?}",
+            moves
+        );
+        assert!(
+            moves.contains(&PASS),
+            "PASS should be available when following a meld. Moves: {:?}",
+            moves
+        );
+
+        // These should be the ONLY two moves (no cards can beat or add)
+        assert_eq!(
+            moves.len(),
+            2,
+            "Only USE_LUCKY_COIN and PASS should be available. Moves: {:?}",
+            moves
+        );
     }
 }
