@@ -690,6 +690,32 @@ impl SMMGame {
             },
         );
 
+        // Show message and pause for AI lucky coin use
+        if self.current_player != 0 {
+            let player_name = match self.current_player {
+                1 => "West",
+                _ => "East",
+            };
+            let msg_index = self.new_change();
+            self.add_change(
+                msg_index,
+                Change {
+                    change_type: ChangeType::Message,
+                    message: Some(format!("{} used lucky coin!", player_name)),
+                    object_id: -1,
+                    dest: Location::Message,
+                    ..Default::default()
+                },
+            );
+            self.add_change(
+                msg_index,
+                Change {
+                    change_type: ChangeType::OptionalPause,
+                    ..Default::default()
+                },
+            );
+        }
+
         self.update_hierarchy_display();
 
         // Resort and reposition all hands after hierarchy change
@@ -993,27 +1019,32 @@ impl ismcts::Game for SMMGame {
             return None;
         }
 
-        let player_score = self.scores[player];
-        let max_score = *self.scores.iter().max().unwrap();
+        let player_score = self.scores[player] as f64;
+        let max_score = *self.scores.iter().max().unwrap() as f64;
+        let min_score = *self.scores.iter().min().unwrap() as f64;
+        let total: f64 = self.scores.iter().map(|&s| s as f64).sum();
+        let hand_size = self.hands[player].len() as f64;
 
-        let base = if player_score == max_score {
-            if self.scores.iter().filter(|&&s| s == player_score).count() > 1 {
-                0.0
-            } else {
-                1.0
-            }
+        // Score margin: how far above/below average, normalized by spread
+        let mean = total / 3.0;
+        let range = if max_score > min_score {
+            max_score - min_score
         } else {
-            -1.0
+            1.0
         };
+        let margin = (player_score - mean) / range;
 
-        // Small bonus for retaining lucky coin — discourages wasteful early use
+        // Penalize cards remaining in hand (urgency to shed)
+        let cards_penalty = -0.2 * (hand_size / 15.0);
+
+        // Small bonus for retaining lucky coin
         let coin_bonus = if self.has_lucky_coin[player] {
             0.05
         } else {
             0.0
         };
 
-        Some(base + coin_bonus)
+        Some(margin + cards_penalty + coin_bonus)
     }
 }
 
