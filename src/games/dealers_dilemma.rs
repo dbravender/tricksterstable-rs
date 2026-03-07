@@ -847,8 +847,9 @@ impl Game {
                 if new_game.lead_suit.is_none() {
                     new_game.lead_suit = Some(card.suit);
                 } else if Some(card.suit) != new_game.lead_suit {
-                    // Player has revealed a void
-                    new_game.voids[new_game.current_player as usize].insert(card.suit);
+                    // Player has revealed a void in the led suit
+                    new_game.voids[new_game.current_player as usize]
+                        .insert(new_game.lead_suit.unwrap());
                 }
                 new_game.current_player = (new_game.current_player + 1) % 3;
                 // end trick
@@ -1712,5 +1713,54 @@ mod tests {
             }
         }
         println!("wins: {:?} scores: {:?}", wins, scores);
+    }
+
+    #[test]
+    fn test_void_tracks_lead_suit_not_played_suit() {
+        // When a player can't follow the led suit, the LEAD suit should be
+        // recorded as a void — not the suit they actually played.
+        let mut game = Game::default();
+        game.no_changes = true;
+        game.state = State::Play;
+        game.current_player = 0;
+        game.lead_player = 0;
+        game.trump_suit = Some(Suit::Red);
+
+        // Player 0 has Blue cards, Player 1 has only Green (no Blue)
+        game.hands = [
+            vec![Card {
+                id: 0,
+                value: 7,
+                suit: Suit::Blue,
+            }],
+            vec![Card {
+                id: 1,
+                value: 8,
+                suit: Suit::Green,
+            }],
+            vec![Card {
+                id: 2,
+                value: 9,
+                suit: Suit::Blue,
+            }],
+        ];
+
+        // Player 0 leads Blue
+        game = game.clone_and_apply_move(0); // plays Blue 7
+
+        // Player 1 plays Green (can't follow Blue)
+        assert!(game.voids[1].is_empty(), "No voids recorded yet");
+        game = game.clone_and_apply_move(1); // plays Green 8
+
+        // Player 1 should be void in Blue (the led suit), NOT Green (what they played)
+        assert!(
+            game.voids[1].contains(&Suit::Blue),
+            "Player 1 should be void in Blue (the led suit), got: {:?}",
+            game.voids[1]
+        );
+        assert!(
+            !game.voids[1].contains(&Suit::Green),
+            "Player 1 should NOT be void in Green (the suit they played)"
+        );
     }
 }
