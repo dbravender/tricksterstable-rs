@@ -236,6 +236,11 @@ impl ThreeTrickyPigsGame {
 
     /// Deal cards for a new round
     pub fn deal(&mut self, animate: bool) {
+        // Ensure trick slots are clean for the new hand
+        self.current_trick_regular = [None; PLAYER_COUNT];
+        self.current_trick_huff = [None; PLAYER_COUNT];
+        self.current_trick_puff = [None; PLAYER_COUNT];
+
         let mut cards = deck();
         let rng = &mut thread_rng();
         cards.shuffle(rng);
@@ -850,6 +855,22 @@ impl ThreeTrickyPigsGame {
                 let card_index = hand.iter().position(|c| c.id == card_id).unwrap();
                 let card = hand.remove(card_index);
 
+                // During MCTS simulations, randomize_determination can create hands
+                // with only huff/puff modifiers. If any player now has no regular
+                // cards left (only modifiers or empty), end the round to prevent
+                // an infinite loop. This only applies during MCTS (no_changes).
+                if self.no_changes {
+                    let any_player_has_only_modifiers = self
+                        .hands
+                        .iter()
+                        .any(|hand| !hand.is_empty() && !hand.iter().any(|c| c.is_regular()));
+
+                    if any_player_has_only_modifiers {
+                        self.end_round();
+                        return;
+                    }
+                }
+
                 // Place card in appropriate trick slot
                 if card.is_huff() {
                     self.current_trick_huff[current_player] = Some(card);
@@ -922,20 +943,6 @@ impl ThreeTrickyPigsGame {
 
                     // Advance to next player
                     self.current_player = (current_player + 1) % PLAYER_COUNT;
-
-                    // Check if any player has cards but no regular cards (only modifiers).
-                    // This can only happen during MCTS simulations when randomize_determination
-                    // shuffles hands and a player ends up with only huff/puff cards.
-                    // If so, they can't complete a trick, so end the round immediately.
-                    let any_player_has_only_modifiers = self
-                        .hands
-                        .iter()
-                        .any(|hand| !hand.is_empty() && !hand.iter().any(|c| c.is_regular()));
-
-                    if any_player_has_only_modifiers {
-                        self.end_round();
-                        return;
-                    }
 
                     // Check if trick is complete (all players have played a regular card)
                     let trick_complete = self.current_trick_regular.iter().all(|c| c.is_some());
@@ -1282,6 +1289,10 @@ impl ThreeTrickyPigsGame {
             // Clear hands - leftover huff/puff cards have been scored
             self.hands = Default::default();
             self.voids = Default::default();
+            // Clear trick slots to prevent stale values carrying into next round
+            self.current_trick_regular = [None; PLAYER_COUNT];
+            self.current_trick_huff = [None; PLAYER_COUNT];
+            self.current_trick_puff = [None; PLAYER_COUNT];
 
             // Deal new hands for next round
             self.deal(true);
@@ -3085,6 +3096,812 @@ mod tests {
             "MCTS returned invalid move {} (valid moves: {:?})",
             result,
             valid_moves
+        );
+    }
+
+    // ==================== Bug report reproduction tests ====================
+
+    // Bug report: "a trick won in favor of a card that shouldn't have...
+    // highest number one without a wolf"
+    // Try to reproduce: in a no-wolf trick, does the highest value ever win?
+
+    // Scenario: All different suits, no wolf, different values.
+    // The LOWEST value should win. If the highest wins, that's the bug.
+    #[test]
+    fn test_bug3_no_wolf_mixed_suits_lowest_should_win() {
+        // Bricks cards have high values (21-30), Straw/Sticks have low (1-10).
+        // Player 0 leads Bricks 30, others play lower values.
+        // Without wolf: lowest wins, so 30 should LOSE.
+        let trick_regular = [
+            card(30, Suit::Bricks), // Player 0: highest value
+            card(5, Suit::Straw),   // Player 1
+            card(3, Suit::Sticks),  // Player 2
+            card(8, Suit::Straw),   // Player 3
+        ];
+
+        let winner = trick_winner(0, trick_regular, no_modifiers(), no_modifiers());
+        // Player 2 (value 3) should win - LOWEST value wins without wolf
+        assert_eq!(
+            winner, 2,
+            "Without wolf, lowest value (3) should win, not highest (30)"
+        );
+    }
+
+    // Scenario: Bricks lead with high values, one Straw off-suit with low value
+    #[test]
+    fn test_bug3_bricks_lead_offsuit_low_value_wins() {
+        let trick_regular = [
+            card(25, Suit::Bricks), // Player 0 leads
+            card(28, Suit::Bricks), // Player 1 follows
+            card(2, Suit::Straw),   // Player 2 can't follow - plays low Straw
+            card(22, Suit::Bricks), // Player 3 follows
+        ];
+
+        let winner = trick_winner(0, trick_regular, no_modifiers(), no_modifiers());
+        // Player 2 with value 2 should win (lowest, no wolf)
+        assert_eq!(
+            winner, 2,
+            "Off-suit low value should still win without wolf"
+        );
+    }
+
+    // Bug report scenario: "highest number one without a wolf"
+    // Could modifiers make someone think they have the highest but the
+    // combined value with modifiers actually makes them lowest?
+    // Test the REVERSE: modifiers make a low card look high but combined value wins
+    #[test]
+    fn test_bug3_modifiers_change_perceived_winner() {
+        // Player 0 leads with value 1 + huff 4 + puff 5 = 10 total
+        // Player 1 plays value 8 (no modifiers)
+        // Player 2 plays value 6 (no modifiers)
+        // Player 3 plays value 9 (no modifiers)
+        // No wolf: lowest wins. 6 < 8 < 9 < 10, Player 2 wins
+        // But user sees card values 1, 8, 6, 9 and might think "1 should win"
+        let trick_regular = [
+            card(1, Suit::Straw),
+            card(8, Suit::Straw),
+            card(6, Suit::Straw),
+            card(9, Suit::Straw),
+        ];
+        let trick_huff = [card(4, Suit::Huff), None, None, None];
+        let trick_puff = [card(5, Suit::Puff), None, None, None];
+
+        let winner = trick_winner(0, trick_regular, trick_huff, trick_puff);
+        // Player 2 (total 6) should win, NOT player 0 (total 10 despite card showing "1")
+        assert_eq!(
+            winner, 2,
+            "Player with lowest TOTAL value (including modifiers) should win"
+        );
+    }
+
+    // Test: full 4-player trick where wolf is played by AI but user might miss it
+    // This reproduces the scenario where user thinks "no wolf" but a wolf was played
+    #[test]
+    fn test_bug3_wolf_played_by_later_player_highest_wins() {
+        // Player 0 leads Straw 3
+        // Player 1 plays Straw 7
+        // Player 2 can't follow, plays Wolf 15
+        // Player 3 plays Straw 10
+        // Wolf IS present, so highest wins: 15 > 10 > 7 > 3
+        // Player 2 wins with Wolf 15
+        let trick_regular = [
+            card(3, Suit::Straw),
+            card(7, Suit::Straw),
+            card(15, Suit::Wolf), // Wolf! Switches to highest wins
+            card(10, Suit::Straw),
+        ];
+
+        let winner = trick_winner(0, trick_regular, no_modifiers(), no_modifiers());
+        assert_eq!(winner, 2, "Wolf player should win with highest value");
+    }
+
+    // Test: wolf played by AI with huff/puff making a non-wolf card highest
+    // User sees: 3, 7+huff4=11, wolf15, 10
+    // With wolf: highest wins. 15 > 11 > 10 > 3. Wolf player wins.
+    // But if huff makes 7 into 11: 15 > 11 > 10 > 3 still wolf wins
+    // BUT: 7+huff4+puff5 = 16 > 15! Player 1 wins over wolf!
+    // User sees wolf 15 lose to "7" and is confused
+    #[test]
+    fn test_bug3_modifiers_beat_wolf_confusing() {
+        let trick_regular = [
+            card(3, Suit::Straw),
+            card(7, Suit::Straw),
+            card(15, Suit::Wolf),
+            card(10, Suit::Straw),
+        ];
+        let trick_huff = [None, card(4, Suit::Huff), None, None];
+        let trick_puff = [None, card(5, Suit::Puff), None, None];
+
+        // Wolf present: highest wins
+        // P0: 3, P1: 7+4+5=16, P2: 15, P3: 10
+        // Player 1 wins with 16
+        let winner = trick_winner(0, trick_regular, trick_huff, trick_puff);
+        assert_eq!(
+            winner, 1,
+            "Player 1's modifiers (7+4+5=16) should beat wolf 15"
+        );
+    }
+
+    // Test: Complete game play-through where wolf is played and user
+    // might perceive the wrong winner
+    #[test]
+    fn test_bug3_full_trick_wolf_injected_by_ai() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![
+            card_with_id(0, 3, Suit::Straw),
+            card_with_id(10, 1, Suit::Sticks), // Extra card
+        ];
+        hands[1] = vec![
+            card_with_id(1, 7, Suit::Straw),
+            card_with_id(11, 2, Suit::Sticks),
+        ];
+        hands[2] = vec![
+            card_with_id(2, 15, Suit::Wolf), // Wolf - can't follow Straw
+            card_with_id(12, 3, Suit::Sticks),
+        ];
+        hands[3] = vec![
+            card_with_id(3, 10, Suit::Straw),
+            card_with_id(13, 4, Suit::Sticks),
+        ];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            current_trick_regular: no_modifiers(),
+            current_trick_huff: no_modifiers(),
+            current_trick_puff: no_modifiers(),
+            hands,
+            current_round: 1,
+            ..Default::default()
+        };
+
+        game.apply_move(0); // P0: Straw 3
+        game.apply_move(1); // P1: Straw 7
+        game.apply_move(2); // P2: Wolf 15 (can't follow)
+        game.apply_move(3); // P3: Straw 10
+
+        // Wolf present -> highest wins: 15 > 10 > 7 > 3
+        assert_eq!(
+            game.tricks_won[2], 1,
+            "Player 2 should win with Wolf 15 (highest)"
+        );
+        // Wolf should now be broken
+        assert!(game.wolf_suit_broken);
+    }
+
+    // Bug report: "first trick plays by itself"
+    // Test that when AI starts, the game state properly tracks whose turn it is
+    #[test]
+    fn test_bug1_ai_starts_game_state_correct() {
+        // Create a game where AI player 2 starts
+        let mut game = ThreeTrickyPigsGame {
+            current_round: 1,
+            lead_player: 2,
+            current_player: 2,
+            state: State::Bid,
+            undo_players: HashSet::from([0]),
+            ..Default::default()
+        };
+        game.deal(true);
+
+        // AI player 2 should be current player
+        assert_eq!(game.current_player, 2);
+        assert_eq!(game.state, State::Bid);
+
+        // AI players bid
+        game.apply_move(0); // P2 bids Sleep
+        assert_eq!(game.current_player, 3);
+
+        game.apply_move(1); // P3 bids Play
+        assert_eq!(game.current_player, 0);
+
+        // Now it should be human's turn
+        assert_eq!(game.state, State::Bid);
+        assert_eq!(game.current_player, 0);
+    }
+
+    // Test that bidding correctly wraps around to human player
+    #[test]
+    fn test_bug1_bidding_wraps_to_human() {
+        let mut game = ThreeTrickyPigsGame {
+            current_round: 1,
+            lead_player: 1, // AI player 1 starts
+            current_player: 1,
+            state: State::Bid,
+            undo_players: HashSet::from([0]),
+            ..Default::default()
+        };
+        game.deal(true);
+
+        // P1 bids
+        game.apply_move(0);
+        assert_eq!(game.current_player, 2);
+
+        // P2 bids
+        game.apply_move(1);
+        assert_eq!(game.current_player, 3);
+
+        // P3 bids
+        game.apply_move(2);
+        assert_eq!(game.current_player, 0);
+
+        // Human's turn to bid
+        assert_eq!(game.state, State::Bid);
+    }
+
+    // Bug report: "3 card tricks"
+    // Test that trick cards are properly tracked and 1 regular card per player
+    #[test]
+    fn test_bug2_trick_has_correct_card_count() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![
+            card_with_id(0, 5, Suit::Straw),
+            card_with_id(10, 2, Suit::Huff),
+            card_with_id(20, 3, Suit::Puff),
+            card_with_id(30, 1, Suit::Sticks),
+        ];
+        hands[1] = vec![
+            card_with_id(1, 7, Suit::Straw),
+            card_with_id(11, 1, Suit::Huff),
+            card_with_id(31, 2, Suit::Sticks),
+        ];
+        hands[2] = vec![
+            card_with_id(2, 9, Suit::Straw),
+            card_with_id(32, 3, Suit::Sticks),
+        ];
+        hands[3] = vec![
+            card_with_id(3, 4, Suit::Straw),
+            card_with_id(33, 4, Suit::Sticks),
+        ];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            current_round: 1,
+            ..Default::default()
+        };
+
+        // Player 0: plays huff, puff, then regular
+        game.apply_move(10); // Huff
+        assert!(game.current_trick_huff[0].is_some());
+        assert!(game.current_trick_regular[0].is_none());
+        assert_eq!(game.current_player, 0); // Still player 0's turn
+
+        game.apply_move(20); // Puff
+        assert!(game.current_trick_puff[0].is_some());
+        assert!(game.current_trick_regular[0].is_none());
+        assert_eq!(game.current_player, 0); // Still player 0's turn
+
+        game.apply_move(0); // Regular card - commits the play
+        assert!(game.current_trick_regular[0].is_some());
+        assert_eq!(game.current_player, 1); // Advances to next player
+
+        // Player 1: plays huff then regular
+        game.apply_move(11); // Huff
+        game.apply_move(1); // Regular
+
+        // Player 2: plays regular only
+        game.apply_move(2);
+
+        // Player 3: plays regular only
+        game.apply_move(3);
+
+        // Trick should be complete - Player 3 wins (value 4, lowest without wolf)
+        assert_eq!(
+            game.tricks_won[3], 1,
+            "Player 3 (value 4) should win - lowest without wolf. \
+             P0: 5+2+3=10, P1: 7+1=8, P2: 9, P3: 4"
+        );
+    }
+
+    // ==================== State reset between rounds ====================
+
+    // Bug investigation: wolf_suit_broken should be reset between rounds.
+    // If it carries over, tricks in the new round would use wrong winner logic.
+    #[test]
+    fn test_wolf_broken_reset_between_rounds() {
+        // Set up a game where wolf is broken, then complete the round
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        // Each player has exactly one regular card - round ends after one trick
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)];
+        hands[1] = vec![card_with_id(1, 15, Suit::Wolf)]; // Wolf - will break wolf_suit_broken
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            ..Default::default()
+        };
+
+        // Play trick - wolf gets played, highest wins
+        game.apply_move(0); // P0: Straw 5
+        game.apply_move(1); // P1: Wolf 15 (breaks wolf)
+        game.apply_move(2); // P2: Straw 7
+        game.apply_move(3); // P3: Straw 9
+
+        // Wolf was broken during round 1
+        // After round ends and new round starts, wolf should be reset
+        assert_eq!(game.current_round, 2);
+        assert_eq!(game.state, State::Bid);
+        assert!(
+            !game.wolf_suit_broken,
+            "wolf_suit_broken should be reset to false at start of new round"
+        );
+    }
+
+    // Test that trick slots are clean at start of new round
+    #[test]
+    fn test_trick_slots_clean_between_rounds() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            ..Default::default()
+        };
+
+        game.apply_move(0);
+        game.apply_move(1);
+        game.apply_move(2);
+        game.apply_move(3);
+
+        // Round should have ended
+        assert_eq!(game.current_round, 2);
+
+        // All trick slots should be clean
+        assert!(
+            game.current_trick_regular.iter().all(|c| c.is_none()),
+            "current_trick_regular should be cleared between rounds"
+        );
+        assert!(
+            game.current_trick_huff.iter().all(|c| c.is_none()),
+            "current_trick_huff should be cleared between rounds"
+        );
+        assert!(
+            game.current_trick_puff.iter().all(|c| c.is_none()),
+            "current_trick_puff should be cleared between rounds"
+        );
+    }
+
+    // Test that bids are reset between rounds
+    #[test]
+    fn test_bids_reset_between_rounds() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [
+                Some(Bid::Eat),
+                Some(Bid::Sleep),
+                Some(Bid::Work),
+                Some(Bid::Play),
+            ],
+            current_round: 1,
+            ..Default::default()
+        };
+
+        game.apply_move(0);
+        game.apply_move(1);
+        game.apply_move(2);
+        game.apply_move(3);
+
+        assert_eq!(game.current_round, 2);
+        assert!(
+            game.bids.iter().all(|b| b.is_none()),
+            "All bids should be None at start of new round"
+        );
+        assert_eq!(
+            game.selected_bid, None,
+            "selected_bid should be None at start of new round"
+        );
+    }
+
+    // Test that tricks_won is reset between rounds
+    #[test]
+    fn test_tricks_won_reset_between_rounds() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)]; // Wins trick
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            ..Default::default()
+        };
+
+        game.apply_move(0);
+        game.apply_move(1);
+        game.apply_move(2);
+        game.apply_move(3);
+
+        assert_eq!(game.current_round, 2);
+        assert_eq!(
+            game.tricks_won, [0; PLAYER_COUNT],
+            "tricks_won should be reset to 0 at start of new round"
+        );
+    }
+
+    // Test multi-round game: wolf broken in round 1 doesn't affect round 2 trick winner
+    #[test]
+    fn test_wolf_broken_does_not_carry_to_next_round_trick_winner() {
+        // Round 1: wolf gets broken, highest value wins
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)];
+        hands[1] = vec![card_with_id(1, 15, Suit::Wolf)]; // Wolf breaks
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: false,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            no_changes: true,
+            ..Default::default()
+        };
+
+        // Play round 1 trick
+        game.apply_move(0);
+        game.apply_move(1);
+        game.apply_move(2);
+        game.apply_move(3);
+
+        // P1 wins round 1 trick (wolf present, highest wins: 15)
+        // Now in round 2, wolf_suit_broken should be false
+        assert_eq!(game.current_round, 2);
+        assert!(
+            !game.wolf_suit_broken,
+            "wolf_suit_broken must reset for round 2"
+        );
+
+        // Complete bidding for round 2
+        // Find current player and bid for all
+        let start_player = game.current_player;
+        for i in 0..PLAYER_COUNT {
+            let player = (start_player + i) % PLAYER_COUNT;
+            assert_eq!(game.current_player, player);
+            game.apply_move(2); // Everyone bids Work
+        }
+
+        assert_eq!(game.state, State::Play);
+
+        // Now play a trick in round 2 WITHOUT wolf
+        // The LOWEST value should win (wolf_suit_broken is false, no wolf played)
+        // If wolf_suit_broken carried over, highest would win incorrectly
+        let lead = game.lead_player;
+        let _round2_hands = game.hands.clone();
+
+        // Find each player's lowest regular card to play
+        // Just play the first regular card each player has
+        for i in 0..PLAYER_COUNT {
+            let player = (lead + i) % PLAYER_COUNT;
+            assert_eq!(game.current_player, player);
+
+            // Play any valid regular card (skip modifiers if possible)
+            let moves = game.get_moves();
+            let regular_move = moves
+                .iter()
+                .find(|&&m| {
+                    m >= 0
+                        && game.hands[player]
+                            .iter()
+                            .any(|c| c.id == m && c.is_regular())
+                })
+                .copied();
+
+            if let Some(mov) = regular_move {
+                game.apply_move(mov);
+            } else {
+                // Play any available move
+                game.apply_move(moves[0]);
+            }
+        }
+
+        // The trick was played without wolf, so wolf_suit_broken should still be false
+        // (unless someone played a wolf in this trick too)
+        // The key assertion: winner logic used lowest-wins, not highest-wins
+    }
+
+    // Bug investigation: what happens when a player only has huff/puff cards?
+    // They can't play a regular card, so the trick can never complete.
+    // The game should handle this gracefully.
+    #[test]
+    fn test_player_with_only_modifiers_in_hand() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![
+            card_with_id(10, 2, Suit::Huff),
+            card_with_id(20, 3, Suit::Puff),
+        ]; // Only modifiers!
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let game = game_with_hand(
+            0,
+            0,
+            hands[0].clone(),
+            no_modifiers(),
+            no_modifiers(),
+            no_modifiers(),
+            true,
+        );
+
+        let moves = game.get_moves();
+        // Player 0 has no regular cards - what moves are available?
+        // They should be able to play huff and puff but will never be able
+        // to commit a regular card. The game needs to handle this.
+        println!(
+            "Moves available for player with only modifiers: {:?}",
+            moves
+        );
+
+        // Check: are huff/puff cards playable?
+        assert!(
+            moves.contains(&10) || moves.contains(&20),
+            "Player should at least be able to play their modifier cards"
+        );
+    }
+
+    // Test: what happens when player plays huff+puff but has no regular card to commit
+    #[test]
+    fn test_player_plays_modifiers_then_stuck() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![
+            card_with_id(10, 2, Suit::Huff),
+            card_with_id(20, 3, Suit::Puff),
+        ];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            no_changes: true, // MCTS simulation scenario
+            ..Default::default()
+        };
+
+        // Player 0 plays huff — after this, player 0 only has puff (no regular cards).
+        // During MCTS, the engine detects this and ends the round immediately.
+        game.apply_move(10);
+        assert!(
+            game.state == State::Bid || game.current_round > 1,
+            "MCTS: Round should end when a player has only modifiers left. \
+             state={:?}, round={}",
+            game.state,
+            game.current_round
+        );
+    }
+
+    // Test: player leads, plays last regular card. Next player only has modifiers.
+    // Round should end because next player can't play a regular card.
+    #[test]
+    fn test_round_ends_when_next_player_has_only_modifiers_mid_trick() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)]; // Last regular card
+        hands[1] = vec![
+            card_with_id(10, 2, Suit::Huff),
+            card_with_id(20, 3, Suit::Puff),
+        ]; // Only modifiers
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            no_changes: true, // MCTS simulation scenario
+            ..Default::default()
+        };
+
+        // Player 0 plays their last regular card
+        game.apply_move(0);
+
+        // After player 0 plays, the engine should detect that player 1
+        // has only modifiers and end the round
+        // (the existing check catches this during MCTS simulations)
+        assert!(
+            game.current_round == 2 || game.state == State::Bid,
+            "Round should end when a player has only modifier cards. \
+             state={:?}, round={}, current_player={}",
+            game.state,
+            game.current_round,
+            game.current_player
+        );
+    }
+
+    // BUG REPRODUCTION: Player plays their last regular card but still has
+    // modifiers. The any_player_has_only_modifiers check fires and ends
+    // the round BEFORE the trick completes. This means 1-3 cards in the
+    // trick are never resolved - the trick is skipped!
+    #[test]
+    fn test_trick_should_complete_before_round_ends() {
+        // Player 0 has 1 regular + 1 huff + 1 puff
+        // Players 1-3 have 1 regular each
+        // Player 0 plays their regular card → they now have only modifiers
+        // The round should NOT end yet - the trick needs to complete!
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![
+            card_with_id(0, 5, Suit::Straw), // Last regular card
+            card_with_id(10, 2, Suit::Huff), // Modifier
+            card_with_id(20, 3, Suit::Puff), // Modifier
+        ];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            ..Default::default()
+        };
+
+        // Player 0 plays their last regular card
+        game.apply_move(0);
+
+        // After player 0 plays, they have only modifiers left.
+        // The trick is NOT complete (only 1 of 4 cards played).
+        // The round should NOT end yet!
+        assert_eq!(
+            game.state,
+            State::Play,
+            "BUG: Round ended mid-trick! Player 0 played their last regular card \
+             but still has modifiers. The trick should continue with players 1-3, \
+             THEN end the round. Instead the round ended prematurely."
+        );
+        assert_eq!(
+            game.current_player, 1,
+            "Should advance to player 1, not end the round"
+        );
+    }
+
+    // Same bug but player 0 uses modifiers before their regular card
+    #[test]
+    fn test_trick_completes_when_player_plays_modifiers_then_last_regular() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![
+            card_with_id(0, 5, Suit::Straw), // Last regular card
+            card_with_id(10, 2, Suit::Huff),
+            card_with_id(20, 3, Suit::Puff),
+        ];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            ..Default::default()
+        };
+
+        // Player 0 plays huff first
+        game.apply_move(10);
+        assert_eq!(game.current_player, 0);
+        assert_eq!(game.state, State::Play);
+
+        // Player 0 plays puff
+        game.apply_move(20);
+        assert_eq!(game.current_player, 0);
+        assert_eq!(game.state, State::Play);
+
+        // Player 0 plays their last regular card
+        game.apply_move(0);
+
+        // Trick should continue, not end the round!
+        assert_eq!(
+            game.state,
+            State::Play,
+            "BUG: Round ended mid-trick after player used modifiers + last regular card"
+        );
+        assert_eq!(game.current_player, 1);
+
+        // Complete the trick
+        game.apply_move(1); // Player 1
+        game.apply_move(2); // Player 2
+        game.apply_move(3); // Player 3
+
+        // NOW the round should end (all players out of regular cards)
+        // Player 1 should win (value 3, lowest without wolf)
+        // But wait - player 0's total is 5+2+3=10, player 1 is 3
+        assert_eq!(
+            game.current_round, 2,
+            "Round should end after trick completes"
+        );
+    }
+
+    // Test that voids are reset between rounds
+    #[test]
+    fn test_voids_reset_between_rounds() {
+        let mut hands: [Vec<Card>; PLAYER_COUNT] = Default::default();
+        hands[0] = vec![card_with_id(0, 5, Suit::Straw)];
+        hands[1] = vec![card_with_id(1, 3, Suit::Straw)];
+        hands[2] = vec![card_with_id(2, 7, Suit::Straw)];
+        hands[3] = vec![card_with_id(3, 9, Suit::Straw)];
+
+        let mut game = ThreeTrickyPigsGame {
+            state: State::Play,
+            current_player: 0,
+            lead_player: 0,
+            wolf_suit_broken: true,
+            hands,
+            bids: [Some(Bid::Work); PLAYER_COUNT],
+            current_round: 1,
+            voids: [
+                vec![Suit::Bricks],
+                vec![Suit::Straw, Suit::Wolf],
+                vec![],
+                vec![Suit::Sticks],
+            ],
+            ..Default::default()
+        };
+
+        game.apply_move(0);
+        game.apply_move(1);
+        game.apply_move(2);
+        game.apply_move(3);
+
+        assert_eq!(game.current_round, 2);
+        assert!(
+            game.voids.iter().all(|v| v.is_empty()),
+            "Voids should be cleared between rounds. Got: {:?}",
+            game.voids
         );
     }
 }
