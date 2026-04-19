@@ -281,6 +281,22 @@ impl SMMGame {
         self.hierarchy.iter().position(|&s| s == suit).unwrap_or(6)
     }
 
+    /// Only offer the lucky coin to AI when reversing the hierarchy
+    /// meaningfully helps. Compares average suit power of the hand
+    /// before vs after reversal. Threshold of 2.0 was selected via
+    /// round-robin tournament in the TypeScript implementation.
+    fn should_offer_coin(&self) -> bool {
+        let hand = &self.hands[self.current_player];
+        if hand.is_empty() {
+            return false;
+        }
+        let len = self.hierarchy.len() as f64;
+        let total_power: usize = hand.iter().map(|c| self.suit_power(c.suit)).sum();
+        let avg_before = total_power as f64 / hand.len() as f64;
+        let avg_after = (len - 1.0) - avg_before;
+        avg_after < avg_before - 2.0
+    }
+
     /// Returns the number of cards that will be played when a given
     /// card is selected. The card's position within its suit group
     /// determines the meld size: last card = max available (up to 3),
@@ -319,8 +335,12 @@ impl SMMGame {
         let mut moves = Vec::new();
         let hand = &self.hands[self.current_player];
 
-        // Lucky coin (before any play - leading or following)
-        if self.has_lucky_coin[self.current_player] {
+        // Lucky coin (before any play - leading or following).
+        // Always offer to the human; only offer to AI when the
+        // hierarchy reversal materially improves the hand.
+        if self.has_lucky_coin[self.current_player]
+            && (self.current_player == 0 || self.should_offer_coin())
+        {
             moves.push(USE_LUCKY_COIN);
         }
 
