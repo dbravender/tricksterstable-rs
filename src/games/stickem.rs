@@ -51,9 +51,13 @@ pub struct Card {
 pub enum State {
     #[default]
     SelectPainColor,
+    ConfirmPainColor,
     Play,
     GameOver,
 }
+
+/// Sentinel move id for the undo button while confirming a pain selection.
+pub const UNDO_MOVE: i32 = -2;
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Location {
@@ -88,6 +92,10 @@ pub enum ChangeType {
     ShowScoringCard,
     HideScoringCards,
     RevealPainCards,
+    /// Human picked a pain card; fly it to the confirm location.
+    TentativePainCard,
+    /// Human tapped undo while confirming; fly card back to hand.
+    CancelTentativePain,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -129,6 +137,11 @@ pub struct StickEmGame {
     pub round: i32,
     pub cards_won: [Vec<Card>; PLAYER_COUNT],
     pub experiment: bool, // Set to true when testing new reward functions
+    /// Card id the human is currently confirming as their pain pick (None
+    /// outside ConfirmPainColor). Persisted on the state so ISMCTS clones see
+    /// the same shape, though the AI never enters this state itself.
+    pub tentative_pain: Option<i32>,
+    pub tentative_pain_card: Option<Card>,
 }
 
 impl StickEmGame {
@@ -224,6 +237,9 @@ impl StickEmGame {
     }
 
     pub fn get_moves(&self) -> Vec<i32> {
+        if self.state == State::ConfirmPainColor {
+            return vec![self.tentative_pain.unwrap(), UNDO_MOVE];
+        }
         // Any card can be played at any time
         return self.hands[self.current_player]
             .iter()
@@ -240,6 +256,13 @@ impl StickEmGame {
 
         match self.state {
             State::GameOver => panic!("Cannot play when the game is over"),
+            State::ConfirmPainColor => {
+                if card_id == UNDO_MOVE {
+                    self.cancel_tentative_pain();
+                } else {
+                    self.commit_tentative_pain();
+                }
+            }
             State::SelectPainColor => self.select_pain_color(card_id),
             State::Play => self.play(card_id),
         }
@@ -248,8 +271,29 @@ impl StickEmGame {
     }
 
     pub fn select_pain_color(&mut self, card_id: i32) {
-        let card = self.pop_card(card_id);
         let player = self.current_player;
+
+        // Human gets a confirm/undo step before committing the pain card.
+        if player == 0 {
+            let card = self.pop_card(card_id);
+            self.add_change(
+                0,
+                Change {
+                    change_type: ChangeType::TentativePainCard,
+                    object_id: card_id,
+                    dest: Location::PainColor,
+                    player,
+                    ..Default::default()
+                },
+            );
+            self.reorder_hand(player, false);
+            self.tentative_pain = Some(card_id);
+            self.tentative_pain_card = Some(card);
+            self.state = State::ConfirmPainColor;
+            return;
+        }
+
+        let card = self.pop_card(card_id);
 
         // Animate pain card selection (face down initially)
         self.add_change(
@@ -298,6 +342,79 @@ impl StickEmGame {
             self.current_player = self.dealer;
             self.state = State::Play;
         }
+    }
+
+    fn commit_tentative_pain(&mut self) {
+        let card_id = self.tentative_pain.take().unwrap();
+        let card = self.tentative_pain_card.take().unwrap();
+        self.state = State::SelectPainColor;
+        let player = self.current_player;
+
+        self.add_change(
+            0,
+            Change {
+                change_type: ChangeType::Play,
+                object_id: card_id,
+                dest: Location::PainColor,
+                player,
+                offset: self.pain_cards.iter().flatten().count(),
+                ..Default::default()
+            },
+        );
+
+        self.pain_cards[player] = Some(card);
+        self.current_player = (self.current_player + 1) % PLAYER_COUNT;
+
+        if self.pain_cards.iter().all(|c| c.is_some()) {
+            let reveal_index = self.new_change();
+            let pain_cards_to_reveal: Vec<(usize, Card)> = self
+                .pain_cards
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, c)| c.map(|c| (idx, c)))
+                .collect();
+            for (player_index, c) in pain_cards_to_reveal {
+                self.add_change(
+                    reveal_index,
+                    Change {
+                        change_type: ChangeType::RevealPainCards,
+                        object_id: c.id,
+                        dest: Location::PainColor,
+                        player: player_index,
+                        offset: player_index,
+                        ..Default::default()
+                    },
+                );
+            }
+            self.current_player = self.dealer;
+            self.state = State::Play;
+        }
+    }
+
+    fn cancel_tentative_pain(&mut self) {
+        let card_id = self.tentative_pain.take().unwrap();
+        let card = self.tentative_pain_card.take().unwrap();
+        self.state = State::SelectPainColor;
+        let player = self.current_player;
+
+        self.hands[player].push(card);
+        // Match the deal-time sort: by suit, then value high-to-low.
+        self.hands[player].sort_by(|a, b| match a.suit.cmp(&b.suit) {
+            std::cmp::Ordering::Equal => b.value.cmp(&a.value),
+            other => other,
+        });
+
+        self.add_change(
+            0,
+            Change {
+                change_type: ChangeType::CancelTentativePain,
+                object_id: card_id,
+                dest: Location::Hand,
+                player,
+                ..Default::default()
+            },
+        );
+        self.reorder_hand(player, false);
     }
 
     pub fn play(&mut self, card_id: i32) {
@@ -597,6 +714,9 @@ impl StickEmGame {
 
         let message = match self.state {
             State::SelectPainColor => Some(format!("{} must select a pain color", player_name)),
+            State::ConfirmPainColor => {
+                Some("Tap to confirm or undo your pain selection".to_string())
+            }
             State::Play => None,
             State::GameOver => None,
         };
@@ -1454,5 +1574,89 @@ mod tests {
         assert_eq!(game.state, State::GameOver);
         assert_eq!(game.scores, [-51, -11, -3, -4], "Scores are correct");
         assert_eq!(game.winner, Some(2), "Winner is properly set")
+    }
+
+    // --- Pain confirm/undo (UI-driven, human only) ---
+
+    fn game_with_human_first() -> StickEmGame {
+        // Roll until current_player == 0 (the human seat).
+        for _ in 0..100 {
+            let g = StickEmGame::new();
+            if g.current_player == 0 {
+                return g;
+            }
+        }
+        panic!("could not roll a game with player 0 first");
+    }
+
+    #[test]
+    fn human_pain_selection_enters_confirm_state() {
+        let mut game = game_with_human_first();
+        let hand_before: Vec<i32> = game.hands[0].iter().map(|c| c.id).collect();
+        let pick = game.hands[0][0].id;
+        game.apply_move(pick);
+        assert_eq!(game.state, State::ConfirmPainColor);
+        assert_eq!(game.tentative_pain, Some(pick));
+        assert!(!game.hands[0].iter().any(|c| c.id == pick));
+        assert_eq!(game.hands[0].len(), hand_before.len() - 1);
+        assert!(game.pain_cards[0].is_none());
+    }
+
+    #[test]
+    fn human_confirm_pain_commits_and_advances() {
+        let mut game = game_with_human_first();
+        let pick = game.hands[0][0].id;
+        game.apply_move(pick);
+        game.apply_move(pick);
+        assert_eq!(game.tentative_pain, None);
+        assert_eq!(game.pain_cards[0].map(|c| c.id), Some(pick));
+        assert_eq!(game.current_player, 1);
+        assert_eq!(game.state, State::SelectPainColor);
+    }
+
+    #[test]
+    fn human_undo_restores_hand() {
+        let mut game = game_with_human_first();
+        let mut hand_before: Vec<i32> = game.hands[0].iter().map(|c| c.id).collect();
+        hand_before.sort();
+        let pick = game.hands[0][0].id;
+        game.apply_move(pick);
+        game.apply_move(UNDO_MOVE);
+        assert_eq!(game.tentative_pain, None);
+        assert_eq!(game.state, State::SelectPainColor);
+        assert!(game.pain_cards[0].is_none());
+        assert_eq!(game.current_player, 0);
+        let mut hand_after: Vec<i32> = game.hands[0].iter().map(|c| c.id).collect();
+        hand_after.sort();
+        assert_eq!(hand_after, hand_before);
+    }
+
+    #[test]
+    fn get_moves_in_confirm_returns_picked_and_undo() {
+        let mut game = game_with_human_first();
+        let pick = game.hands[0][0].id;
+        game.apply_move(pick);
+        let moves = game.get_moves();
+        assert_eq!(moves.len(), 2);
+        assert!(moves.contains(&pick));
+        assert!(moves.contains(&UNDO_MOVE));
+    }
+
+    #[test]
+    fn cpu_pain_selection_skips_confirm_step() {
+        // Find a starting game where player 1 acts first.
+        let mut game = StickEmGame::new();
+        for _ in 0..100 {
+            if game.current_player == 1 {
+                break;
+            }
+            game = StickEmGame::new();
+        }
+        assert_eq!(game.current_player, 1, "could not roll player 1 first");
+        let pick = game.hands[1][0].id;
+        game.apply_move(pick);
+        assert_eq!(game.state, State::SelectPainColor);
+        assert_eq!(game.pain_cards[1].map(|c| c.id), Some(pick));
+        assert_eq!(game.current_player, 2);
     }
 }
