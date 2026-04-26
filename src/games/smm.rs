@@ -431,7 +431,19 @@ impl SMMGame {
                 .filter(|&&p| self.passed_this_round[p])
                 .count();
 
-            if passed_count >= active.len() - 1 && self.meld_leader.is_some() {
+            // Meld leader doesn't need to pass — subtract 1 only if they're
+            // still active. Once the leader has shed out, every remaining
+            // active player must pass to end the meld.
+            let leader_active = self
+                .meld_leader
+                .map(|l| !self.shed_out_order.contains(&l))
+                .unwrap_or(false);
+            let threshold = if leader_active {
+                active.len() - 1
+            } else {
+                active.len()
+            };
+            if passed_count >= threshold && self.meld_leader.is_some() {
                 self.meld_wins();
             } else {
                 self.advance_player();
@@ -2100,5 +2112,233 @@ mod tests {
             "Only USE_LUCKY_COIN and PASS should be available. Moves: {:?}",
             moves
         );
+    }
+
+    // Ported from TS commit 4d71b92 — Fix SMM premature trick end when meld
+    // leader sheds out. Without the fix, the threshold subtracts 1 for the
+    // leader even after they shed out, ending the trick after a single pass
+    // instead of requiring all remaining active players to pass.
+
+    #[test]
+    fn test_trick_continues_after_player_goes_out() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        // Player 0 has one card — will go out after playing
+        game.hands[0] = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
+        game.hands[1] = vec![
+            Card {
+                id: 10,
+                suit: Suit::Diamond,
+            },
+            Card {
+                id: 11,
+                suit: Suit::Diamond,
+            },
+        ];
+        game.hands[2] = vec![
+            Card {
+                id: 20,
+                suit: Suit::Bell,
+            },
+            Card {
+                id: 21,
+                suit: Suit::Bell,
+            },
+        ];
+
+        game.current_meld = vec![];
+        game.current_meld_suit = None;
+        game.meld_leader = None;
+        game.passed_this_round = [false; PLAYER_COUNT];
+        game.consecutive_passes = 0;
+
+        // Player 0 plays their last card and goes out
+        game.apply_move(0);
+        assert!(game.shed_out_order.contains(&0));
+
+        // Player 1's turn — they pass
+        assert_eq!(game.current_player, 1);
+        game.apply_move(PASS);
+
+        // Player 2 should still get a turn (trick should NOT have ended)
+        assert_eq!(
+            game.current_player, 2,
+            "Player 2 must get a turn after player 1 passes when leader has shed out"
+        );
+    }
+
+    #[test]
+    fn test_trick_continues_after_player_goes_out_second_pass_ends_meld() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        game.hands[0] = vec![Card {
+            id: 0,
+            suit: Suit::Cherry,
+        }];
+        game.hands[1] = vec![
+            Card {
+                id: 10,
+                suit: Suit::Diamond,
+            },
+            Card {
+                id: 11,
+                suit: Suit::Diamond,
+            },
+        ];
+        game.hands[2] = vec![
+            Card {
+                id: 20,
+                suit: Suit::Bell,
+            },
+            Card {
+                id: 21,
+                suit: Suit::Bell,
+            },
+        ];
+
+        game.current_meld = vec![];
+        game.current_meld_suit = None;
+        game.meld_leader = None;
+        game.passed_this_round = [false; PLAYER_COUNT];
+        game.consecutive_passes = 0;
+
+        // Player 0 plays last card and goes out
+        game.apply_move(0);
+        assert!(game.shed_out_order.contains(&0));
+
+        // Player 1 passes
+        assert_eq!(game.current_player, 1);
+        game.apply_move(PASS);
+
+        // Player 2 should get a turn
+        assert_eq!(game.current_player, 2);
+
+        // Player 2 also passes — NOW the meld should end
+        game.apply_move(PASS);
+
+        // Meld leader (player 0) shed out, so next active player leads
+        assert!(game.current_player == 1 || game.current_player == 2);
+    }
+
+    #[test]
+    fn test_meld_leader_still_active_one_fewer_pass_needed() {
+        let mut game = SMMGame::new();
+        game.no_changes = true;
+        game.current_player = 0;
+        game.hierarchy = vec![
+            Suit::Cherry,
+            Suit::Diamond,
+            Suit::Bell,
+            Suit::Clover,
+            Suit::Horseshoe,
+            Suit::Bar,
+            Suit::Seven,
+        ];
+
+        game.hands[0] = vec![
+            Card {
+                id: 0,
+                suit: Suit::Cherry,
+            },
+            Card {
+                id: 1,
+                suit: Suit::Diamond,
+            },
+        ];
+        game.hands[1] = vec![
+            Card {
+                id: 10,
+                suit: Suit::Bell,
+            },
+            Card {
+                id: 11,
+                suit: Suit::Bell,
+            },
+        ];
+        game.hands[2] = vec![
+            Card {
+                id: 20,
+                suit: Suit::Clover,
+            },
+            Card {
+                id: 21,
+                suit: Suit::Clover,
+            },
+        ];
+
+        game.current_meld = vec![];
+        game.current_meld_suit = None;
+        game.meld_leader = None;
+        game.passed_this_round = [false; PLAYER_COUNT];
+        game.consecutive_passes = 0;
+
+        // Player 0 plays 1 Cherry (keeps Diamond)
+        game.apply_move(0);
+        assert!(!game.shed_out_order.contains(&0));
+        assert_eq!(game.meld_leader, Some(0));
+
+        // Player 1 passes
+        assert_eq!(game.current_player, 1);
+        game.apply_move(PASS);
+
+        // Player 2 passes — meld should end since both non-leaders passed
+        assert_eq!(game.current_player, 2);
+        game.apply_move(PASS);
+
+        // Leader (player 0) wins and leads next meld
+        assert_eq!(game.current_player, 0);
+    }
+
+    #[test]
+    fn test_random_games_with_shed_outs_complete_without_error() {
+        use rand::seq::SliceRandom;
+        for trial in 0..50 {
+            let mut game = SMMGame::new();
+            game.no_changes = true;
+            let mut safety = 0;
+            while game.winner.is_none() && safety < 5000 {
+                let moves = game.get_moves();
+                assert!(
+                    !moves.is_empty(),
+                    "trial {} step {}: no moves available",
+                    trial,
+                    safety
+                );
+                let mov = *moves.choose(&mut thread_rng()).unwrap();
+                game.apply_move(mov);
+                safety += 1;
+            }
+            assert!(
+                game.winner.is_some(),
+                "trial {} did not finish in {} moves",
+                trial,
+                safety
+            );
+        }
     }
 }
